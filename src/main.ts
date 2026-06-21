@@ -41,7 +41,7 @@ start();
 
 function start(): void {
   setLoadingProgress(16);
-  if (!supportsWebGL2()) {
+  if (!supportsWebGL()) {
     showWebGLError();
     return;
   }
@@ -132,10 +132,14 @@ function cleanup(state: ReturnType<typeof createGameState>): void {
   renderer?.dispose();
 }
 
-function supportsWebGL2(): boolean {
+function supportsWebGL(): boolean {
   try {
     const testCanvas = document.createElement('canvas');
-    return Boolean(testCanvas.getContext('webgl2'));
+    return Boolean(
+      testCanvas.getContext('webgl2') ||
+        testCanvas.getContext('webgl') ||
+        testCanvas.getContext('experimental-webgl')
+    );
   } catch {
     return false;
   }

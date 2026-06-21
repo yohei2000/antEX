@@ -46,6 +46,7 @@ try {
       isMobile: false,
       hasTouch: false
     });
+    await runWebGL1FallbackCheck(browser);
   } finally {
     await browser.close();
   }
@@ -57,6 +58,39 @@ try {
 } finally {
   stopServer(server);
   await Promise.race([once(server, 'exit'), sleep(1200)]).catch(() => undefined);
+}
+
+async function runWebGL1FallbackCheck(browser) {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 2
+  });
+  await context.addInitScript(() => {
+    window.localStorage.removeItem('ant3d.colonyState');
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function patchedGetContext(type, attributes) {
+      if (type === 'webgl2') {
+        return null;
+      }
+      return originalGetContext.call(this, type, attributes);
+    };
+  });
+  const page = await context.newPage();
+  await page.goto(BASE_URL, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => Boolean(window.__ANT3D_DEBUG__));
+  await page.waitForTimeout(600);
+
+  const rendererInfo = await page.evaluate(() => window.__ANT3D_DEBUG__.getRendererInfo());
+  assert(rendererInfo.isWebGL2 === false, 'webgl1 fallback: renderer runs without WebGL2');
+  const sample = await page.evaluate(() => window.__ANT3D_DEBUG__.sampleCanvas());
+  assert(sample.brightPixels > 20, 'webgl1 fallback: canvas has visible pixels');
+  assert(sample.colorVariance > 1, 'webgl1 fallback: canvas is not a flat color');
+  checks.push(
+    `webgl1 fallback: drawCalls=${rendererInfo.drawCalls}, triangles=${rendererInfo.triangles}, pixelRatio=${rendererInfo.pixelRatio}`
+  );
+  await context.close();
 }
 
 async function runViewportChecks(browser, config) {
@@ -94,7 +128,10 @@ async function runViewportChecks(browser, config) {
   );
 
   const rendererInfo = await page.evaluate(() => window.__ANT3D_DEBUG__.getRendererInfo());
-  assert(rendererInfo.isWebGL2, `${config.name}: renderer uses WebGL2`);
+  assert(
+    typeof rendererInfo.isWebGL2 === 'boolean',
+    `${config.name}: renderer reports WebGL capability mode`
+  );
   assert(rendererInfo.pixelRatio <= 1.6, `${config.name}: pixelRatio is capped`);
   assert(rendererInfo.drawCalls > 0, `${config.name}: draw calls are reported`);
   assert(rendererInfo.triangles > 0, `${config.name}: triangles are reported`);
