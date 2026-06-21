@@ -136,6 +136,22 @@ function measurePngRegion(png, region) {
   return { nonDark, alpha, contrast: max - min };
 }
 
+async function waitForProcessExit(processHandle, timeoutMs = 1200) {
+  if (processHandle.exitCode !== null || processHandle.signalCode !== null) return;
+  await Promise.race([
+    new Promise((resolveExit) => processHandle.once("exit", resolveExit)),
+    delay(timeoutMs),
+  ]);
+}
+
+function removeTempDirectory(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
+  } catch (error) {
+    console.warn(`Warning: could not remove temporary browser profile: ${error.message}`);
+  }
+}
+
 async function waitForJson(url, timeoutMs = 12000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -255,8 +271,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
     return { label, screenshotPath, metrics };
   } finally {
     browser.kill();
-    await delay(300);
-    rmSync(userDataDir, { recursive: true, force: true });
+    await waitForProcessExit(browser);
+    removeTempDirectory(userDataDir);
   }
 }
 

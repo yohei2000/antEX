@@ -726,26 +726,28 @@ class Ant3D {
 }
 
 const ANT_BODY_PARTS = [
-  { name: "abdomen", x: 0, y: 0, z: -1.18, sx: 0.58, sy: 0.34, sz: 1.12 },
-  { name: "waist", x: 0, y: 0, z: -0.34, sx: 0.24, sy: 0.22, sz: 0.32 },
-  { name: "thorax", x: 0, y: 0, z: 0.2, sx: 0.46, sy: 0.31, sz: 0.68 },
-  { name: "head", x: 0, y: 0, z: 1, sx: 0.42, sy: 0.28, sz: 0.5 },
+  { name: "gaster", x: 0, y: 0, z: -1.78, sx: 0.48, sy: 0.29, sz: 0.72 },
+  { name: "postpetiole", x: 0, y: -0.02, z: -0.82, sx: 0.18, sy: 0.16, sz: 0.19 },
+  { name: "petiole", x: 0, y: -0.02, z: -0.48, sx: 0.14, sy: 0.14, sz: 0.16 },
+  { name: "mesosoma", x: 0, y: 0, z: 0.18, sx: 0.36, sy: 0.25, sz: 0.58 },
+  { name: "head", x: 0, y: 0, z: 1.22, sx: 0.42, sy: 0.27, sz: 0.42 },
 ];
 
 const ANT_APPENDAGE_SEGMENTS = (() => {
   const segments = [];
   for (const side of [-1, 1]) {
     const legs = [
-      { rootX: 0.28, rootZ: -0.18, elbowX: 0.72, elbowZ: -0.58, footX: 1.34, footZ: -0.9 },
-      { rootX: 0.34, rootZ: 0.25, elbowX: 0.86, elbowZ: 0.14, footX: 1.5, footZ: 0.08 },
-      { rootX: 0.28, rootZ: 0.64, elbowX: 0.76, elbowZ: 1.02, footX: 1.28, footZ: 1.35 },
+      { rootX: 0.22, rootZ: 0.52, elbowX: 0.64, elbowZ: 0.96, footX: 1.22, footZ: 1.22 },
+      { rootX: 0.28, rootZ: 0.13, elbowX: 0.82, elbowZ: 0.08, footX: 1.36, footZ: -0.02 },
+      { rootX: 0.22, rootZ: -0.22, elbowX: 0.64, elbowZ: -0.64, footX: 1.18, footZ: -1.08 },
     ];
     for (const leg of legs) {
-      segments.push({ radius: 0.035, from: [side * leg.rootX, -0.02, leg.rootZ], to: [side * leg.elbowX, -0.18, leg.elbowZ] });
-      segments.push({ radius: 0.03, from: [side * leg.elbowX, -0.18, leg.elbowZ], to: [side * leg.footX, -0.32, leg.footZ] });
+      segments.push({ radius: 0.026, from: [side * leg.rootX, -0.02, leg.rootZ], to: [side * leg.elbowX, -0.13, leg.elbowZ] });
+      segments.push({ radius: 0.021, from: [side * leg.elbowX, -0.13, leg.elbowZ], to: [side * leg.footX, -0.25, leg.footZ] });
     }
-    segments.push({ radius: 0.026, from: [side * 0.2, 0.08, 1.38], to: [side * 0.48, 0.04, 1.78] });
-    segments.push({ radius: 0.022, from: [side * 0.48, 0.04, 1.78], to: [side * 0.78, -0.05, 2.02] });
+    segments.push({ radius: 0.021, from: [side * 0.16, 0.05, 1.54], to: [side * 0.42, 0.02, 1.96] });
+    segments.push({ radius: 0.017, from: [side * 0.42, 0.02, 1.96], to: [side * 0.78, -0.06, 2.26] });
+    segments.push({ radius: 0.024, from: [side * 0.12, -0.04, 1.54], to: [side * 0.34, -0.08, 1.76] });
   }
   return segments;
 })();
