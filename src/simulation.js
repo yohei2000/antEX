@@ -353,9 +353,6 @@ class Ant3D {
       this.traits.persistence = clamp(this.traits.persistence + 0.18, 0, 1);
     }
 
-    this.group = this.createMesh(sim);
-    sim.scene.add(this.group);
-    this.render(sim, 1);
   }
 
   pickRole() {
@@ -364,91 +361,6 @@ class Ant3D {
     if (roll < 0.72) return "worker";
     if (roll < 0.9) return "nurse";
     return "guard";
-  }
-
-  createMesh(sim) {
-    const group = new THREE.Group();
-    const abdomen = new THREE.Mesh(sim.geometries.antSphere, sim.materials.antDefault);
-    abdomen.scale.set(0.58, 0.34, 1.12);
-    abdomen.position.z = -1.18;
-    const waist = new THREE.Mesh(sim.geometries.antSphere, sim.materials.antDefault);
-    waist.scale.set(0.24, 0.22, 0.32);
-    waist.position.z = -0.34;
-    const thorax = new THREE.Mesh(sim.geometries.antSphere, sim.materials.antDefault);
-    thorax.scale.set(0.46, 0.31, 0.68);
-    thorax.position.z = 0.2;
-    const head = new THREE.Mesh(sim.geometries.antSphere, sim.materials.antDefault);
-    head.scale.set(0.42, 0.28, 0.5);
-    head.position.z = 1.0;
-    for (const mesh of [abdomen, waist, thorax, head]) {
-      mesh.castShadow = sim.quality.shadowQuality !== "off";
-      mesh.receiveShadow = false;
-    }
-    group.add(abdomen, waist, thorax, head);
-    this.bodyParts = [abdomen, waist, thorax, head];
-
-    const legPositions = [];
-    for (const side of [-1, 1]) {
-      const legs = [
-        { rootX: 0.28, rootZ: -0.18, elbowX: 0.72, elbowZ: -0.58, footX: 1.34, footZ: -0.9 },
-        { rootX: 0.34, rootZ: 0.25, elbowX: 0.86, elbowZ: 0.14, footX: 1.5, footZ: 0.08 },
-        { rootX: 0.28, rootZ: 0.64, elbowX: 0.76, elbowZ: 1.02, footX: 1.28, footZ: 1.35 },
-      ];
-      for (const leg of legs) {
-        legPositions.push(
-          side * leg.rootX,
-          -0.02,
-          leg.rootZ,
-          side * leg.elbowX,
-          -0.18,
-          leg.elbowZ,
-          side * leg.elbowX,
-          -0.18,
-          leg.elbowZ,
-          side * leg.footX,
-          -0.32,
-          leg.footZ,
-        );
-      }
-    }
-    const legGeometry = new THREE.BufferGeometry();
-    legGeometry.setAttribute("position", new THREE.Float32BufferAttribute(legPositions, 3));
-    const legs = new THREE.LineSegments(legGeometry, sim.materials.antLegs);
-    group.add(legs);
-    this.legGeometry = legGeometry;
-
-    const antennaPositions = [];
-    for (const side of [-1, 1]) {
-      antennaPositions.push(
-        side * 0.2,
-        0.08,
-        1.38,
-        side * 0.48,
-        0.04,
-        1.78,
-        side * 0.48,
-        0.04,
-        1.78,
-        side * 0.78,
-        -0.05,
-        2.02,
-      );
-    }
-    const antennaGeometry = new THREE.BufferGeometry();
-    antennaGeometry.setAttribute("position", new THREE.Float32BufferAttribute(antennaPositions, 3));
-    const antennae = new THREE.LineSegments(antennaGeometry, sim.materials.antLegs);
-    group.add(antennae);
-    this.antennaGeometry = antennaGeometry;
-
-    const load = new THREE.Mesh(sim.geometries.foodCrumb, sim.materials.food);
-    load.position.set(0, 0.14, 1.9);
-    load.scale.setScalar(0.72);
-    load.visible = false;
-    load.castShadow = sim.quality.shadowQuality !== "off";
-    group.add(load);
-    this.loadMesh = load;
-
-    return group;
   }
 
   update(dt, sim) {
@@ -800,23 +712,186 @@ class Ant3D {
     }
   }
 
-  render(sim, alpha) {
-    const material = sim.materials.antByState[this.state] ?? sim.materials.antDefault;
-    for (const part of this.bodyParts) part.material = material;
-    this.loadMesh.visible = this.carrying > 0;
-    const x = this.prevX + (this.x - this.prevX) * alpha;
-    const z = this.prevZ + (this.z - this.prevZ) * alpha;
-    const angle = this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha;
-    this.group.position.set(x, 0.72 + Math.sin(sim.renderTime * 0.006 + this.id) * 0.03, z);
-    this.group.rotation.y = angle;
-    const scale = this.state === "stunned" ? 0.82 : 1;
-    this.group.scale.setScalar(scale);
+  renderState(sim, alpha) {
+    return {
+      x: this.prevX + (this.x - this.prevX) * alpha,
+      z: this.prevZ + (this.z - this.prevZ) * alpha,
+      angle: this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha,
+      y: 0.72 + Math.sin(sim.renderTime * 0.006 + this.id) * 0.03,
+      scale: this.state === "stunned" ? 0.82 : 1,
+      state: this.state,
+      carrying: this.carrying,
+    };
+  }
+}
+
+const ANT_BODY_PARTS = [
+  { name: "abdomen", x: 0, y: 0, z: -1.18, sx: 0.58, sy: 0.34, sz: 1.12 },
+  { name: "waist", x: 0, y: 0, z: -0.34, sx: 0.24, sy: 0.22, sz: 0.32 },
+  { name: "thorax", x: 0, y: 0, z: 0.2, sx: 0.46, sy: 0.31, sz: 0.68 },
+  { name: "head", x: 0, y: 0, z: 1, sx: 0.42, sy: 0.28, sz: 0.5 },
+];
+
+const ANT_APPENDAGE_SEGMENTS = (() => {
+  const segments = [];
+  for (const side of [-1, 1]) {
+    const legs = [
+      { rootX: 0.28, rootZ: -0.18, elbowX: 0.72, elbowZ: -0.58, footX: 1.34, footZ: -0.9 },
+      { rootX: 0.34, rootZ: 0.25, elbowX: 0.86, elbowZ: 0.14, footX: 1.5, footZ: 0.08 },
+      { rootX: 0.28, rootZ: 0.64, elbowX: 0.76, elbowZ: 1.02, footX: 1.28, footZ: 1.35 },
+    ];
+    for (const leg of legs) {
+      segments.push({ radius: 0.035, from: [side * leg.rootX, -0.02, leg.rootZ], to: [side * leg.elbowX, -0.18, leg.elbowZ] });
+      segments.push({ radius: 0.03, from: [side * leg.elbowX, -0.18, leg.elbowZ], to: [side * leg.footX, -0.32, leg.footZ] });
+    }
+    segments.push({ radius: 0.026, from: [side * 0.2, 0.08, 1.38], to: [side * 0.48, 0.04, 1.78] });
+    segments.push({ radius: 0.022, from: [side * 0.48, 0.04, 1.78], to: [side * 0.78, -0.05, 2.02] });
+  }
+  return segments;
+})();
+
+class AntRenderSystem {
+  constructor(sim, capacity) {
+    this.sim = sim;
+    this.capacity = capacity;
+    this.bodyMeshes = new Map();
+    this.bodyCounts = new Map();
+    this.dummy = new THREE.Object3D();
+    this.segmentStart = new THREE.Vector3();
+    this.segmentEnd = new THREE.Vector3();
+    this.segmentMid = new THREE.Vector3();
+    this.segmentDirection = new THREE.Vector3();
+    this.up = new THREE.Vector3(0, 1, 0);
+    this.segmentQuaternion = new THREE.Quaternion();
+
+    for (const [state, material] of Object.entries(sim.materials.antByState)) {
+      const partMeshes = new Map();
+      const partCounts = new Map();
+      for (const part of ANT_BODY_PARTS) {
+        const mesh = new THREE.InstancedMesh(sim.geometries.antSphere, material, capacity);
+        mesh.count = 0;
+        mesh.castShadow = sim.quality.shadowQuality !== "off";
+        mesh.frustumCulled = false;
+        sim.scene.add(mesh);
+        partMeshes.set(part.name, mesh);
+        partCounts.set(part.name, 0);
+      }
+      this.bodyMeshes.set(state, partMeshes);
+      this.bodyCounts.set(state, partCounts);
+    }
+
+    this.appendageGeometry = new THREE.CylinderGeometry(1, 1, 1, 4, 1);
+    this.appendageMesh = new THREE.InstancedMesh(this.appendageGeometry, sim.materials.antAppendage, capacity * ANT_APPENDAGE_SEGMENTS.length);
+    this.appendageMesh.count = 0;
+    this.appendageMesh.castShadow = sim.quality.shadowQuality !== "off";
+    this.appendageMesh.frustumCulled = false;
+    sim.scene.add(this.appendageMesh);
+
+    this.foodMesh = new THREE.InstancedMesh(sim.geometries.foodCrumb, sim.materials.food, capacity);
+    this.foodMesh.count = 0;
+    this.foodMesh.castShadow = sim.quality.shadowQuality !== "off";
+    this.foodMesh.frustumCulled = false;
+    sim.scene.add(this.foodMesh);
   }
 
-  destroy(scene) {
-    scene.remove(this.group);
-    this.legGeometry.dispose();
-    this.antennaGeometry.dispose();
+  beginFrame() {
+    for (const counts of this.bodyCounts.values()) {
+      for (const key of counts.keys()) counts.set(key, 0);
+    }
+    this.appendageCount = 0;
+    this.foodCount = 0;
+  }
+
+  renderAnt(ant, renderState) {
+    const meshes = this.bodyMeshes.get(renderState.state) ?? this.bodyMeshes.get("explore");
+    const counts = this.bodyCounts.get(renderState.state) ?? this.bodyCounts.get("explore");
+    for (const part of ANT_BODY_PARTS) {
+      const index = counts.get(part.name);
+      this.composeLocalMatrix(renderState, part.x, part.y, part.z, part.sx, part.sy, part.sz);
+      meshes.get(part.name).setMatrixAt(index, this.dummy.matrix);
+      counts.set(part.name, index + 1);
+    }
+
+    for (const segment of ANT_APPENDAGE_SEGMENTS) {
+      this.composeSegmentMatrix(renderState, segment);
+      this.appendageMesh.setMatrixAt(this.appendageCount, this.dummy.matrix);
+      this.appendageCount += 1;
+    }
+
+    if (renderState.carrying > 0) {
+      this.composeLocalMatrix(renderState, 0, 0.14, 1.9, 0.72, 0.72, 0.72);
+      this.foodMesh.setMatrixAt(this.foodCount, this.dummy.matrix);
+      this.foodCount += 1;
+    }
+  }
+
+  composeLocalMatrix(renderState, localX, localY, localZ, scaleX, scaleY, scaleZ) {
+    const sin = Math.sin(renderState.angle);
+    const cos = Math.cos(renderState.angle);
+    this.dummy.position.set(
+      renderState.x + localX * cos + localZ * sin,
+      renderState.y + localY * renderState.scale,
+      renderState.z - localX * sin + localZ * cos,
+    );
+    this.dummy.rotation.set(0, renderState.angle, 0);
+    this.dummy.scale.set(scaleX * renderState.scale, scaleY * renderState.scale, scaleZ * renderState.scale);
+    this.dummy.updateMatrix();
+  }
+
+  composeSegmentMatrix(renderState, segment) {
+    this.localPointToWorld(renderState, segment.from, this.segmentStart);
+    this.localPointToWorld(renderState, segment.to, this.segmentEnd);
+    this.segmentMid.addVectors(this.segmentStart, this.segmentEnd).multiplyScalar(0.5);
+    this.segmentDirection.subVectors(this.segmentEnd, this.segmentStart);
+    const length = this.segmentDirection.length();
+    this.segmentDirection.normalize();
+    this.segmentQuaternion.setFromUnitVectors(this.up, this.segmentDirection);
+    this.dummy.position.copy(this.segmentMid);
+    this.dummy.quaternion.copy(this.segmentQuaternion);
+    this.dummy.scale.set(segment.radius * renderState.scale, length, segment.radius * renderState.scale);
+    this.dummy.updateMatrix();
+  }
+
+  localPointToWorld(renderState, point, target) {
+    const sin = Math.sin(renderState.angle);
+    const cos = Math.cos(renderState.angle);
+    const localX = point[0] * renderState.scale;
+    const localY = point[1] * renderState.scale;
+    const localZ = point[2] * renderState.scale;
+    target.set(
+      renderState.x + localX * cos + localZ * sin,
+      renderState.y + localY,
+      renderState.z - localX * sin + localZ * cos,
+    );
+  }
+
+  endFrame() {
+    for (const [state, meshes] of this.bodyMeshes.entries()) {
+      const counts = this.bodyCounts.get(state);
+      for (const [partName, mesh] of meshes.entries()) {
+        mesh.count = counts.get(partName);
+        mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+    this.appendageMesh.count = this.appendageCount;
+    this.appendageMesh.instanceMatrix.needsUpdate = true;
+    this.foodMesh.count = this.foodCount;
+    this.foodMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  render(ants, sim, alpha) {
+    this.beginFrame();
+    for (const ant of ants) this.renderAnt(ant, ant.renderState(sim, alpha));
+    this.endFrame();
+  }
+
+  destroy() {
+    for (const meshes of this.bodyMeshes.values()) {
+      for (const mesh of meshes.values()) this.sim.scene.remove(mesh);
+    }
+    this.sim.scene.remove(this.appendageMesh);
+    this.sim.scene.remove(this.foodMesh);
+    this.appendageGeometry.dispose();
   }
 }
 
@@ -887,6 +962,7 @@ class AntColony3D {
 
     this.assetService.preloadProceduralAssets();
     this.createSharedAssets();
+    this.antRenderer = new AntRenderSystem(this, Number(ui.antCount.max));
     this.createWorld();
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
@@ -949,7 +1025,7 @@ class AntColony3D {
       nest: new THREE.MeshStandardMaterial({ color: 0x6d4e2a, roughness: 0.95 }),
       nestDark: new THREE.MeshBasicMaterial({ color: 0x1d140e }),
       antDefault: new THREE.MeshStandardMaterial({ color: 0x18130f, roughness: 0.72 }),
-      antLegs: new THREE.LineBasicMaterial({ color: 0x12100d, transparent: true, opacity: 0.86 }),
+      antAppendage: new THREE.MeshStandardMaterial({ color: 0x12100d, roughness: 0.82 }),
       food: new THREE.MeshStandardMaterial({ color: 0xd9a63f, roughness: 0.62 }),
       stone: new THREE.MeshStandardMaterial({ color: 0x777c75, roughness: 0.86 }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
@@ -1084,7 +1160,6 @@ class AntColony3D {
   }
 
   reset() {
-    for (const ant of this.ants) ant.destroy(this.scene);
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
@@ -1095,6 +1170,8 @@ class AntColony3D {
     this.food = [];
     this.branches = [];
     this.trails = [];
+    this.antRenderer?.beginFrame();
+    this.antRenderer?.endFrame();
     this.collectedFood = 0;
     this.selectedAnt = null;
     const count = Number(ui.antCount.value);
@@ -1242,7 +1319,7 @@ class AntColony3D {
 
   renderGame(alpha) {
     this.updateCamera();
-    for (const ant of this.ants) ant.render(this, alpha);
+    this.antRenderer.render(this.ants, this, alpha);
     this.renderer.render(this.scene, this.camera);
     window.__ANT_SIM_READY = true;
   }
@@ -1255,7 +1332,7 @@ class AntColony3D {
     window.removeEventListener("resize", this.boundResize);
     window.removeEventListener("pagehide", this.boundPageHide);
     this.clearBranchPreview();
-    for (const ant of this.ants) ant.destroy(this.scene);
+    this.antRenderer?.destroy();
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
