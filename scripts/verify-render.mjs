@@ -266,6 +266,12 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           cssHeight: Math.round(rect.height),
           pixelRatio: sim?.currentPixelRatio ?? null,
           quality: sim?.quality?.label ?? null,
+          antCount: sim?.ants?.length ?? null,
+          worldRadius: sim?.worldRadius ?? null,
+          foodSources: sim?.food?.length ?? null,
+          predatorCount: sim?.predators?.length ?? null,
+          terrainPatches: sim?.terrain?.length ?? null,
+          branchCount: sim?.branches?.length ?? null,
           calls: info?.render?.calls ?? null,
           triangles: info?.render?.triangles ?? null,
           geometries: info?.memory?.geometries ?? null,
@@ -300,6 +306,16 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       metrics.contrast < 14
     ) {
       throw new Error(`${label}: screenshot pixel check failed: ${JSON.stringify(metrics)}`);
+    }
+    if (
+      metrics.antCount > 12 ||
+      metrics.worldRadius < 120 ||
+      metrics.foodSources < 4 ||
+      metrics.predatorCount < 3 ||
+      metrics.terrainPatches < 6 ||
+      metrics.branchCount < 3
+    ) {
+      throw new Error(`${label}: ecosystem state check failed: ${JSON.stringify(metrics)}`);
     }
 
     const pheromoneProbe = await cdp.send("Runtime.evaluate", {
