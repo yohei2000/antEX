@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>蟻の群れリアクションラボ 3D</title>
+    <title>アントックス - アリ帝国放置ゲーム 3D</title>
     <link rel="stylesheet" href="./styles.css" />
     <script type="importmap">
       {
@@ -15,7 +15,7 @@
   </head>
   <body>
     <main class="app-shell">
-      <div id="world3d" aria-label="蟻の群れの3Dシミュレーション"></div>
+      <div id="world3d" aria-label="アリ帝国の3D巣マップ"></div>
 
       <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite">
         <div class="loading-box">
@@ -48,83 +48,105 @@
         <div class="title-block">
           <span class="title-mark" aria-hidden="true"></span>
           <div>
-            <strong>蟻の群れリアクションラボ 3D</strong>
-            <small id="activeToolLabel">観察</small>
+            <strong>アントックス</strong>
+            <small id="activeToolLabel">小さな巣から大帝国へ</small>
           </div>
         </div>
         <div class="quick-actions">
           <button id="pauseBtn" class="icon-button" type="button" title="一時停止" aria-label="一時停止">
             <span class="pause-icon" aria-hidden="true"></span>
           </button>
-          <button id="resetBtn" class="icon-button" type="button" title="再生成" aria-label="再生成">
+          <button id="resetBtn" class="icon-button" type="button" title="リセット" aria-label="リセット">
             <span class="reset-icon" aria-hidden="true"></span>
           </button>
         </div>
       </header>
 
-      <section class="stats-strip" aria-label="群れの状態">
+      <section class="stats-strip" aria-label="コロニー資源">
         <div>
-          <span>探索</span>
-          <strong id="statExplore">0</strong>
-        </div>
-        <div>
-          <span>避難</span>
-          <strong id="statAlert">0</strong>
-        </div>
-        <div>
-          <span>救助</span>
-          <strong id="statRescue">0</strong>
-        </div>
-        <div>
-          <span>搬入</span>
+          <span>食料</span>
           <strong id="statFood">0</strong>
         </div>
-      </section>
-
-      <section class="inspector-panel" aria-label="個体情報">
-        <div id="inspector" class="inspector">
-          <span class="muted">個体未選択</span>
+        <div>
+          <span>アリ</span>
+          <strong id="statAnts">0/0</strong>
         </div>
-        <div class="control-row">
-          <label>
-            <span>群れ</span>
-            <input id="antCount" type="range" min="4" max="80" value="8" step="2" />
-            <output id="antCountValue">8</output>
-          </label>
-          <label>
-            <span>刺激</span>
-            <input id="intensity" type="range" min="1" max="5" value="3" step="1" />
-            <output id="intensityValue">3</output>
-          </label>
+        <div>
+          <span>食料/秒</span>
+          <strong id="statFoodRate">0</strong>
+        </div>
+        <div>
+          <span>領土</span>
+          <strong id="statTerritory">0</strong>
         </div>
       </section>
 
-      <nav class="toolbelt" aria-label="操作ツール">
-        <button class="tool-button active" type="button" data-tool="inspect" data-label="観察" title="観察" aria-label="観察">
-          <span class="tool-icon inspect-icon" aria-hidden="true"></span>
-          <span>観察</span>
-        </button>
-        <button class="tool-button" type="button" data-tool="water" data-label="水" title="水" aria-label="水">
-          <span class="tool-icon water-icon" aria-hidden="true"></span>
-          <span>水</span>
-        </button>
-        <button class="tool-button" type="button" data-tool="stone" data-label="落下物" title="落下物" aria-label="落下物">
-          <span class="tool-icon stone-icon" aria-hidden="true"></span>
-          <span>物</span>
-        </button>
-        <button class="tool-button" type="button" data-tool="food" data-label="餌" title="餌" aria-label="餌">
-          <span class="tool-icon food-icon" aria-hidden="true"></span>
-          <span>餌</span>
-        </button>
-        <button class="tool-button" type="button" data-tool="branch" data-label="枝" title="枝" aria-label="枝">
-          <span class="tool-icon branch-icon" aria-hidden="true"></span>
-          <span>枝</span>
-        </button>
-        <button class="tool-button" type="button" data-tool="erase" data-label="消去" title="消去" aria-label="消去">
-          <span class="tool-icon eraser-icon" aria-hidden="true"></span>
-          <span>消す</span>
-        </button>
-      </nav>
+      <section class="empire-panel" aria-label="アリ帝国管理">
+        <div class="panel-header">
+          <div>
+            <strong>巣の成長</strong>
+            <span id="colonySummary">巣Lv1 / 働き蟻 0 / 兵隊 0</span>
+          </div>
+          <div class="growth-meter" aria-label="孵化進行">
+            <span id="growthFill"></span>
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <div>
+            <span>巣Lv</span>
+            <strong id="statNestLevel">1</strong>
+          </div>
+          <div>
+            <span>収容上限</span>
+            <strong id="statCapacity">0</strong>
+          </div>
+          <div>
+            <span>兵隊</span>
+            <strong id="statSoldiers">0</strong>
+          </div>
+          <div>
+            <span>負傷</span>
+            <strong id="statWounded">0</strong>
+          </div>
+          <div>
+            <span>増加/分</span>
+            <strong id="statGrowthRate">0</strong>
+          </div>
+          <div>
+            <span>敵脅威</span>
+            <strong id="statThreat">0</strong>
+          </div>
+        </div>
+
+        <div class="panel-tabs" role="tablist" aria-label="管理タブ">
+          <button class="tab-button active" type="button" data-tab="growth">成長</button>
+          <button class="tab-button" type="button" data-tab="expedition">遠征</button>
+        </div>
+
+        <div id="growthTab" class="tab-panel active">
+          <div id="upgradeList" class="upgrade-list"></div>
+        </div>
+
+        <div id="expeditionTab" class="tab-panel">
+          <div class="expedition-grid">
+            <div>
+              <span>出撃兵</span>
+              <strong id="expeditionSoldiers">0</strong>
+            </div>
+            <div>
+              <span>勝率</span>
+              <strong id="expeditionChance">0%</strong>
+            </div>
+            <div>
+              <span>報酬</span>
+              <strong id="expeditionReward">0</strong>
+            </div>
+          </div>
+          <button id="expeditionBtn" class="primary-button" type="button">近隣の餌場へ遠征</button>
+          <div id="battleLog" class="battle-log"></div>
+        </div>
+      </section>
     </main>
 
     <script type="module" src="./src/simulation.js"></script>

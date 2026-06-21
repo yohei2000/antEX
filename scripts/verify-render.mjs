@@ -267,11 +267,19 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           pixelRatio: sim?.currentPixelRatio ?? null,
           quality: sim?.quality?.label ?? null,
           antCount: sim?.ants?.length ?? null,
+          colonyAnts: sim?.colony?.antPopulation ?? null,
+          colonyFood: sim?.colony?.food ?? null,
+          nestLevel: sim?.colony?.nestLevel ?? null,
+          territory: sim?.colony?.territory ?? null,
+          foodRate: sim?.computeDerived?.().foodRate ?? null,
+          capacity: sim?.computeDerived?.().capacity ?? null,
           worldRadius: sim?.worldRadius ?? null,
           foodSources: sim?.food?.length ?? null,
           predatorCount: sim?.predators?.length ?? null,
           terrainPatches: sim?.terrain?.length ?? null,
           branchCount: sim?.branches?.length ?? null,
+          toolButtons: document.querySelectorAll("[data-tool]").length,
+          upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
           calls: info?.render?.calls ?? null,
           triangles: info?.render?.triangles ?? null,
           geometries: info?.memory?.geometries ?? null,
@@ -308,42 +316,77 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       throw new Error(`${label}: screenshot pixel check failed: ${JSON.stringify(metrics)}`);
     }
     if (
-      metrics.antCount > 12 ||
+      metrics.colonyAnts !== 12 ||
+      metrics.antCount !== 12 ||
       metrics.worldRadius < 120 ||
       metrics.foodSources < 4 ||
-      metrics.predatorCount < 3 ||
+      metrics.predatorCount !== 0 ||
       metrics.terrainPatches < 6 ||
-      metrics.branchCount < 3
+      metrics.branchCount !== 0 ||
+      metrics.toolButtons !== 0 ||
+      metrics.upgradeButtons < 6 ||
+      metrics.foodRate <= 0
     ) {
-      throw new Error(`${label}: ecosystem state check failed: ${JSON.stringify(metrics)}`);
+      throw new Error(`${label}: idle colony state check failed: ${JSON.stringify(metrics)}`);
     }
 
-    const pheromoneProbe = await cdp.send("Runtime.evaluate", {
+    const idleProbe = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const sim = window.__ANT_SIM;
-        sim.addFood(6, 6);
-        const food = sim.food[sim.food.length - 1];
-        sim.addTrail(food.x, food.z, "food", 0.8, {
-          sourceId: food.id,
-          sourceRatio: 1,
-        });
-        const trail = sim.trails[sim.trails.length - 1];
-        const activeBefore = Boolean(sim.getFoodSource(trail.sourceId)) && trail.followStrength > 0;
-        food.amount = 0;
-        sim.refreshFoodMesh(food);
-        sim.updateTrailPheromone(trail, 0.2);
+        const before = {
+          food: sim.colony.food,
+          ants: sim.colony.antPopulation,
+          capacity: sim.computeDerived().capacity,
+          foodRate: sim.computeDerived().foodRate,
+          territory: sim.colony.territory,
+          wounded: sim.colony.woundedAnts,
+          threat: sim.colony.enemyThreat,
+        };
+        sim.updateColony(90);
+        const afterGrowth = {
+          food: sim.colony.food,
+          ants: sim.colony.antPopulation,
+        };
+        sim.colony.food = 10000;
+        sim.colony.lifetimeFood = Math.max(sim.colony.lifetimeFood, 10000);
+        sim.colony.antPopulation = Math.max(sim.colony.antPopulation, 24);
+        const capacityBeforeUpgrade = sim.computeDerived().capacity;
+        sim.buyUpgrade("storageChambers");
+        const capacityAfterUpgrade = sim.computeDerived().capacity;
+        sim.colony.soldierAnts = 8;
+        sim.colony.woundedAnts = 0;
+        sim.colony.battleCooldownUntil = 0;
+        const randomBefore = Math.random;
+        Math.random = () => 0;
+        sim.startExpedition();
+        Math.random = randomBefore;
+        sim.saveColony();
+        const saved = JSON.parse(localStorage.getItem("ant3d.colonyState"));
         return {
-          activeBefore,
-          sourceAfter: Boolean(sim.getFoodSource(trail.sourceId)),
-          followAfter: trail.followStrength,
-          lifeAfter: trail.life,
+          before,
+          afterGrowth,
+          capacityBeforeUpgrade,
+          capacityAfterUpgrade,
+          territoryAfterBattle: sim.colony.territory,
+          foodAfterBattle: sim.colony.food,
+          cooldownActive: sim.colony.battleCooldownUntil > Date.now(),
+          savedAnts: saved.antPopulation,
+          savedFood: saved.food,
         };
       })()`,
       returnByValue: true,
     });
-    const pheromone = pheromoneProbe.result.value;
-    if (!pheromone.activeBefore || pheromone.sourceAfter || pheromone.followAfter !== 0 || pheromone.lifeAfter > 0.18) {
-      throw new Error(`${label}: depleted food pheromone check failed: ${JSON.stringify(pheromone)}`);
+    const idle = idleProbe.result.value;
+    if (
+      idle.afterGrowth.food <= idle.before.food ||
+      idle.afterGrowth.ants < idle.before.ants ||
+      idle.capacityAfterUpgrade <= idle.capacityBeforeUpgrade ||
+      idle.territoryAfterBattle <= idle.before.territory ||
+      !idle.cooldownActive ||
+      idle.savedAnts !== 24 ||
+      idle.savedFood <= 0
+    ) {
+      throw new Error(`${label}: idle growth check failed: ${JSON.stringify(idle)}`);
     }
 
     cdp.close();
