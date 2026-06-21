@@ -276,6 +276,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           worldRadius: sim?.worldRadius ?? null,
           foodSources: sim?.food?.length ?? null,
           predatorCount: sim?.predators?.length ?? null,
+          rivalCount: sim?.rivalAnts?.length ?? null,
+          rivalScaleMin: sim?.rivalAnts?.length ? Math.min(...sim.rivalAnts.map((ant) => ant.scale)) : null,
+          rivalScaleMax: sim?.rivalAnts?.length ? Math.max(...sim.rivalAnts.map((ant) => ant.scale)) : null,
           terrainPatches: sim?.terrain?.length ?? null,
           branchCount: sim?.branches?.length ?? null,
           toolButtons: document.querySelectorAll("[data-tool]").length,
@@ -321,6 +324,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       metrics.worldRadius < 120 ||
       metrics.foodSources < 4 ||
       metrics.predatorCount !== 0 ||
+      metrics.rivalCount !== 4 ||
+      metrics.rivalScaleMin <= 1.1 ||
       metrics.terrainPatches < 6 ||
       metrics.branchCount !== 0 ||
       metrics.toolButtons !== 0 ||
@@ -387,6 +392,59 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       idle.savedFood <= 0
     ) {
       throw new Error(`${label}: idle growth check failed: ${JSON.stringify(idle)}`);
+    }
+
+    const fightProbe = await cdp.send("Runtime.evaluate", {
+      expression: `(() => {
+        const sim = window.__ANT_SIM;
+        const ant = sim.ants[0];
+        const rival = sim.rivalAnts[0];
+        ant.role = "worker";
+        ant.traits.persistence = 0.1;
+        ant.traits.caution = 0.1;
+        ant.state = "explore";
+        ant.carrying = 0;
+        ant.energy = 1;
+        ant.x = 0;
+        ant.z = 0;
+        ant.prevX = ant.x;
+        ant.prevZ = ant.z;
+        rival.x = 0.5;
+        rival.z = 0;
+        rival.prevX = rival.x;
+        rival.prevZ = rival.z;
+        rival.angle = -Math.PI / 2;
+        rival.aggression = 1;
+        rival.stubbornness = 1;
+        rival.scale = 1.35;
+        rival.fightCooldown = 0;
+        const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+        const resolved = rival.resolveAntContacts(sim);
+        const afterDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+        return {
+          resolved,
+          beforeDistance,
+          afterDistance,
+          winner: rival.lastFightWinner,
+          antState: ant.state,
+          antEnergy: ant.energy,
+          fightCooldown: rival.fightCooldown,
+          alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
+        };
+      })()`,
+      returnByValue: true,
+    });
+    const fight = fightProbe.result.value;
+    if (
+      !fight.resolved ||
+      fight.afterDistance <= fight.beforeDistance ||
+      fight.winner !== "rival" ||
+      fight.antState !== "panic" ||
+      fight.antEnergy >= 1 ||
+      fight.fightCooldown <= 0 ||
+      fight.alarmTrails < 1
+    ) {
+      throw new Error(`${label}: rival ant contact check failed: ${JSON.stringify(fight)}`);
     }
 
     cdp.close();
