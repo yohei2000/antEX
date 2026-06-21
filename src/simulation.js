@@ -1372,10 +1372,10 @@ class AntColony3D {
   }
 
   onPointerMove(event) {
-    event.preventDefault();
     const previous = this.pointerMap.get(event.pointerId);
-    this.pointerMap.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (!previous) return;
+    event.preventDefault();
+    this.pointerMap.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (this.pointerMap.size === 2 && this.pinchStart) {
       const points = [...this.pointerMap.values()];

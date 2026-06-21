@@ -220,6 +220,39 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
     if (!ready.result.value) throw new Error(`${label}: Three.js scene did not become ready.`);
     await delay(900);
 
+    const hoverProbe = await cdp.send("Runtime.evaluate", {
+      expression: `(() => {
+        const sim = window.__ANT_SIM;
+        const canvas = document.querySelector("#world3d canvas");
+        const before = sim.targetCameraYaw;
+        const first = new PointerEvent("pointermove", {
+          pointerId: 9981,
+          pointerType: "mouse",
+          clientX: 80,
+          clientY: 80,
+          bubbles: true,
+          cancelable: true,
+        });
+        const second = new PointerEvent("pointermove", {
+          pointerId: 9981,
+          pointerType: "mouse",
+          clientX: 220,
+          clientY: 150,
+          bubbles: true,
+          cancelable: true,
+        });
+        canvas.dispatchEvent(first);
+        canvas.dispatchEvent(second);
+        const after = sim.targetCameraYaw;
+        sim.pointerMap.delete(9981);
+        return { before, after, delta: Math.abs(after - before) };
+      })()`,
+      returnByValue: true,
+    });
+    if (hoverProbe.result.value.delta > 0.000001) {
+      throw new Error(`${label}: camera yaw changed on hover without pointerdown: ${JSON.stringify(hoverProbe.result.value)}`);
+    }
+
     const canvasProbe = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const canvas = document.querySelector("#world3d canvas");
@@ -237,6 +270,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           triangles: info?.render?.triangles ?? null,
           geometries: info?.memory?.geometries ?? null,
           textures: info?.memory?.textures ?? null,
+          hoverYawDelta: ${hoverProbe.result.value.delta},
         };
       })()`,
       returnByValue: true,
