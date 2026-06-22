@@ -379,6 +379,48 @@ button {
   max-height: min(50dvh, 430px);
   padding: 10px;
   overflow: auto;
+  transition:
+    max-height 180ms ease,
+    transform 180ms ease,
+    opacity 180ms ease;
+  overscroll-behavior: contain;
+}
+
+.empire-panel.is-compact {
+  max-height: 78px;
+  overflow: hidden;
+}
+
+.empire-panel.is-compact .metric-grid,
+.empire-panel.is-compact .panel-tabs,
+.empire-panel.is-compact .tab-panel {
+  display: none;
+}
+
+.panel-grip {
+  display: grid;
+  width: 100%;
+  height: 20px;
+  min-height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.panel-grip span {
+  display: block;
+  width: 46px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(244, 241, 232, 0.34);
+}
+
+.panel-grip:active span {
+  background: rgba(244, 241, 232, 0.58);
 }
 
 .panel-header {
@@ -544,7 +586,7 @@ button {
   }
 
   .empire-panel {
-    max-height: min(54dvh, 430px);
+    max-height: min(42dvh, 340px);
   }
 
   .panel-header,

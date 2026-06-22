@@ -1,4 +1,18 @@
 import { defineConfig, devices } from "@playwright/test";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+
+const hasEvalServer = existsSync(resolve(".eval-server.json"));
+
+const webServer =
+  process.env.ANTEX_SKIP_WEBSERVER === "1"
+    ? undefined
+    : {
+        command: "node ./scripts/playwright-webserver.mjs",
+        url: "http://127.0.0.1:4173/",
+        reuseExistingServer: hasEvalServer || !process.env.CI,
+        timeout: 120_000,
+      };
 
 export default defineConfig({
   testDir: "tests/playwright",
@@ -8,12 +22,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:4173/",
     trace: "retain-on-failure",
   },
-  webServer: {
-    command: "npm.cmd run build && npm.cmd run preview -- --port 4173",
-    url: "http://127.0.0.1:4173/",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  ...(webServer ? { webServer } : {}),
   projects: [
     {
       name: "mobile-chrome",

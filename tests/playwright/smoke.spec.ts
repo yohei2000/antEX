@@ -34,7 +34,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.antPopulation).toBe(12);
   expect(metrics.renderedAnts).toBe(12);
   expect(metrics.rivalAnts).toBe(4);
-  expect(metrics.rivalColor).toBe("c65318");
+  expect(metrics.rivalColor).toBe("8a4a2f");
   expect(metrics.foodSources).toBeGreaterThanOrEqual(4);
   expect(metrics.worldRadius).toBeGreaterThanOrEqual(120);
   expect(metrics.calls).toBeGreaterThan(0);
@@ -68,6 +68,61 @@ test("hover alone does not rotate the camera", async ({ page }) => {
   });
 
   expect(delta).toBe(0);
+});
+
+test("empire panel can be collapsed and expanded by swipe", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(async () => {
+    const sim = window.__ANT_SIM as any;
+    const panel = document.querySelector("#empirePanel") as HTMLElement;
+    const grip = document.querySelector("#panelGrip") as HTMLElement;
+    const settle = () => new Promise((resolve) => window.setTimeout(resolve, 220));
+    sim.setPanelCompact(false, false);
+    await settle();
+    const expandedHeight = panel.getBoundingClientRect().height;
+
+    const swipe = (fromY: number, toY: number) => {
+      const pointerId = 7401;
+      grip.dispatchEvent(new PointerEvent("pointerdown", {
+        pointerId,
+        pointerType: "touch",
+        clientX: 180,
+        clientY: fromY,
+        bubbles: true,
+        cancelable: true,
+      }));
+      grip.dispatchEvent(new PointerEvent("pointermove", {
+        pointerId,
+        pointerType: "touch",
+        clientX: 180,
+        clientY: toY,
+        bubbles: true,
+        cancelable: true,
+      }));
+      grip.dispatchEvent(new PointerEvent("pointerup", {
+        pointerId,
+        pointerType: "touch",
+        clientX: 180,
+        clientY: toY,
+        bubbles: true,
+        cancelable: true,
+      }));
+    };
+
+    swipe(620, 690);
+    await settle();
+    const compact = panel.classList.contains("is-compact");
+    const compactHeight = panel.getBoundingClientRect().height;
+    swipe(690, 610);
+    await settle();
+    const expandedAgain = !panel.classList.contains("is-compact");
+    return { expandedHeight, compactHeight, compact, expandedAgain };
+  });
+
+  expect(result.compact).toBe(true);
+  expect(result.expandedAgain).toBe(true);
+  expect(result.compactHeight).toBeLessThan(result.expandedHeight);
 });
 
 test("food only increases when a carrying ant returns to the nest", async ({ page }) => {
@@ -122,6 +177,7 @@ test("upgrade click increments an available upgrade", async ({ page }) => {
     sim.colony.antPopulation = 30;
     sim.colony.territory = 4;
     sim.colony.nestLevel = 3;
+    sim.setPanelCompact(false, false);
     sim.renderUpgrades();
     sim.updateStats();
   });
@@ -133,7 +189,7 @@ test("upgrade click increments an available upgrade", async ({ page }) => {
   expect(after).toBe(before + 1);
 });
 
-test("rival ant combat can stun a worker and be repelled by a guard", async ({ page }) => {
+test("rival ant combat grapples before the loser flees home", async ({ page }) => {
   await waitForSimulation(page);
 
   const fight = await page.evaluate(() => {
@@ -151,16 +207,37 @@ test("rival ant combat can stun a worker and be repelled by a guard", async ({ p
     ant.energy = 1;
     ant.x = 0;
     ant.z = 0;
+    ant.prevX = ant.x;
+    ant.prevZ = ant.z;
+    ant.fleeTimer = 0;
+    ant.clashTimer = 0;
     rival.x = 0.5;
     rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
     rival.aggression = 1;
     rival.stubbornness = 1;
     rival.scale = 1.35;
     rival.retreat = 0;
+    rival.clash = null;
     rival.fightCooldown = 0;
-    const workerResolved = rival.resolveAntContacts(sim);
-    const workerState = ant.state;
+    const workerDistanceBefore = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+    const workerStarted = rival.resolveAntContacts(sim);
+    const workerDistanceAfterStart = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+    const workerStateAtStart = ant.state;
+    const workerDistanceToNestBefore = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
+    for (let i = 0; i < 160; i += 1) {
+      ant.update(1 / 60, sim);
+      rival.update(1 / 60, sim);
+    }
+    const workerStateAfter = ant.state;
+    const workerFleeTimer = ant.fleeTimer;
+    const workerDistanceToNestAfter = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
 
+    ant.x = -80;
+    ant.z = -80;
+    ant.fleeTimer = 0;
+    ant.clashTimer = 0;
     guard.role = "guard";
     guard.traits.persistence = 1;
     guard.traits.caution = 1;
@@ -169,28 +246,52 @@ test("rival ant combat can stun a worker and be repelled by a guard", async ({ p
     guard.energy = 1;
     guard.x = 4;
     guard.z = 0;
+    guard.prevX = guard.x;
+    guard.prevZ = guard.z;
+    guard.fleeTimer = 0;
+    guard.clashTimer = 0;
     rival.x = 4.5;
     rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
     rival.aggression = 0.1;
     rival.stubbornness = 0.1;
     rival.scale = 1.2;
     rival.retreat = 0;
+    rival.clash = null;
     rival.fightCooldown = 0;
-    const guardResolved = rival.resolveAntContacts(sim);
+    const guardStarted = rival.resolveAntContacts(sim);
+    const guardStateAtStart = guard.state;
+    for (let i = 0; i < 150; i += 1) {
+      guard.update(1 / 60, sim);
+      rival.update(1 / 60, sim);
+    }
 
     return {
-      workerResolved,
-      workerState,
-      guardResolved,
+      workerStarted,
+      workerStateAtStart,
+      workerStateAfter,
+      workerFleeTimer,
+      workerDistanceBefore,
+      workerDistanceAfterStart,
+      workerDistanceToNestBefore,
+      workerDistanceToNestAfter,
+      guardStarted,
+      guardStateAtStart,
       lastWinner: rival.lastFightWinner,
       rivalRetreat: rival.retreat,
       stats: sim.rivalFightStats,
     };
   });
 
-  expect(fight.workerResolved).toBe(true);
-  expect(fight.workerState).toBe("stunned");
-  expect(fight.guardResolved).toBe(true);
+  expect(fight.workerStarted).toBe(true);
+  expect(fight.workerStateAtStart).toBe("clash");
+  expect(Math.abs(fight.workerDistanceAfterStart - fight.workerDistanceBefore)).toBeLessThan(0.25);
+  expect(fight.workerStateAfter).toBe("flee");
+  expect(fight.workerFleeTimer).toBeGreaterThan(0);
+  expect(fight.workerDistanceToNestAfter).toBeLessThan(fight.workerDistanceToNestBefore);
+  expect(fight.guardStarted).toBe(true);
+  expect(fight.guardStateAtStart).toBe("clash");
   expect(fight.lastWinner).toBe("colony");
   expect(fight.rivalRetreat).toBeGreaterThan(0);
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);
@@ -212,6 +313,8 @@ test("rival ants actively harass ants near food instead of only camping", async 
     ant.traits.caution = 0.1;
     ant.state = "explore";
     ant.stun = 0;
+    ant.fleeTimer = 0;
+    ant.clashTimer = 0;
     ant.carrying = 0;
     ant.x = food.x + 9;
     ant.z = food.z;
@@ -223,6 +326,7 @@ test("rival ants actively harass ants near food instead of only camping", async 
     rival.stubbornness = 1;
     rival.scale = 1.35;
     rival.retreat = 0;
+    rival.clash = null;
     rival.fightCooldown = 0;
     const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
     let minDistance = beforeDistance;
@@ -246,5 +350,5 @@ test("rival ants actively harass ants near food instead of only camping", async 
   expect(result.minDistance).toBeLessThan(result.beforeDistance);
   expect(result.clashes).toBeGreaterThanOrEqual(1);
   expect(result.rivalWins).toBeGreaterThanOrEqual(1);
-  expect(result.antState).toBe("stunned");
+  expect(result.antState).toBe("flee");
 });

@@ -1,49 +1,9 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { inflateSync } from "node:zlib";
+import { chromium } from "playwright";
 import { createStaticServer } from "./serve.mjs";
-
-const BROWSER_CANDIDATES = [
-  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-];
-
-const browserPath = BROWSER_CANDIDATES.find((candidate) => existsSync(candidate));
-if (!browserPath) {
-  throw new Error("Chrome or Edge was not found in the standard install locations.");
-}
-
-class CdpSession {
-  constructor(socket) {
-    this.socket = socket;
-    this.nextId = 1;
-    this.pending = new Map();
-    socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data);
-      if (!message.id || !this.pending.has(message.id)) return;
-      const { resolveCommand, rejectCommand } = this.pending.get(message.id);
-      this.pending.delete(message.id);
-      if (message.error) rejectCommand(new Error(message.error.message));
-      else resolveCommand(message.result);
-    });
-  }
-
-  send(method, params = {}) {
-    const id = this.nextId;
-    this.nextId += 1;
-    this.socket.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolveCommand, rejectCommand) => {
-      this.pending.set(id, { resolveCommand, rejectCommand });
-    });
-  }
-
-  close() {
-    this.socket.close();
-  }
-}
 
 function decodePng(buffer) {
   const signature = "89504e470d0a1a0a";
@@ -136,73 +96,32 @@ function measurePngRegion(png, region) {
   return { nonDark, alpha, contrast: max - min };
 }
 
-async function waitForProcessExit(processHandle, timeoutMs = 1200) {
-  if (processHandle.exitCode !== null || processHandle.signalCode !== null) return;
-  await Promise.race([
-    new Promise((resolveExit) => processHandle.once("exit", resolveExit)),
-    delay(timeoutMs),
-  ]);
-}
-
-function removeTempDirectory(path) {
+async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
+  let browser;
   try {
-    rmSync(path, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
-  } catch (error) {
-    console.warn(`Warning: could not remove temporary browser profile: ${error.message}`);
-  }
-}
-
-async function waitForJson(url, timeoutMs = 12000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return response.json();
-    } catch {
-      await delay(250);
-    }
-    await delay(250);
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
-
-async function verifyViewport({ label, width, height }, targetUrl, outputDir, index) {
-  const debuggingPort = 9340 + index;
-  const userDataDir = join(tmpdir(), `ant-3d-verify-${label}-${Date.now()}`);
-  const browser = spawn(browserPath, [
-    "--headless=new",
-    "--disable-gpu",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-background-networking",
-    `--remote-debugging-port=${debuggingPort}`,
-    `--user-data-dir=${userDataDir}`,
-    `--window-size=${width},${height}`,
-    targetUrl,
-  ], { stdio: "ignore" });
-
-  try {
-    const targets = await waitForJson(`http://127.0.0.1:${debuggingPort}/json/list`);
-    const page = targets.find((target) => target.type === "page") ?? targets[0];
-    const socket = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolveSocket, rejectSocket) => {
-      socket.addEventListener("open", resolveSocket, { once: true });
-      socket.addEventListener("error", rejectSocket, { once: true });
+    browser = await chromium.launch({
+      channel: "chrome",
+      headless: true,
+      args: ["--disable-gpu", "--disable-background-networking"],
     });
+  } catch {
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--disable-background-networking"],
+    });
+  }
 
-    const cdp = new CdpSession(socket);
-    await cdp.send("Page.enable");
-    await cdp.send("Runtime.enable");
-    await cdp.send("Emulation.setDeviceMetricsOverride", {
-      width,
-      height,
+  try {
+    const context = await browser.newContext({
+      viewport: { width, height },
       deviceScaleFactor: 1,
-      mobile: width < 600,
+      isMobile: width < 600,
     });
-    await cdp.send("Page.navigate", { url: targetUrl });
+    const page = await context.newPage();
+    await page.goto(targetUrl);
 
-    const readyExpression = `
-      new Promise((resolve) => {
+    const ready = await page.evaluate(`
+      (() => new Promise((resolve) => {
         const started = Date.now();
         const tick = () => {
           if (window.__ANT_SIM_READY && document.querySelector("#world3d canvas")) resolve(true);
@@ -210,18 +129,12 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           else setTimeout(tick, 120);
         };
         tick();
-      })
-    `;
-    const ready = await cdp.send("Runtime.evaluate", {
-      expression: readyExpression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (!ready.result.value) throw new Error(`${label}: Three.js scene did not become ready.`);
+      }))()
+    `);
+    if (!ready) throw new Error(`${label}: Three.js scene did not become ready.`);
     await delay(900);
 
-    const hoverProbe = await cdp.send("Runtime.evaluate", {
-      expression: `(() => {
+    const hoverProbe = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
         const canvas = document.querySelector("#world3d canvas");
         const before = sim.targetCameraYaw;
@@ -246,15 +159,12 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
         const after = sim.targetCameraYaw;
         sim.pointerMap.delete(9981);
         return { before, after, delta: Math.abs(after - before) };
-      })()`,
-      returnByValue: true,
-    });
-    if (hoverProbe.result.value.delta > 0.000001) {
-      throw new Error(`${label}: camera yaw changed on hover without pointerdown: ${JSON.stringify(hoverProbe.result.value)}`);
+      })()`);
+    if (hoverProbe.delta > 0.000001) {
+      throw new Error(`${label}: camera yaw changed on hover without pointerdown: ${JSON.stringify(hoverProbe)}`);
     }
 
-    const canvasProbe = await cdp.send("Runtime.evaluate", {
-      expression: `(() => {
+    const canvasProbe = await page.evaluate((hoverYawDelta) => {
         const canvas = document.querySelector("#world3d canvas");
         const rect = canvas.getBoundingClientRect();
         const sim = window.__ANT_SIM;
@@ -288,20 +198,17 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           triangles: info?.render?.triangles ?? null,
           geometries: info?.memory?.geometries ?? null,
           textures: info?.memory?.textures ?? null,
-          hoverYawDelta: ${hoverProbe.result.value.delta},
+          hoverYawDelta,
         };
-      })()`,
-      returnByValue: true,
-    });
+      }, hoverProbe.delta);
 
-    const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     const screenshotPath = join(outputDir, `${label}.png`);
-    const screenshotBuffer = Buffer.from(screenshot.data, "base64");
+    const screenshotBuffer = await page.screenshot({ fullPage: false });
     writeFileSync(screenshotPath, screenshotBuffer);
     const png = decodePng(screenshotBuffer);
     const regionSize = Math.min(120, Math.floor(Math.min(png.width, png.height) * 0.28));
     const metrics = {
-      ...canvasProbe.result.value,
+      ...canvasProbe,
       ...measurePngRegion(png, {
         x: Math.floor((png.width - regionSize) / 2),
         y: Math.floor((png.height - regionSize) / 2),
@@ -327,7 +234,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       metrics.predatorCount !== 0 ||
       metrics.rivalCount !== 4 ||
       metrics.rivalScaleMin <= 1.1 ||
-      metrics.rivalColor !== "c65318" ||
+      metrics.rivalColor !== "8a4a2f" ||
       metrics.terrainPatches < 6 ||
       metrics.branchCount !== 0 ||
       metrics.toolButtons !== 0 ||
@@ -337,8 +244,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       throw new Error(`${label}: idle colony state check failed: ${JSON.stringify(metrics)}`);
     }
 
-    const idleProbe = await cdp.send("Runtime.evaluate", {
-      expression: `(() => {
+    const idle = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
         const before = {
           food: sim.colony.food,
@@ -407,10 +313,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           savedAnts: saved.antPopulation,
           savedFood: saved.food,
         };
-      })()`,
-      returnByValue: true,
-    });
-    const idle = idleProbe.result.value;
+      })()`);
     if (
       Math.abs(idle.noDeliveryFoodAfter - idle.noDeliveryFoodBefore) > 0.0001 ||
       idle.returnFoodAfter <= idle.returnFoodBefore ||
@@ -424,8 +327,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       throw new Error(`${label}: idle growth check failed: ${JSON.stringify(idle)}`);
     }
 
-    const fightProbe = await cdp.send("Runtime.evaluate", {
-      expression: `(() => {
+    const fight = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
         const ant = sim.ants[0];
         const guard = sim.ants[1];
@@ -441,6 +343,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
         ant.z = 0;
         ant.prevX = ant.x;
         ant.prevZ = ant.z;
+        ant.fleeTimer = 0;
+        ant.clashTimer = 0;
         rival.x = 0.5;
         rival.z = 0;
         rival.prevX = rival.x;
@@ -449,10 +353,25 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
         rival.aggression = 1;
         rival.stubbornness = 1;
         rival.scale = 1.35;
+        rival.retreat = 0;
+        rival.clash = null;
         rival.fightCooldown = 0;
         const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
         const resolved = rival.resolveAntContacts(sim);
         const afterDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+        const stateAtStart = ant.state;
+        const nestDistanceBefore = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
+        for (let i = 0; i < 160; i += 1) {
+          ant.update(1 / 60, sim);
+          rival.update(1 / 60, sim);
+        }
+        const stateAfterClash = ant.state;
+        const fleeTimer = ant.fleeTimer;
+        const nestDistanceAfter = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
+        ant.x = -80;
+        ant.z = -80;
+        ant.fleeTimer = 0;
+        ant.clashTimer = 0;
         guard.role = "guard";
         guard.traits.persistence = 1;
         guard.traits.caution = 1;
@@ -463,6 +382,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
         guard.z = 0;
         guard.prevX = guard.x;
         guard.prevZ = guard.z;
+        guard.fleeTimer = 0;
+        guard.clashTimer = 0;
         rival.x = 4.5;
         rival.z = 0;
         rival.prevX = rival.x;
@@ -471,30 +392,42 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
         rival.stubbornness = 0.1;
         rival.scale = 1.2;
         rival.retreat = 0;
+        rival.clash = null;
         rival.fightCooldown = 0;
         const repelled = rival.resolveAntContacts(sim);
+        const guardStateAtStart = guard.state;
+        for (let i = 0; i < 150; i += 1) {
+          guard.update(1 / 60, sim);
+          rival.update(1 / 60, sim);
+        }
         return {
           resolved,
           repelled,
           beforeDistance,
           afterDistance,
+          stateAtStart,
+          stateAfterClash,
+          fleeTimer,
+          nestDistanceBefore,
+          nestDistanceAfter,
+          guardStateAtStart,
           winner: rival.lastFightWinner,
-          antState: ant.state,
           antEnergy: ant.energy,
           rivalRetreat: rival.retreat,
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
           alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
         };
-      })()`,
-      returnByValue: true,
-    });
-    const fight = fightProbe.result.value;
+      })()`);
     if (
       !fight.resolved ||
       !fight.repelled ||
-      fight.afterDistance <= fight.beforeDistance ||
-      fight.antState !== "stunned" ||
+      Math.abs(fight.afterDistance - fight.beforeDistance) >= 0.25 ||
+      fight.stateAtStart !== "clash" ||
+      fight.stateAfterClash !== "flee" ||
+      fight.fleeTimer <= 0 ||
+      fight.nestDistanceAfter >= fight.nestDistanceBefore ||
+      fight.guardStateAtStart !== "clash" ||
       fight.antEnergy >= 1 ||
       fight.winner !== "colony" ||
       fight.rivalRetreat <= 0 ||
@@ -506,12 +439,10 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       throw new Error(`${label}: rival ant contact check failed: ${JSON.stringify(fight)}`);
     }
 
-    cdp.close();
+    await context.close();
     return { label, screenshotPath, metrics };
   } finally {
-    browser.kill();
-    await waitForProcessExit(browser);
-    removeTempDirectory(userDataDir);
+    await browser.close();
   }
 }
 
@@ -523,8 +454,8 @@ try {
   const address = server.address();
   const targetUrl = `http://127.0.0.1:${address.port}/`;
   const results = [];
-  results.push(await verifyViewport({ label: "mobile-390x844", width: 390, height: 844 }, targetUrl, outputDir, 0));
-  results.push(await verifyViewport({ label: "desktop-1366x768", width: 1366, height: 768 }, targetUrl, outputDir, 1));
+  results.push(await verifyViewport({ label: "mobile-390x844", width: 390, height: 844 }, targetUrl, outputDir));
+  results.push(await verifyViewport({ label: "desktop-1366x768", width: 1366, height: 768 }, targetUrl, outputDir));
   console.log(JSON.stringify({ targetUrl, results }, null, 2));
 } finally {
   server.close();

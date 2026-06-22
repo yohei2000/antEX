@@ -27,6 +27,8 @@ const ui = {
   expeditionReward: document.querySelector("#expeditionReward"),
   expeditionBtn: document.querySelector("#expeditionBtn"),
   battleLog: document.querySelector("#battleLog"),
+  empirePanel: document.querySelector("#empirePanel"),
+  panelGrip: document.querySelector("#panelGrip"),
   loadingOverlay: document.querySelector("#loadingOverlay"),
   loadingBar: document.querySelector("#loadingBar"),
   loadingLabel: document.querySelector("#loadingLabel"),
@@ -44,6 +46,7 @@ const SAVE_KEY = "ant3d.colonyState";
 const DISPLAY_ANT_CAP = 80;
 const RIVAL_ANT_COUNT = 4;
 const RIVAL_CONTACT_RADIUS = 4.1;
+const RIVAL_CLASH_DURATION = 2.0;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
@@ -490,6 +493,15 @@ class Ant3D {
     this.lastTrail = rand(0, 1);
     this.homeTimer = rand(0, 8);
     this.rescueTarget = null;
+    this.clashRival = null;
+    this.clashTimer = 0;
+    this.clashDuration = 0;
+    this.clashAnchorX = this.x;
+    this.clashAnchorZ = this.z;
+    this.clashPhase = rand(0, Math.PI * 2);
+    this.fleeTimer = 0;
+    this.fleeFromX = this.x;
+    this.fleeFromZ = this.z;
     this.prevX = this.x;
     this.prevZ = this.z;
     this.prevAngle = this.angle;
@@ -539,6 +551,11 @@ class Ant3D {
     this.energy = clamp(this.energy + dt * 0.012, 0, 1);
     this.lastTrail += dt;
 
+    if (this.clashTimer > 0 || this.state === "clash") {
+      this.updateClash(dt, sim);
+      return;
+    }
+
     const sensed = this.sense(sim);
     if (sensed.waterDepth > 0.08) {
       this.wet = clamp(this.wet + sensed.waterDepth * dt * 1.8, 0, 1.8);
@@ -563,6 +580,21 @@ class Ant3D {
 
     if (this.state === "stunned") {
       this.stun = rand(1.1, 3);
+      return;
+    }
+
+    if (this.fleeTimer > 0 || this.state === "flee") {
+      const steering = this.steering;
+      steering.x = 0;
+      steering.z = 0;
+      this.addSeparation(steering, sim);
+      this.addObstacleAvoidance(steering, sim);
+      this.updateFlee(dt, sim, steering);
+      this.move(dt, sim, steering);
+      if (this.lastTrail > 0.36) {
+        sim.addTrail(this.x, this.z, "alarm", 0.55);
+        this.lastTrail = 0;
+      }
       return;
     }
 
@@ -596,6 +628,71 @@ class Ant3D {
     if (this.state !== nextState) {
       this.state = nextState;
       this.stateTime = 0;
+    }
+  }
+
+  startRivalClash(rival, anchorX, anchorZ, duration = RIVAL_CLASH_DURATION) {
+    if (this.clashTimer > 0 || this.fleeTimer > 0 || this.stun > 0 || this.state === "stunned") return false;
+    this.clashRival = rival;
+    this.clashTimer = duration;
+    this.clashDuration = duration;
+    this.clashAnchorX = anchorX;
+    this.clashAnchorZ = anchorZ;
+    this.clashPhase = rand(0, Math.PI * 2);
+    this.setState("clash");
+    return true;
+  }
+
+  updateClash(dt, sim) {
+    const rival = this.clashRival;
+    if (!rival || rival.clash?.ant !== this) {
+      this.clashRival = null;
+      this.clashTimer = 0;
+      if (this.state === "clash") this.setState(this.fleeTimer > 0 ? "flee" : "explore");
+      return;
+    }
+    this.clashTimer = Math.max(0, this.clashTimer - dt);
+    const orbit = this.clashPhase + this.stateTime * 9.5;
+    const offset = 0.42 + Math.sin(this.stateTime * 17 + this.id) * 0.08;
+    this.x += (this.clashAnchorX + Math.sin(orbit) * offset - this.x) * 0.36;
+    this.z += (this.clashAnchorZ + Math.cos(orbit) * offset - this.z) * 0.36;
+    this.angle = Math.atan2(rival.x - this.x, rival.z - this.z);
+    this.energy = clamp(this.energy - dt * 0.018, 0, 1);
+    this.keepInWorld(sim);
+  }
+
+  startFleeHome(fromX, fromZ, duration = 4.6) {
+    this.clashRival = null;
+    this.clashTimer = 0;
+    this.clashDuration = 0;
+    this.fleeTimer = Math.max(this.fleeTimer, duration);
+    this.fleeFromX = fromX;
+    this.fleeFromZ = fromZ;
+    this.foodSourceId = null;
+    this.carrying = 0;
+    this.homeTimer = 0;
+    this.stun = 0;
+    this.setState("flee");
+  }
+
+  updateFlee(dt, sim, steering) {
+    this.fleeTimer = Math.max(0, this.fleeTimer - dt);
+    const homeDistance = distance2(this.x, this.z, sim.nest.x, sim.nest.z) || 1;
+    steering.x += ((sim.nest.x - this.x) / homeDistance) * (2.2 + this.traits.caution * 0.8);
+    steering.z += ((sim.nest.z - this.z) / homeDistance) * (2.2 + this.traits.caution * 0.8);
+
+    const threatDistance = distance2(this.x, this.z, this.fleeFromX, this.fleeFromZ) || 1;
+    if (threatDistance < 18) {
+      const away = (1 - threatDistance / 18) * 1.2;
+      steering.x += ((this.x - this.fleeFromX) / threatDistance) * away;
+      steering.z += ((this.z - this.fleeFromZ) / threatDistance) * away;
+    }
+
+    this.energy = clamp(this.energy - dt * 0.018, 0, 1);
+    if (homeDistance < sim.nest.radius * 0.82 || this.fleeTimer <= 0) {
+      this.fleeTimer = 0;
+      this.energy = clamp(this.energy + 0.18, 0, 1);
+      this.setState("explore");
     }
   }
 
@@ -899,6 +996,7 @@ class Ant3D {
 
     let speed = this.baseSpeed;
     if (this.state === "panic") speed *= 1.42;
+    if (this.state === "flee") speed *= 1.36;
     if (this.state === "return") speed *= 1.08;
     if (this.state === "rescue") speed *= 0.92;
     if (this.state === "wet") speed *= 0.56;
@@ -956,7 +1054,7 @@ class Ant3D {
       z: this.prevZ + (this.z - this.prevZ) * alpha,
       angle: this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha,
       y: 0.2 + Math.sin(sim.renderTime * 0.006 + this.id) * 0.012,
-      scale: this.state === "stunned" ? 0.82 : 1,
+      scale: this.state === "stunned" ? 0.82 : this.state === "clash" ? 1.06 : 1,
       state: this.state,
       carrying: this.carrying,
     };
@@ -979,9 +1077,12 @@ class RivalAnt3D {
     this.prevZ = 0;
     this.disrupt = 0;
     this.retreat = 0;
+    this.retreatFromX = 0;
+    this.retreatFromZ = 0;
     this.victoryFlash = 0;
     this.fightCooldown = rand(0, 0.8);
     this.lastFightWinner = null;
+    this.clash = null;
     this.steering = { x: 0, z: 0 };
     this.placeAtSpawn(sim);
   }
@@ -997,6 +1098,8 @@ class RivalAnt3D {
         this.z = z;
         this.prevX = x;
         this.prevZ = z;
+        this.homeX = x;
+        this.homeZ = z;
         return;
       }
     }
@@ -1004,6 +1107,8 @@ class RivalAnt3D {
     this.z = -sim.worldRadius * 0.38;
     this.prevX = this.x;
     this.prevZ = this.z;
+    this.homeX = this.x;
+    this.homeZ = this.z;
   }
 
   update(dt, sim) {
@@ -1015,19 +1120,28 @@ class RivalAnt3D {
     this.retreat = Math.max(0, this.retreat - dt);
     this.victoryFlash = Math.max(0, this.victoryFlash - dt * 1.4);
 
+    if (this.clash) {
+      this.updateClash(dt, sim);
+      return;
+    }
+
     const steering = this.steering;
     steering.x = 0;
     steering.z = 0;
-    const targetAnt = this.findHarassmentTarget(sim);
-    if (targetAnt) this.addAntHarassment(steering, targetAnt);
-    else this.addFoodCompetition(steering, sim);
-    this.addNestAvoidance(steering, sim);
+    if (this.retreat > 0) {
+      this.addRetreatHome(steering, sim);
+    } else {
+      const targetAnt = this.findHarassmentTarget(sim);
+      if (targetAnt) this.addAntHarassment(steering, targetAnt);
+      else this.addFoodCompetition(steering, sim);
+      this.addNestAvoidance(steering, sim);
+    }
     this.addRivalSeparation(steering, sim);
 
     this.wander += (Math.random() - 0.5) * dt * (1.9 + this.aggression * 1.2);
-    const retreatFactor = this.retreat > 0 ? -1.4 : 1;
-    steering.x += Math.sin(this.wander) * (0.52 + this.stubbornness * 0.26) * retreatFactor;
-    steering.z += Math.cos(this.wander) * (0.52 + this.stubbornness * 0.26) * retreatFactor;
+    const wanderStrength = this.retreat > 0 ? 0.16 : 0.52 + this.stubbornness * 0.26;
+    steering.x += Math.sin(this.wander) * wanderStrength;
+    steering.z += Math.cos(this.wander) * wanderStrength;
 
     const centerDistance = Math.hypot(this.x, this.z) || 1;
     if (centerDistance > sim.worldRadius * 0.78) {
@@ -1057,11 +1171,11 @@ class RivalAnt3D {
   }
 
   findHarassmentTarget(sim) {
-    if (this.retreat > 0) return null;
+    if (this.retreat > 0 || this.clash) return null;
     let best = null;
     let bestScore = 0;
     for (const ant of sim.ants) {
-      if (ant.state === "stunned") continue;
+      if (ant.state === "stunned" || ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0) continue;
       const d = distance2(this.x, this.z, ant.x, ant.z);
       if (d > 18) continue;
       const carryingBonus = ant.carrying > 0 ? 10 : 0;
@@ -1092,6 +1206,22 @@ class RivalAnt3D {
     steering.z += ((this.z - sim.nest.z) / (d || 1)) * strength;
   }
 
+  addRetreatHome(steering, sim) {
+    const d = distance2(this.x, this.z, this.homeX, this.homeZ) || 1;
+    steering.x += ((this.homeX - this.x) / d) * 2.6;
+    steering.z += ((this.homeZ - this.z) / d) * 2.6;
+
+    const threatDistance = distance2(this.x, this.z, this.retreatFromX, this.retreatFromZ) || 1;
+    if (threatDistance < 22) {
+      const away = (1 - threatDistance / 22) * 0.86;
+      steering.x += ((this.x - this.retreatFromX) / threatDistance) * away;
+      steering.z += ((this.z - this.retreatFromZ) / threatDistance) * away;
+    }
+
+    if (d < 3.2) this.retreat = Math.min(this.retreat, 0.35);
+    this.addNestAvoidance(steering, sim);
+  }
+
   addRivalSeparation(steering, sim) {
     for (const other of sim.rivalAnts) {
       if (other === this) continue;
@@ -1101,6 +1231,117 @@ class RivalAnt3D {
         steering.z += ((this.z - other.z) / d) * 0.44;
       }
     }
+  }
+
+  combatPowers(ant) {
+    const rivalPower = 0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28;
+    const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
+    const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
+    const antPower = 0.7 + ant.traits.persistence * 0.74 + ant.traits.caution * 0.52 + rolePower + carriedPenalty;
+    return { rivalPower, antPower };
+  }
+
+  startClash(ant, anchorX, anchorZ) {
+    if (this.clash || this.retreat > 0 || !ant.startRivalClash(this, anchorX, anchorZ, RIVAL_CLASH_DURATION)) return false;
+    this.clash = {
+      ant,
+      elapsed: 0,
+      duration: RIVAL_CLASH_DURATION,
+      anchorX,
+      anchorZ,
+      phase: rand(0, Math.PI * 2),
+      nextTrail: 0.24,
+    };
+    this.state = "clash";
+    this.disrupt = Math.max(this.disrupt, 0.55);
+    return true;
+  }
+
+  updateClash(dt, sim) {
+    const clash = this.clash;
+    const ant = clash?.ant;
+    if (!clash || !ant || !sim.ants.includes(ant)) {
+      this.clash = null;
+      this.state = "rival";
+      return;
+    }
+
+    clash.elapsed += dt;
+    const progress = clamp(clash.elapsed / clash.duration, 0, 1);
+    const spin = clash.phase + clash.elapsed * 8.8;
+    const spacing = 0.95 + Math.sin(clash.elapsed * 18 + this.id) * 0.16;
+    const antTargetX = clash.anchorX + Math.sin(spin) * spacing;
+    const antTargetZ = clash.anchorZ + Math.cos(spin) * spacing;
+    const rivalTargetX = clash.anchorX - Math.sin(spin) * spacing * 0.86;
+    const rivalTargetZ = clash.anchorZ - Math.cos(spin) * spacing * 0.86;
+
+    ant.x += (antTargetX - ant.x) * 0.45;
+    ant.z += (antTargetZ - ant.z) * 0.45;
+    this.x += (rivalTargetX - this.x) * 0.45;
+    this.z += (rivalTargetZ - this.z) * 0.45;
+    ant.angle = Math.atan2(this.x - ant.x, this.z - ant.z);
+    this.angle = Math.atan2(ant.x - this.x, ant.z - this.z);
+    ant.energy = clamp(ant.energy - dt * (0.018 + this.aggression * 0.012), 0, 1);
+    this.disrupt = Math.max(this.disrupt, 0.35 + progress * 0.28);
+    ant.keepInWorld(sim);
+    this.keepInWorld(sim);
+
+    if (clash.elapsed >= clash.nextTrail) {
+      sim.addTrail(clash.anchorX, clash.anchorZ, "alarm", 0.52);
+      clash.nextTrail += 0.5;
+    }
+
+    if (clash.elapsed >= clash.duration) this.finishClash(sim);
+  }
+
+  finishClash(sim) {
+    const clash = this.clash;
+    if (!clash) return;
+    const ant = clash.ant;
+    this.clash = null;
+    this.state = "rival";
+    ant.clashRival = null;
+    ant.clashTimer = 0;
+    ant.clashDuration = 0;
+
+    const { rivalPower, antPower } = this.combatPowers(ant);
+    const dx = ant.x - this.x;
+    const dz = ant.z - this.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const nx = dx / d;
+    const nz = dz / d;
+
+    if (rivalPower >= antPower) {
+      ant.x += nx * 0.42;
+      ant.z += nz * 0.42;
+      ant.angle = Math.atan2(sim.nest.x - ant.x, sim.nest.z - ant.z);
+      ant.energy = clamp(ant.energy - 0.18 * this.aggression, 0, 1);
+      ant.startFleeHome(this.x, this.z, 4.4 + this.aggression * 1.4);
+      this.victoryFlash = 1;
+      this.lastFightWinner = "rival";
+      sim.registerRivalFight("rival", ant, this);
+    } else {
+      this.x -= nx * 0.38;
+      this.z -= nz * 0.38;
+      this.angle = Math.atan2(this.homeX - this.x, this.homeZ - this.z);
+      this.disrupt = Math.max(this.disrupt, 1.15);
+      this.startRetreatHome(ant.x, ant.z, 4.8 + ant.traits.persistence * 1.5);
+      if (ant.state === "clash") ant.setState(ant.carrying > 0 ? "return" : "explore");
+      this.lastFightWinner = "colony";
+      sim.registerRivalFight("colony", ant, this);
+    }
+
+    sim.addTrail((this.x + ant.x) * 0.5, (this.z + ant.z) * 0.5, "alarm", 0.9);
+    this.fightCooldown = 1.05;
+    ant.keepInWorld(sim);
+    this.keepInWorld(sim);
+  }
+
+  startRetreatHome(fromX, fromZ, duration) {
+    this.retreatFromX = fromX;
+    this.retreatFromZ = fromZ;
+    this.retreat = Math.max(this.retreat, duration);
+    this.fightCooldown = Math.max(this.fightCooldown, 1.05);
   }
 
   move(dt, sim, steering) {
@@ -1118,8 +1359,10 @@ class RivalAnt3D {
   }
 
   resolveAntContacts(sim) {
+    if (this.clash) return true;
     let resolved = false;
     for (const ant of sim.ants) {
+      if (ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0 || ant.stun > 0) continue;
       const contact = RIVAL_CONTACT_RADIUS + this.scale * 0.52;
       const dx = ant.x - this.x;
       const dz = ant.z - this.z;
@@ -1129,13 +1372,9 @@ class RivalAnt3D {
       const nx = d > 0.0001 ? dx / d : Math.sin(this.angle);
       const nz = d > 0.0001 ? dz / d : Math.cos(this.angle);
       const overlap = contact - d;
-      const rivalPower = 0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28;
-      const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
-      const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
-      const antPower = 0.7 + ant.traits.persistence * 0.74 + ant.traits.caution * 0.52 + rolePower + carriedPenalty;
 
       if (this.fightCooldown > 0) {
-        const shove = overlap * 0.55 + 0.18;
+        const shove = Math.min(0.34, overlap * 0.18 + 0.06);
         ant.x += nx * shove;
         ant.z += nz * shove;
         this.x -= nx * shove * 0.35;
@@ -1146,36 +1385,13 @@ class RivalAnt3D {
         continue;
       }
 
-      if (rivalPower >= antPower) {
-        const push = overlap + 2.2 + this.aggression * 1.35;
-        ant.x += nx * push;
-        ant.z += nz * push;
-        ant.angle = Math.atan2(nx, nz);
-        ant.energy = clamp(ant.energy - 0.24 * this.aggression, 0, 1);
-        ant.homeTimer = Math.max(ant.homeTimer, 8.5 + this.aggression * 4);
-        ant.foodSourceId = null;
-        if (ant.carrying > 0) ant.carrying = 0;
-        ant.stun = Math.max(ant.stun, 0.55 + this.aggression * 0.9);
-        ant.setState("stunned");
-        ant.keepInWorld(sim);
-        this.victoryFlash = 1;
-        this.lastFightWinner = "rival";
-        sim.registerRivalFight("rival", ant, this);
-      } else {
-        const push = overlap + 2.1 + ant.traits.persistence * 1.1;
-        this.x -= nx * push;
-        this.z -= nz * push;
-        this.angle = Math.atan2(-nx, -nz);
-        this.disrupt = Math.max(this.disrupt, 1.15);
-        this.retreat = Math.max(this.retreat, 2.8 + ant.traits.persistence * 1.8);
-        this.keepInWorld(sim);
-        this.lastFightWinner = "colony";
-        sim.registerRivalFight("colony", ant, this);
+      const anchorX = (this.x + ant.x) * 0.5;
+      const anchorZ = (this.z + ant.z) * 0.5;
+      if (this.startClash(ant, anchorX, anchorZ)) {
+        sim.addTrail(anchorX, anchorZ, "alarm", 0.55);
+        resolved = true;
+        break;
       }
-
-      sim.addTrail((this.x + ant.x) * 0.5, (this.z + ant.z) * 0.5, "alarm", 0.9);
-      this.fightCooldown = 0.95;
-      resolved = true;
     }
     return resolved;
   }
@@ -1192,7 +1408,7 @@ class RivalAnt3D {
   }
 
   renderState(sim, alpha) {
-    const jitter = this.disrupt > 0 || this.victoryFlash > 0 ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.045 : 0;
+    const jitter = this.disrupt > 0 || this.victoryFlash > 0 || this.clash ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.045 : 0;
     return {
       x: this.prevX + (this.x - this.prevX) * alpha,
       z: this.prevZ + (this.z - this.prevZ) * alpha,
@@ -1429,6 +1645,11 @@ class AntColony3D {
     this.derived = {};
     this.saveTimer = 0;
     this.activeTab = "growth";
+    {
+      const savedPanelCompact = readStorage("ant3d.panelCompact");
+      this.panelCompact = savedPanelCompact == null ? window.innerWidth < 680 : savedPanelCompact === "1";
+    }
+    this.panelDrag = null;
     this.selectedAnt = null;
     this.collectedFood = 0;
     this.nextFoodId = 1;
@@ -1526,7 +1747,7 @@ class AntColony3D {
       nest: new THREE.MeshStandardMaterial({ color: 0x6d4e2a, roughness: 0.95 }),
       nestDark: new THREE.MeshBasicMaterial({ color: 0x1d140e }),
       antDefault: new THREE.MeshStandardMaterial({ color: 0x18130f, roughness: 0.72 }),
-      antRival: new THREE.MeshStandardMaterial({ color: 0xc65318, emissive: 0x3a0f03, roughness: 0.76 }),
+      antRival: new THREE.MeshStandardMaterial({ color: 0x8a4a2f, emissive: 0x120705, roughness: 0.8 }),
       antAppendage: new THREE.MeshStandardMaterial({ color: 0x17100b, roughness: 0.82 }),
       food: new THREE.MeshStandardMaterial({ color: 0xd9a63f, roughness: 0.62 }),
       foodFruit: new THREE.MeshStandardMaterial({ color: 0xc45b33, roughness: 0.7 }),
@@ -1564,6 +1785,8 @@ class AntColony3D {
       wet: new THREE.MeshStandardMaterial({ color: 0x174b63, roughness: 0.64 }),
       stunned: new THREE.MeshStandardMaterial({ color: 0x5b6261, roughness: 0.82 }),
       rescue: new THREE.MeshStandardMaterial({ color: 0x17645a, roughness: 0.7 }),
+      flee: new THREE.MeshStandardMaterial({ color: 0x49332a, roughness: 0.78 }),
+      clash: new THREE.MeshStandardMaterial({ color: 0x5f2f24, roughness: 0.76 }),
       rival: this.materials.antRival,
     };
 
@@ -1701,6 +1924,8 @@ class AntColony3D {
     };
     window.addEventListener("resize", this.boundResize);
     window.addEventListener("pagehide", this.boundPageHide, { once: true });
+    this.setPanelCompact(this.panelCompact, false);
+    this.bindPanelGestures();
 
     ui.buttons.forEach((button) => {
       button.addEventListener("click", () => {
@@ -1729,6 +1954,50 @@ class AntColony3D {
 
     const canvas = this.renderer.domElement;
     this.input = new InputManager(this, canvas);
+  }
+
+  bindPanelGestures() {
+    if (!ui.panelGrip) return;
+    this.boundPanelPointerDown = (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      this.panelDrag = {
+        id: event.pointerId,
+        startY: event.clientY,
+        lastY: event.clientY,
+      };
+      try {
+        ui.panelGrip.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic events in tests may not own a real pointer capture.
+      }
+    };
+    this.boundPanelPointerMove = (event) => {
+      if (!this.panelDrag || this.panelDrag.id !== event.pointerId) return;
+      event.preventDefault();
+      this.panelDrag.lastY = event.clientY;
+    };
+    this.boundPanelPointerUp = (event) => {
+      if (!this.panelDrag || this.panelDrag.id !== event.pointerId) return;
+      event.preventDefault();
+      const deltaY = this.panelDrag.lastY - this.panelDrag.startY;
+      this.panelDrag = null;
+      if (deltaY > 28) this.setPanelCompact(true);
+      else if (deltaY < -28) this.setPanelCompact(false);
+      else this.setPanelCompact(!this.panelCompact);
+    };
+    ui.panelGrip.addEventListener("pointerdown", this.boundPanelPointerDown, { passive: false });
+    ui.panelGrip.addEventListener("pointermove", this.boundPanelPointerMove, { passive: false });
+    ui.panelGrip.addEventListener("pointerup", this.boundPanelPointerUp, { passive: false });
+    ui.panelGrip.addEventListener("pointercancel", this.boundPanelPointerUp, { passive: false });
+  }
+
+  setPanelCompact(compact, persist = true) {
+    this.panelCompact = Boolean(compact);
+    ui.empirePanel?.classList.toggle("is-compact", this.panelCompact);
+    ui.panelGrip?.setAttribute("aria-expanded", String(!this.panelCompact));
+    ui.panelGrip?.setAttribute("aria-label", this.panelCompact ? "管理パネルを広げる" : "管理パネルを小さくする");
+    if (persist) writeStorage("ant3d.panelCompact", this.panelCompact ? "1" : "0");
   }
 
   reset(newGame = true) {
@@ -2191,6 +2460,12 @@ class AntColony3D {
     this.isRunning = false;
     this.renderer.setAnimationLoop(null);
     this.input?.dispose();
+    if (ui.panelGrip && this.boundPanelPointerDown) {
+      ui.panelGrip.removeEventListener("pointerdown", this.boundPanelPointerDown);
+      ui.panelGrip.removeEventListener("pointermove", this.boundPanelPointerMove);
+      ui.panelGrip.removeEventListener("pointerup", this.boundPanelPointerUp);
+      ui.panelGrip.removeEventListener("pointercancel", this.boundPanelPointerUp);
+    }
     window.removeEventListener("resize", this.boundResize);
     window.removeEventListener("pagehide", this.boundPageHide);
     this.clearBranchPreview();
@@ -2294,7 +2569,7 @@ class AntColony3D {
     let best = null;
     let bestDistance = radius;
     for (const rival of this.rivalAnts) {
-      if (rival.retreat > 0) continue;
+      if (rival.retreat > 0 || rival.clash) continue;
       const d = distance2(x, z, rival.x, rival.z);
       if (d < bestDistance) {
         best = rival;
