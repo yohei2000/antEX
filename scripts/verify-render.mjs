@@ -279,6 +279,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           rivalCount: sim?.rivalAnts?.length ?? null,
           rivalScaleMin: sim?.rivalAnts?.length ? Math.min(...sim.rivalAnts.map((ant) => ant.scale)) : null,
           rivalScaleMax: sim?.rivalAnts?.length ? Math.max(...sim.rivalAnts.map((ant) => ant.scale)) : null,
+          rivalColor: sim?.materials?.antRival?.color?.getHexString?.() ?? null,
           terrainPatches: sim?.terrain?.length ?? null,
           branchCount: sim?.branches?.length ?? null,
           toolButtons: document.querySelectorAll("[data-tool]").length,
@@ -326,6 +327,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       metrics.predatorCount !== 0 ||
       metrics.rivalCount !== 4 ||
       metrics.rivalScaleMin <= 1.1 ||
+      metrics.rivalColor !== "c65318" ||
       metrics.terrainPatches < 6 ||
       metrics.branchCount !== 0 ||
       metrics.toolButtons !== 0 ||
@@ -347,16 +349,39 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
           wounded: sim.colony.woundedAnts,
           threat: sim.colony.enemyThreat,
         };
-        sim.updateColony(90);
-        const afterGrowth = {
-          food: sim.colony.food,
+        const noDeliveryRestore = {
           ants: sim.colony.antPopulation,
+          soldiers: sim.colony.soldierAnts,
+          hatchProgress: sim.colony.hatchProgress,
+          food: sim.colony.food,
         };
+        sim.colony.antPopulation = sim.computeDerived().capacity;
+        sim.colony.hatchProgress = 0;
+        sim.colony.soldierAnts = sim.computeDerived().soldierTarget;
+        const noDeliveryFoodBefore = sim.colony.food;
+        sim.updateColony(25);
+        const noDeliveryFoodAfter = sim.colony.food;
+        sim.colony.antPopulation = noDeliveryRestore.ants;
+        sim.colony.soldierAnts = noDeliveryRestore.soldiers;
+        sim.colony.hatchProgress = noDeliveryRestore.hatchProgress;
+        sim.colony.food = noDeliveryRestore.food;
+        sim.syncAntPopulation();
+        const carrier = sim.ants[0];
+        carrier.x = sim.nest.x;
+        carrier.z = sim.nest.z;
+        carrier.prevX = carrier.x;
+        carrier.prevZ = carrier.z;
+        carrier.carrying = 1.25;
+        carrier.foodSourceId = null;
+        carrier.state = "return";
+        const returnFoodBefore = sim.colony.food;
+        carrier.updateReturn(1 / 60, sim, { x: 0, z: 0 });
+        const returnFoodAfter = sim.colony.food;
         sim.colony.food = 10000;
         sim.colony.lifetimeFood = Math.max(sim.colony.lifetimeFood, 10000);
-        sim.colony.antPopulation = Math.max(sim.colony.antPopulation, 24);
+        sim.colony.antPopulation = 24;
         const capacityBeforeUpgrade = sim.computeDerived().capacity;
-        sim.buyUpgrade("storageChambers");
+        const boughtUpgrade = sim.buyUpgrade("storageChambers");
         const capacityAfterUpgrade = sim.computeDerived().capacity;
         sim.colony.soldierAnts = 8;
         sim.colony.woundedAnts = 0;
@@ -369,9 +394,13 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
         const saved = JSON.parse(localStorage.getItem("ant3d.colonyState"));
         return {
           before,
-          afterGrowth,
+          noDeliveryFoodBefore,
+          noDeliveryFoodAfter,
+          returnFoodBefore,
+          returnFoodAfter,
           capacityBeforeUpgrade,
           capacityAfterUpgrade,
+          boughtUpgrade,
           territoryAfterBattle: sim.colony.territory,
           foodAfterBattle: sim.colony.food,
           cooldownActive: sim.colony.battleCooldownUntil > Date.now(),
@@ -383,8 +412,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
     });
     const idle = idleProbe.result.value;
     if (
-      idle.afterGrowth.food <= idle.before.food ||
-      idle.afterGrowth.ants < idle.before.ants ||
+      Math.abs(idle.noDeliveryFoodAfter - idle.noDeliveryFoodBefore) > 0.0001 ||
+      idle.returnFoodAfter <= idle.returnFoodBefore ||
+      !idle.boughtUpgrade ||
       idle.capacityAfterUpgrade <= idle.capacityBeforeUpgrade ||
       idle.territoryAfterBattle <= idle.before.territory ||
       !idle.cooldownActive ||
@@ -398,7 +428,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
       expression: `(() => {
         const sim = window.__ANT_SIM;
         const ant = sim.ants[0];
+        const guard = sim.ants[1];
         const rival = sim.rivalAnts[0];
+        sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
         ant.role = "worker";
         ant.traits.persistence = 0.1;
         ant.traits.caution = 0.1;
@@ -421,13 +453,36 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
         const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
         const resolved = rival.resolveAntContacts(sim);
         const afterDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+        guard.role = "guard";
+        guard.traits.persistence = 1;
+        guard.traits.caution = 1;
+        guard.state = "explore";
+        guard.carrying = 0;
+        guard.energy = 1;
+        guard.x = 4;
+        guard.z = 0;
+        guard.prevX = guard.x;
+        guard.prevZ = guard.z;
+        rival.x = 4.5;
+        rival.z = 0;
+        rival.prevX = rival.x;
+        rival.prevZ = rival.z;
+        rival.aggression = 0.1;
+        rival.stubbornness = 0.1;
+        rival.scale = 1.2;
+        rival.retreat = 0;
+        rival.fightCooldown = 0;
+        const repelled = rival.resolveAntContacts(sim);
         return {
           resolved,
+          repelled,
           beforeDistance,
           afterDistance,
           winner: rival.lastFightWinner,
           antState: ant.state,
           antEnergy: ant.energy,
+          rivalRetreat: rival.retreat,
+          fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
           alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
         };
@@ -437,10 +492,14 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
     const fight = fightProbe.result.value;
     if (
       !fight.resolved ||
+      !fight.repelled ||
       fight.afterDistance <= fight.beforeDistance ||
-      fight.winner !== "rival" ||
-      fight.antState !== "panic" ||
+      fight.antState !== "stunned" ||
       fight.antEnergy >= 1 ||
+      fight.winner !== "colony" ||
+      fight.rivalRetreat <= 0 ||
+      fight.fightStats.rivalWins < 1 ||
+      fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||
       fight.alarmTrails < 1
     ) {

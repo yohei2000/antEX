@@ -43,6 +43,7 @@ const MAX_FIXED_STEPS = 5;
 const SAVE_KEY = "ant3d.colonyState";
 const DISPLAY_ANT_CAP = 80;
 const RIVAL_ANT_COUNT = 4;
+const RIVAL_CONTACT_RADIUS = 4.1;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
@@ -656,12 +657,15 @@ class Ant3D {
     }
 
     for (const rival of sim.rivalAnts) {
+      if (rival.retreat > 0) continue;
       const d = distance2(this.x, this.z, rival.x, rival.z);
-      const reach = 9 + rival.scale * 4 + rival.aggression * 6;
+      const reach = 7 + rival.scale * 2.8 + rival.aggression * 4;
       if (d < reach) {
         const strength = (1 - d / reach) * (0.38 + rival.aggression * 0.62);
-        hazard.x += ((this.x - rival.x) / (d || 1)) * strength * (1.1 + this.traits.caution * 0.8);
-        hazard.z += ((this.z - rival.z) / (d || 1)) * strength * (1.1 + this.traits.caution * 0.8);
+        const guardResolve = this.role === "guard" ? 0.42 : 0;
+        const avoidance = Math.max(0.18, 0.86 + this.traits.caution * 0.55 - guardResolve - this.traits.persistence * 0.22);
+        hazard.x += ((this.x - rival.x) / (d || 1)) * strength * avoidance;
+        hazard.z += ((this.z - rival.z) / (d || 1)) * strength * avoidance;
         if (d < 4.6 + rival.scale * 1.3) sensed.alarm = Math.max(sensed.alarm, strength * 0.9);
       }
     }
@@ -692,7 +696,7 @@ class Ant3D {
     if (sensed.closestFood && sensed.foodDistance < sensed.closestFood.radius + 1.5 && this.role !== "guard") {
       this.carrying = Math.min(1, sensed.closestFood.amount);
       this.foodSourceId = sensed.closestFood.id;
-      sensed.closestFood.amount -= this.carrying * 0.72;
+      sensed.closestFood.amount -= this.carrying;
       sim.refreshFoodMesh(sensed.closestFood);
       this.setState("return");
       return;
@@ -859,6 +863,16 @@ class Ant3D {
         steering.z += nz * 1.5;
       }
     }
+
+    if (this.role === "guard" || this.traits.persistence > 0.72) {
+      const rival = sim.findRivalThreat(this.x, this.z, 18);
+      if (rival) {
+        const d = distance2(this.x, this.z, rival.x, rival.z) || 1;
+        const pressure = this.role === "guard" ? 1.35 : 0.68;
+        steering.x += ((rival.x - this.x) / d) * pressure;
+        steering.z += ((rival.z - this.z) / d) * pressure;
+      }
+    }
     for (const rival of sim.rivalAnts) {
       const d = distance2(this.x, this.z, rival.x, rival.z);
       const radius = 1.45 + rival.scale * 0.72;
@@ -964,6 +978,8 @@ class RivalAnt3D {
     this.prevX = 0;
     this.prevZ = 0;
     this.disrupt = 0;
+    this.retreat = 0;
+    this.victoryFlash = 0;
     this.fightCooldown = rand(0, 0.8);
     this.lastFightWinner = null;
     this.steering = { x: 0, z: 0 };
@@ -996,17 +1012,22 @@ class RivalAnt3D {
     this.prevAngle = this.angle;
     this.fightCooldown = Math.max(0, this.fightCooldown - dt);
     this.disrupt = Math.max(0, this.disrupt - dt * 0.72);
+    this.retreat = Math.max(0, this.retreat - dt);
+    this.victoryFlash = Math.max(0, this.victoryFlash - dt * 1.4);
 
     const steering = this.steering;
     steering.x = 0;
     steering.z = 0;
-    this.addFoodCompetition(steering, sim);
+    const targetAnt = this.findHarassmentTarget(sim);
+    if (targetAnt) this.addAntHarassment(steering, targetAnt);
+    else this.addFoodCompetition(steering, sim);
     this.addNestAvoidance(steering, sim);
     this.addRivalSeparation(steering, sim);
 
     this.wander += (Math.random() - 0.5) * dt * (1.9 + this.aggression * 1.2);
-    steering.x += Math.sin(this.wander) * (0.52 + this.stubbornness * 0.26);
-    steering.z += Math.cos(this.wander) * (0.52 + this.stubbornness * 0.26);
+    const retreatFactor = this.retreat > 0 ? -1.4 : 1;
+    steering.x += Math.sin(this.wander) * (0.52 + this.stubbornness * 0.26) * retreatFactor;
+    steering.z += Math.cos(this.wander) * (0.52 + this.stubbornness * 0.26) * retreatFactor;
 
     const centerDistance = Math.hypot(this.x, this.z) || 1;
     if (centerDistance > sim.worldRadius * 0.78) {
@@ -1033,6 +1054,33 @@ class RivalAnt3D {
     const strength = (1 - closestDistance / 72) * (0.72 + this.aggression * 0.5);
     steering.x += ((closest.x - this.x) / (closestDistance || 1)) * strength;
     steering.z += ((closest.z - this.z) / (closestDistance || 1)) * strength;
+  }
+
+  findHarassmentTarget(sim) {
+    if (this.retreat > 0) return null;
+    let best = null;
+    let bestScore = 0;
+    for (const ant of sim.ants) {
+      if (ant.state === "stunned") continue;
+      const d = distance2(this.x, this.z, ant.x, ant.z);
+      if (d > 18) continue;
+      const carryingBonus = ant.carrying > 0 ? 10 : 0;
+      const guardPenalty = ant.role === "guard" ? -4 : 0;
+      const foodBonus = sim.isNearFood(ant.x, ant.z, 14) ? 6 : 0;
+      const score = 22 - d + carryingBonus + foodBonus + guardPenalty;
+      if (score > bestScore) {
+        best = ant;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  addAntHarassment(steering, ant) {
+    const d = distance2(this.x, this.z, ant.x, ant.z) || 1;
+    const charge = 1.65 + this.aggression * 1.25;
+    steering.x += ((ant.x - this.x) / d) * charge;
+    steering.z += ((ant.z - this.z) / d) * charge;
   }
 
   addNestAvoidance(steering, sim) {
@@ -1063,7 +1111,7 @@ class RivalAnt3D {
     } else {
       this.angle += (Math.random() - 0.5) * dt * 0.4;
     }
-    const speed = this.baseSpeed * (1 - this.disrupt * 0.28) * sim.terrainSpeedAt(this.x, this.z) * sim.timeScale;
+    const speed = this.baseSpeed * (1 - this.disrupt * 0.28) * (this.retreat > 0 ? 1.28 : 1) * sim.terrainSpeedAt(this.x, this.z) * sim.timeScale;
     this.x += Math.sin(this.angle) * speed * dt;
     this.z += Math.cos(this.angle) * speed * dt;
     this.keepInWorld(sim);
@@ -1072,7 +1120,7 @@ class RivalAnt3D {
   resolveAntContacts(sim) {
     let resolved = false;
     for (const ant of sim.ants) {
-      const contact = 1.9 + this.scale * 0.92;
+      const contact = RIVAL_CONTACT_RADIUS + this.scale * 0.52;
       const dx = ant.x - this.x;
       const dz = ant.z - this.z;
       const d = Math.hypot(dx, dz);
@@ -1082,35 +1130,51 @@ class RivalAnt3D {
       const nz = d > 0.0001 ? dz / d : Math.cos(this.angle);
       const overlap = contact - d;
       const rivalPower = 0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28;
-      const rolePower = ant.role === "guard" ? 0.52 : ant.role === "worker" ? 0.12 : ant.role === "scout" ? 0.18 : 0.06;
-      const antPower = 0.62 + ant.traits.persistence * 0.56 + ant.traits.caution * 0.42 + rolePower;
+      const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
+      const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
+      const antPower = 0.7 + ant.traits.persistence * 0.74 + ant.traits.caution * 0.52 + rolePower + carriedPenalty;
+
+      if (this.fightCooldown > 0) {
+        const shove = overlap * 0.55 + 0.18;
+        ant.x += nx * shove;
+        ant.z += nz * shove;
+        this.x -= nx * shove * 0.35;
+        this.z -= nz * shove * 0.35;
+        ant.keepInWorld(sim);
+        this.keepInWorld(sim);
+        resolved = true;
+        continue;
+      }
 
       if (rivalPower >= antPower) {
-        const push = overlap + 1.25 + this.aggression * 0.85;
+        const push = overlap + 2.2 + this.aggression * 1.35;
         ant.x += nx * push;
         ant.z += nz * push;
         ant.angle = Math.atan2(nx, nz);
-        ant.energy = clamp(ant.energy - 0.14 * this.aggression, 0, 1);
-        ant.homeTimer = Math.max(ant.homeTimer, 7.5 + this.aggression * 3);
+        ant.energy = clamp(ant.energy - 0.24 * this.aggression, 0, 1);
+        ant.homeTimer = Math.max(ant.homeTimer, 8.5 + this.aggression * 4);
         ant.foodSourceId = null;
-        if (ant.carrying > 0) ant.carrying *= 0.25;
-        if (ant.state !== "return" || ant.carrying <= 0.05) ant.setState("panic");
+        if (ant.carrying > 0) ant.carrying = 0;
+        ant.stun = Math.max(ant.stun, 0.55 + this.aggression * 0.9);
+        ant.setState("stunned");
         ant.keepInWorld(sim);
+        this.victoryFlash = 1;
         this.lastFightWinner = "rival";
+        sim.registerRivalFight("rival", ant, this);
       } else {
-        const push = overlap + 0.85 + ant.traits.persistence * 0.82;
+        const push = overlap + 2.1 + ant.traits.persistence * 1.1;
         this.x -= nx * push;
         this.z -= nz * push;
         this.angle = Math.atan2(-nx, -nz);
-        this.disrupt = Math.max(this.disrupt, 0.8);
+        this.disrupt = Math.max(this.disrupt, 1.15);
+        this.retreat = Math.max(this.retreat, 2.8 + ant.traits.persistence * 1.8);
         this.keepInWorld(sim);
         this.lastFightWinner = "colony";
+        sim.registerRivalFight("colony", ant, this);
       }
 
-      if (this.fightCooldown <= 0) {
-        sim.addTrail((this.x + ant.x) * 0.5, (this.z + ant.z) * 0.5, "alarm", 0.65);
-        this.fightCooldown = 0.85;
-      }
+      sim.addTrail((this.x + ant.x) * 0.5, (this.z + ant.z) * 0.5, "alarm", 0.9);
+      this.fightCooldown = 0.95;
       resolved = true;
     }
     return resolved;
@@ -1128,13 +1192,13 @@ class RivalAnt3D {
   }
 
   renderState(sim, alpha) {
-    const jitter = this.disrupt > 0 ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.035 : 0;
+    const jitter = this.disrupt > 0 || this.victoryFlash > 0 ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.045 : 0;
     return {
       x: this.prevX + (this.x - this.prevX) * alpha,
       z: this.prevZ + (this.z - this.prevZ) * alpha,
       angle: this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha,
       y: 0.24 + Math.sin(sim.renderTime * 0.004 + this.id) * 0.01,
-      scale: this.scale + jitter,
+      scale: this.scale + jitter + this.victoryFlash * 0.08,
       state: this.state,
       carrying: 0,
     };
@@ -1377,6 +1441,7 @@ class AntColony3D {
     this.terrain = [];
     this.predators = [];
     this.rivalAnts = [];
+    this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer = [];
     this.lastUiUpdate = 0;
     this.resizeWidth = 0;
@@ -1461,7 +1526,7 @@ class AntColony3D {
       nest: new THREE.MeshStandardMaterial({ color: 0x6d4e2a, roughness: 0.95 }),
       nestDark: new THREE.MeshBasicMaterial({ color: 0x1d140e }),
       antDefault: new THREE.MeshStandardMaterial({ color: 0x18130f, roughness: 0.72 }),
-      antRival: new THREE.MeshStandardMaterial({ color: 0x6b3f22, roughness: 0.8 }),
+      antRival: new THREE.MeshStandardMaterial({ color: 0xc65318, emissive: 0x3a0f03, roughness: 0.76 }),
       antAppendage: new THREE.MeshStandardMaterial({ color: 0x17100b, roughness: 0.82 }),
       food: new THREE.MeshStandardMaterial({ color: 0xd9a63f, roughness: 0.62 }),
       foodFruit: new THREE.MeshStandardMaterial({ color: 0xc45b33, roughness: 0.7 }),
@@ -1655,8 +1720,9 @@ class AntColony3D {
 
     ui.reset.addEventListener("click", () => this.reset(true));
     ui.upgradeList.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-upgrade]");
+      const button = event.target.closest("[data-upgrade]");
       if (!button) return;
+      event.preventDefault();
       this.buyUpgrade(button.dataset.upgrade);
     });
     ui.expeditionBtn.addEventListener("click", () => this.startExpedition());
@@ -1678,6 +1744,7 @@ class AntColony3D {
     this.trails = [];
     this.predators = [];
     this.rivalAnts = [];
+    this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer.length = 0;
     this.antRenderer?.beginFrame();
     this.antRenderer?.endFrame();
@@ -1719,9 +1786,6 @@ class AntColony3D {
 
   updateColony(dt) {
     const d = this.computeDerived();
-    const foodGain = d.foodRate * dt;
-    this.colony.food += foodGain;
-    this.colony.lifetimeFood += foodGain;
 
     if (this.colony.antPopulation < d.capacity && this.colony.food >= d.antCost) {
       this.colony.hatchProgress += d.growthPerSecond * dt;
@@ -1796,6 +1860,10 @@ class AntColony3D {
     let remaining = elapsed;
     while (remaining > 0) {
       const step = Math.min(remaining, 10);
+      const d = this.computeDerived();
+      const offlineFoodGain = d.foodRate * step * 0.72;
+      this.colony.food += offlineFoodGain;
+      this.colony.lifetimeFood += offlineFoodGain;
       this.updateColony(step);
       remaining -= step;
     }
@@ -1831,6 +1899,33 @@ class AntColony3D {
     this.renderUpgrades();
     this.updateStats();
     this.saveColony();
+  }
+
+  missingRequirements(upgrade, cost) {
+    const missing = [];
+    if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}`);
+    if (upgrade.requires.ants && this.colony.antPopulation < upgrade.requires.ants) missing.push(`アリ ${upgrade.requires.ants}`);
+    if (upgrade.requires.lifetimeFood && this.colony.lifetimeFood < upgrade.requires.lifetimeFood) missing.push(`累計食料 ${upgrade.requires.lifetimeFood}`);
+    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`領土 ${upgrade.requires.territory}`);
+    if (upgrade.requires.nestLevel && this.colony.nestLevel < upgrade.requires.nestLevel) missing.push(`巣Lv ${upgrade.requires.nestLevel}`);
+    return missing;
+  }
+
+  buyUpgrade(id) {
+    const upgrade = UPGRADE_DEFS.find((item) => item.id === id);
+    if (!upgrade) return false;
+    const level = this.colony.upgrades[id] ?? 0;
+    if (level >= upgrade.max) return false;
+    const cost = upgradeCost(upgrade, level);
+    if (this.missingRequirements(upgrade, cost).length > 0) return false;
+    this.colony.food -= cost;
+    this.colony.upgrades[id] = level + 1;
+    this.pushLog(`${upgrade.name} Lv${level + 1} を強化`);
+    this.computeDerived();
+    this.renderUpgrades();
+    this.updateStats();
+    this.saveColony();
+    return true;
   }
 
   startExpedition() {
@@ -1877,6 +1972,26 @@ class AntColony3D {
       hole.position.y = 2.35 + growth * 0.42;
       hole.scale.multiplyScalar(1.0005);
     }
+  }
+
+  renderUpgrades() {
+    const html = UPGRADE_DEFS.map((upgrade) => {
+      const level = this.colony.upgrades[upgrade.id] ?? 0;
+      const complete = level >= upgrade.max;
+      const cost = complete ? 0 : upgradeCost(upgrade, level);
+      const missing = complete ? [] : this.missingRequirements(upgrade, cost);
+      const disabled = complete || missing.length > 0 ? "disabled" : "";
+      const meta = complete ? "最大Lv" : missing.length ? `不足: ${missing.join(" / ")}` : `費用: 食料 ${fmt(cost, 0)}`;
+      return `
+        <article class="upgrade-card">
+          <strong>${upgrade.name} Lv${level}/${upgrade.max}</strong>
+          <p>${upgrade.desc}</p>
+          <div class="upgrade-meta">${meta}</div>
+          <button type="button" data-upgrade="${upgrade.id}" ${disabled}>強化</button>
+        </article>
+      `;
+    }).join("");
+    ui.upgradeList.innerHTML = html;
   }
 
   renderUpgrades() {
@@ -2165,6 +2280,39 @@ class AntColony3D {
   seedRivalAnts() {
     this.rivalAnts.length = 0;
     for (let i = 0; i < RIVAL_ANT_COUNT; i += 1) this.rivalAnts.push(new RivalAnt3D(i + 1, this));
+  }
+
+  isNearFood(x, z, radius) {
+    for (const food of this.food) {
+      if (food.amount <= 0) continue;
+      if (distance2(x, z, food.x, food.z) < radius + food.radius) return true;
+    }
+    return false;
+  }
+
+  findRivalThreat(x, z, radius) {
+    let best = null;
+    let bestDistance = radius;
+    for (const rival of this.rivalAnts) {
+      if (rival.retreat > 0) continue;
+      const d = distance2(x, z, rival.x, rival.z);
+      if (d < bestDistance) {
+        best = rival;
+        bestDistance = d;
+      }
+    }
+    return best;
+  }
+
+  registerRivalFight(winner, ant, rival) {
+    this.rivalFightStats.clashes += 1;
+    if (winner === "colony") {
+      this.rivalFightStats.colonyWins += 1;
+      this.pushLog(`敵アリを撃退: 個体${ant.id}`);
+    } else {
+      this.rivalFightStats.rivalWins += 1;
+      this.pushLog(`敵アリが個体${ant.id}を弾いた`);
+    }
   }
 
   updatePredators(dt) {
