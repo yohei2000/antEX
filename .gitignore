@@ -2,5 +2,7 @@ node_modules/
 dist/
 public/
 verification/
+playwright-report/
+test-results/
 .DS_Store
 Thumbs.db

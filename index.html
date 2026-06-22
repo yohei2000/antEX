@@ -3,19 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>アントックス - アリ帝国放置ゲーム 3D</title>
+    <title>antEX - アリの巣大帝国 3D</title>
     <link rel="stylesheet" href="./styles.css" />
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js"
-        }
-      }
-    </script>
   </head>
   <body>
     <main class="app-shell">
-      <div id="world3d" aria-label="アリ帝国の3D巣マップ"></div>
+      <div id="world3d" aria-label="アリの巣大帝国の3Dマップ"></div>
 
       <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite">
         <div class="loading-box">
@@ -85,7 +78,7 @@
         <div class="panel-header">
           <div>
             <strong>巣の成長</strong>
-            <span id="colonySummary">巣Lv1 / 働き蟻 0 / 兵隊 0</span>
+            <span id="colonySummary">巣Lv1 / 働きアリ 0 / 兵隊 0</span>
           </div>
           <div class="growth-meter" aria-label="孵化進行">
             <span id="growthFill"></span>
@@ -131,7 +124,7 @@
         <div id="expeditionTab" class="tab-panel">
           <div class="expedition-grid">
             <div>
-              <span>出撃兵</span>
+              <span>出撃数</span>
               <strong id="expeditionSoldiers">0</strong>
             </div>
             <div>
@@ -149,6 +142,6 @@
       </section>
     </main>
 
-    <script type="module" src="./src/simulation.js"></script>
+    <script type="module" src="./src/simulation.ts"></script>
   </body>
 </html>

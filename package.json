@@ -1,12 +1,30 @@
 {
-  "name": "ant-disturbance-lab",
+  "name": "antex",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "node ./scripts/serve.mjs",
-    "build": "node ./scripts/build-static.mjs",
+    "dev": "vite",
+    "start": "vite --host 127.0.0.1",
+    "preview": "vite preview --host 127.0.0.1",
+    "build": "vite build",
     "asset:audit": "node ./scripts/asset-audit.mjs",
-    "check": "node --check ./src/simulation.js && node --check ./scripts/serve.mjs && node --check ./scripts/verify-render.mjs && node --check ./scripts/build-static.mjs && node --check ./scripts/asset-audit.mjs",
-    "verify": "node ./scripts/verify-render.mjs"
+    "check": "tsc --noEmit && node --check ./scripts/serve.mjs && node --check ./scripts/verify-render.mjs && node --check ./scripts/asset-audit.mjs",
+    "verify": "node ./scripts/verify-render.mjs",
+    "test": "vitest run",
+    "eval:smoke": "playwright test tests/playwright/smoke.spec.ts",
+    "eval:save": "playwright test tests/playwright/save-load.spec.ts",
+    "eval:ui": "playwright test --ui",
+    "eval:report": "playwright show-report"
+  },
+  "dependencies": {
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^26.0.0",
+    "@types/three": "^0.184.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
   }
 }

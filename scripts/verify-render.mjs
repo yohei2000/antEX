@@ -459,7 +459,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir, in
 const outputDir = resolve("verification");
 mkdirSync(outputDir, { recursive: true });
 
-const server = await createStaticServer({ port: 0 });
+const server = await createStaticServer({ root: resolve("dist"), port: 0 });
 try {
   const address = server.address();
   const targetUrl = `http://127.0.0.1:${address.port}/`;
