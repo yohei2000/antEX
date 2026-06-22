@@ -196,3 +196,55 @@ test("rival ant combat can stun a worker and be repelled by a guard", async ({ p
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);
   expect(fight.stats.colonyWins).toBeGreaterThanOrEqual(1);
 });
+
+test("rival ants actively harass ants near food instead of only camping", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const food = sim.food[0];
+    const ant = sim.ants[0];
+    const rival = sim.rivalAnts[0];
+    sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+
+    ant.role = "worker";
+    ant.traits.persistence = 0.1;
+    ant.traits.caution = 0.1;
+    ant.state = "explore";
+    ant.stun = 0;
+    ant.carrying = 0;
+    ant.x = food.x + 9;
+    ant.z = food.z;
+    rival.x = food.x;
+    rival.z = food.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.aggression = 1;
+    rival.stubbornness = 1;
+    rival.scale = 1.35;
+    rival.retreat = 0;
+    rival.fightCooldown = 0;
+    const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+    let minDistance = beforeDistance;
+    for (let i = 0; i < 140; i += 1) {
+      rival.update(1 / 30, sim);
+      minDistance = Math.min(minDistance, Math.hypot(ant.x - rival.x, ant.z - rival.z));
+      if (sim.rivalFightStats.clashes > 0) break;
+    }
+    const afterDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
+
+    return {
+      beforeDistance,
+      minDistance,
+      afterDistance,
+      antState: ant.state,
+      rivalWins: sim.rivalFightStats.rivalWins,
+      clashes: sim.rivalFightStats.clashes,
+    };
+  });
+
+  expect(result.minDistance).toBeLessThan(result.beforeDistance);
+  expect(result.clashes).toBeGreaterThanOrEqual(1);
+  expect(result.rivalWins).toBeGreaterThanOrEqual(1);
+  expect(result.antState).toBe("stunned");
+});
