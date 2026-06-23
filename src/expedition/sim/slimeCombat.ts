@@ -86,7 +86,6 @@ function combatPower(slime: ArmySlime, patch: ContactPatch, own: boolean): numbe
     slime.encirclement > 0
       ? 1 - clamp01(slime.encirclement) * (slime.isEncircled ? 0.34 : 0.22)
       : 1;
-  const sideBalance = slime.side === "player" ? 0.98 : 1.03;
   return (
     activePower *
     density *
@@ -96,8 +95,7 @@ function combatPower(slime: ArmySlime, patch: ContactPatch, own: boolean): numbe
     shock *
     crowdingEfficiency *
     encirclementPenalty *
-    (1 - slime.fatigue / 155) *
-    sideBalance
+    (1 - slime.fatigue / 155)
   );
 }
 
@@ -130,8 +128,7 @@ export function resolveCombat(own: ArmySlime, enemy: ArmySlime, dt: number): voi
         enemy.zocStrength *
         (enemy.cohesion / 100) *
         ringIntegrity(enemy) *
-        (1 + enemy.envelopPower * 0.22) *
-        (enemy.side === "enemy" ? 1.03 : 0.98);
+        (1 + enemy.envelopPower * 0.22);
       if (breakoutPower > containmentPower) {
         own.encirclement = clamp01(own.encirclement - 0.2 * dt);
       } else {

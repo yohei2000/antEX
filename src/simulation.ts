@@ -26,7 +26,7 @@ const ui = {
   growthTab: document.querySelector("#growthTab"),
   expeditionTab: document.querySelector("#expeditionTab"),
   expeditionSoldiers: document.querySelector("#expeditionSoldiers"),
-  expeditionChance: document.querySelector("#expeditionChance"),
+  expeditionEnemyIntel: document.querySelector("#expeditionEnemyIntel"),
   expeditionReward: document.querySelector("#expeditionReward"),
   expeditionBtn: document.querySelector("#expeditionBtn"),
   expeditionStatus: document.querySelector("#expeditionStatus"),
@@ -2199,7 +2199,7 @@ class AntColony3D {
     this.expeditionResultHold = 0;
     this.expeditionView.setVisible(true);
     this.expeditionView.update(this.expeditionSession.state);
-    this.pushLog(`遠征開始: 兵隊アリ${scenario.assignedSoldiers} / 敵アリ圧${fmt(scenario.enemyPower, 1)}`);
+    this.pushLog(`遠征開始: 兵隊アリ${scenario.assignedSoldiers} / 敵${scenario.enemyIntel.label}`);
     this.updateStats();
   }
 
@@ -2220,7 +2220,7 @@ class AntColony3D {
     const result = this.expeditionSession.update(dt);
     this.expeditionView.update(this.expeditionSession.state);
     if (result && !this.expeditionResultApplied) {
-      this.applyExpeditionResult(result.outcome);
+      this.applyExpeditionResult(result);
       this.expeditionResultApplied = true;
       this.expeditionResultHold = 4.5;
     }
@@ -2230,9 +2230,9 @@ class AntColony3D {
     }
   }
 
-  applyExpeditionResult(outcome) {
+  applyExpeditionResult(result) {
     const scenario = this.expeditionSession.scenario;
-    const impact = expeditionResultImpact(scenario, outcome);
+    const impact = expeditionResultImpact(scenario, result);
     this.colony.food = Math.max(0, this.colony.food + impact.foodDelta);
     this.colony.lifetimeFood += impact.lifetimeFoodDelta;
     this.colony.territory += impact.territoryDelta;
@@ -2909,7 +2909,6 @@ class AntColony3D {
     const cooldownLeft = Math.max(0, Math.ceil((this.colony.battleCooldownUntil - Date.now()) / 1000));
     const scenario = this.expeditionSession?.scenario ?? this.createCurrentExpeditionScenario();
     const assigned = scenario.assignedSoldiers;
-    const chancePct = assigned > 0 ? Math.round(scenario.winChance * 100) : 0;
     const reward = scenario.reward;
 
     ui.statFood.textContent = fmt(this.colony.food, 0);
@@ -2925,8 +2924,8 @@ class AntColony3D {
     ui.colonySummary.textContent = `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(this.colony.soldierAnts, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     ui.activeToolLabel.textContent = `領土 ${fmt(this.colony.territory, 0)} / 大帝国まで拡張中`;
-    ui.expeditionSoldiers.textContent = fmt(assigned, 0);
-    ui.expeditionChance.textContent = `${chancePct}%`;
+    ui.expeditionSoldiers.textContent = `${fmt(assigned, 0)}/${fmt(scenario.availableSoldiers, 0)}`;
+    ui.expeditionEnemyIntel.textContent = `${scenario.enemyIntel.label} / ${scenario.enemyIntel.formationBias}`;
     ui.expeditionReward.textContent = fmt(reward, 0);
     ui.expeditionBtn.disabled = Boolean(this.expeditionSession) || cooldownLeft > 0 || assigned < 1;
     ui.expeditionBtn.textContent = this.expeditionSession
@@ -2944,7 +2943,12 @@ class AntColony3D {
   renderExpeditionStatus(cooldownLeft) {
     if (!this.expeditionSession) {
       if (cooldownLeft > 0) return `<div>再編中: ${cooldownLeft}s</div>`;
-      return "<div>兵隊アリを送り出し、近隣の餌場を制圧する</div>";
+      const scenario = this.createCurrentExpeditionScenario();
+      return `
+        <div>兵隊アリを送り出し、近隣の餌場を制圧する</div>
+        <div>敵情報 ${scenario.enemyIntel.soldierScale}規模 / ${scenario.enemyIntel.attackBias} / 包囲${scenario.enemyIntel.envelopBias}</div>
+        <div>味方隊列 士気${fmt(scenario.playerFormation.morale, 0)} 結束${fmt(scenario.playerFormation.cohesion, 0)} 疲労${fmt(scenario.playerFormation.fatigue, 0)} 前線幅${fmt(scenario.playerFormation.frontWidth, 0)}</div>
+      `;
     }
     const telemetry = this.expeditionSession.telemetry();
     const outcome = telemetry.outcome
@@ -2955,9 +2959,10 @@ class AntColony3D {
           : "膠着"
       : "交戦中";
     return `
-      <div>餌場争奪 ${outcome} / ${fmt(telemetry.elapsed, 0)}s</div>
-      <div>遠征隊 士気${fmt(telemetry.player.morale, 0)} 結束${fmt(telemetry.player.cohesion, 0)} 疲労${fmt(telemetry.player.fatigue, 0)} 包囲圧${fmt(telemetry.player.encirclement * 100, 0)}%</div>
-      <div>敵アリ隊 士気${fmt(telemetry.enemy.morale, 0)} 結束${fmt(telemetry.enemy.cohesion, 0)} 疲労${fmt(telemetry.enemy.fatigue, 0)} 包囲圧${fmt(telemetry.enemy.encirclement * 100, 0)}%</div>
+      <div>餌場争奪 ${outcome} / ${fmt(telemetry.elapsed, 0)}s / 前線 ${telemetry.frontState} / 危険 ${telemetry.danger}</div>
+      <div>遠征隊 士気${fmt(telemetry.player.morale, 0)} 結束${fmt(telemetry.player.cohesion, 0)} 疲労${fmt(telemetry.player.fatigue, 0)} 包囲圧${fmt(telemetry.player.encirclement * 100, 0)}% 姿勢${telemetry.player.posture}</div>
+      <div>敵アリ隊 士気${fmt(telemetry.enemy.morale, 0)} 結束${fmt(telemetry.enemy.cohesion, 0)} 疲労${fmt(telemetry.enemy.fatigue, 0)} 包囲圧${fmt(telemetry.enemy.encirclement * 100, 0)}% 姿勢${telemetry.enemy.posture}</div>
+      ${telemetry.result?.diagnosis?.length ? `<div>診断 ${telemetry.result.diagnosis.map((item) => `${item.cause}→${item.hint}`).join(" / ")}</div>` : ""}
     `;
   }
 
