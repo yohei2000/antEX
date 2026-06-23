@@ -9,6 +9,11 @@ import { BattleSimulation } from "../../src/expedition/sim/simulation";
 import { updateSlime } from "../../src/expedition/sim/slimePhysics";
 import { splitArmySlime } from "../../src/expedition/sim/slimeSplit";
 import { sampleEnemyZoc } from "../../src/expedition/sim/zoc";
+import {
+  EXPEDITION_ANT_MIN_WORLD_GAP,
+  createExpeditionAntRenderStates,
+  nearestAntRenderGap,
+} from "../../src/expedition/threeView";
 
 const fixedRng = () => 0.42;
 
@@ -108,5 +113,35 @@ describe("expedition battle simulation", () => {
 
     expect(result?.outcome).toBe("player");
     expect(result?.playerArmyCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps expedition ants visually separated as individuals", () => {
+    const scenario = createExpeditionScenario({
+      activeAnts: 80,
+      soldierAnts: 6,
+      attackPower: 3,
+      defensePower: 2,
+      territory: 6,
+      enemyThreat: 6,
+    });
+    const battle = new BattleSimulation({
+      rng: fixedRng,
+      player: scenario.playerSeed,
+      enemy: scenario.enemySeed,
+    });
+
+    for (let i = 0; i < 90; i += 1) battle.update(1 / 60);
+
+    const playerAnts = createExpeditionAntRenderStates(battle.state.playerSlimes);
+    const enemyAnts = createExpeditionAntRenderStates(battle.state.enemySlimes);
+
+    expect(playerAnts.length).toBeGreaterThanOrEqual(46);
+    expect(enemyAnts.length).toBeGreaterThanOrEqual(52);
+    expect(nearestAntRenderGap(playerAnts)).toBeGreaterThanOrEqual(
+      EXPEDITION_ANT_MIN_WORLD_GAP * 0.72,
+    );
+    expect(nearestAntRenderGap(enemyAnts)).toBeGreaterThanOrEqual(
+      EXPEDITION_ANT_MIN_WORLD_GAP * 0.72,
+    );
   });
 });

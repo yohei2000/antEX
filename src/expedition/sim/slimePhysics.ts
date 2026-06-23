@@ -28,6 +28,8 @@ import {
 
 type ForceMap = Map<string, Vector2Like>;
 
+const PARTICLE_PERSONAL_SPACE = 13.5;
+
 function addForce(forces: ForceMap, node: SlimeNode, force: Vector2Like): void {
   forces.set(node.id, add(forces.get(node.id) ?? { x: 0, y: 0 }, force));
 }
@@ -468,6 +470,26 @@ function constrainParticleOutsideEnemyZoc(
   particle.velocity = scale(tangentVelocity, 0.72);
 }
 
+function applyParticleSeparation(slime: ArmySlime): void {
+  for (let i = 0; i < slime.particles.length; i += 1) {
+    const a = slime.particles[i];
+    if (!a.alive) continue;
+    for (let j = i + 1; j < slime.particles.length; j += 1) {
+      const b = slime.particles[j];
+      if (!b.alive) continue;
+      const delta = sub(b.position, a.position);
+      const gap = length(delta);
+      if (gap <= 0 || gap >= PARTICLE_PERSONAL_SPACE) continue;
+      const normal = scale(delta, 1 / gap);
+      const push = (PARTICLE_PERSONAL_SPACE - gap) * 0.18;
+      a.position = add(a.position, scale(normal, -push));
+      b.position = add(b.position, scale(normal, push));
+      a.velocity = add(a.velocity, scale(normal, -push * 0.32));
+      b.velocity = add(b.velocity, scale(normal, push * 0.32));
+    }
+  }
+}
+
 function enforceCohesionEnvelope(slime: ArmySlime): void {
   const maxRadius = Math.max(
     125,
@@ -552,8 +574,9 @@ function updateParticles(slime: ArmySlime, enemy: ArmySlime, dt: number): void {
     const desired = add(target, wander);
     particle.velocity = add(scale(particle.velocity, 0.84), scale(sub(desired, particle.position), 0.09));
     particle.position = add(particle.position, scale(particle.velocity, dt * 3.5));
-    constrainParticleOutsideEnemyZoc(particle, enemy);
   }
+  applyParticleSeparation(slime);
+  for (const particle of slime.particles) constrainParticleOutsideEnemyZoc(particle, enemy);
 }
 
 function updateDerivedStats(slime: ArmySlime, dt: number): void {

@@ -18,7 +18,7 @@ import {
   scale,
 } from "./vector";
 
-const PARTICLE_COUNT = 128;
+const PARTICLE_COUNT = 96;
 const MESH_LAYERS = [
   { name: "outer", count: 20, radius: 1, angleOffset: 0, mass: 1 },
   { name: "mid", count: 14, radius: 0.68, angleOffset: 0.5, mass: 1.15 },

@@ -21,6 +21,7 @@ export type BattleArmySeed = {
   viscosity?: number;
   width?: number;
   depth?: number;
+  particleCount?: number;
   posture?: SlimePosture;
   manualControl?: boolean;
 };

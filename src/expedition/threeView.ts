@@ -1,19 +1,61 @@
 import * as THREE from "three";
 import { getBoundaryNodes } from "./sim/slime";
-import type { ArmySlime, BattleState, SlimeLink, Vector2Like } from "./sim/types";
+import type { ArmySlime, BattleState, SlimeLink, SlimeParticle, Vector2Like } from "./sim/types";
 
 const WORLD_SCALE = 0.18;
-const MAX_PARTICLES_PER_SIDE = 768;
+const MAX_ANTS_PER_SIDE = 384;
+export const EXPEDITION_ANT_MIN_WORLD_GAP = 3.15;
 const BOARD_WIDTH = 1000 * WORLD_SCALE;
 const BOARD_HEIGHT = 650 * WORLD_SCALE;
+const ANT_VISUAL_SCALE = 1.16;
+
+const ANT_BODY_PARTS = [
+  { name: "gaster", x: 0, y: 0, z: -1.78, sx: 0.48, sy: 0.29, sz: 0.72 },
+  { name: "postpetiole", x: 0, y: -0.02, z: -0.82, sx: 0.18, sy: 0.16, sz: 0.19 },
+  { name: "petiole", x: 0, y: -0.02, z: -0.48, sx: 0.14, sy: 0.14, sz: 0.16 },
+  { name: "mesosoma", x: 0, y: 0, z: 0.18, sx: 0.36, sy: 0.25, sz: 0.58 },
+  { name: "head", x: 0, y: 0, z: 1.22, sx: 0.42, sy: 0.27, sz: 0.42 },
+] as const;
+
+const ANT_APPENDAGE_SEGMENTS = (() => {
+  const segments: Array<{
+    radius: number;
+    from: readonly [number, number, number];
+    to: readonly [number, number, number];
+  }> = [];
+  for (const side of [-1, 1]) {
+    const legs = [
+      { rootX: 0.22, rootZ: 0.52, elbowX: 0.64, elbowZ: 0.96, footX: 1.22, footZ: 1.22 },
+      { rootX: 0.28, rootZ: 0.13, elbowX: 0.82, elbowZ: 0.08, footX: 1.36, footZ: -0.02 },
+      { rootX: 0.22, rootZ: -0.22, elbowX: 0.64, elbowZ: -0.64, footX: 1.18, footZ: -1.08 },
+    ];
+    for (const leg of legs) {
+      segments.push({ radius: 0.026, from: [side * leg.rootX, -0.02, leg.rootZ], to: [side * leg.elbowX, -0.13, leg.elbowZ] });
+      segments.push({ radius: 0.021, from: [side * leg.elbowX, -0.13, leg.elbowZ], to: [side * leg.footX, -0.25, leg.footZ] });
+    }
+    segments.push({ radius: 0.021, from: [side * 0.16, 0.05, 1.54], to: [side * 0.42, 0.02, 1.96] });
+    segments.push({ radius: 0.017, from: [side * 0.42, 0.02, 1.96], to: [side * 0.78, -0.06, 2.26] });
+    segments.push({ radius: 0.024, from: [side * 0.12, -0.04, 1.54], to: [side * 0.34, -0.08, 1.76] });
+  }
+  return segments;
+})();
+
+export type ExpeditionAntRenderState = {
+  x: number;
+  z: number;
+  y: number;
+  angle: number;
+  scale: number;
+};
 
 type SideMeshes = {
   formation: THREE.LineSegments;
   pheromone: THREE.LineSegments;
   stress: THREE.LineSegments;
-  legs: THREE.LineSegments;
-  particles: THREE.InstancedMesh;
-  heads: THREE.InstancedMesh;
+  bodyParts: Map<string, THREE.InstancedMesh>;
+  bodyCounts: Map<string, number>;
+  appendages: THREE.InstancedMesh;
+  appendageCount: number;
 };
 
 export class ExpeditionThreeView {
@@ -22,6 +64,12 @@ export class ExpeditionThreeView {
   private readonly enemy: SideMeshes;
   private readonly contactLines: THREE.LineSegments;
   private readonly dummy = new THREE.Object3D();
+  private readonly segmentStart = new THREE.Vector3();
+  private readonly segmentEnd = new THREE.Vector3();
+  private readonly segmentMid = new THREE.Vector3();
+  private readonly segmentDirection = new THREE.Vector3();
+  private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly segmentQuaternion = new THREE.Quaternion();
   private readonly geometries = new Set<THREE.BufferGeometry>();
   private readonly materials = new Set<THREE.Material>();
 
@@ -33,9 +81,9 @@ export class ExpeditionThreeView {
     const board = new THREE.Mesh(
       this.trackGeometry(new THREE.PlaneGeometry(BOARD_WIDTH, BOARD_HEIGHT)),
       this.trackMaterial(new THREE.MeshBasicMaterial({
-        color: 0x21190f,
+        color: 0x6b4d2f,
         transparent: true,
-        opacity: 0.94,
+        opacity: 0.82,
         depthWrite: false,
       })),
     );
@@ -45,19 +93,19 @@ export class ExpeditionThreeView {
     this.group.add(this.soilMarks());
     this.group.add(this.landmarks());
 
-    this.player = this.createSideMeshes(0x1b1510, 0x5c3b22, 0x65b69a);
-    this.enemy = this.createSideMeshes(0x8a4a2f, 0x5c2418, 0xd07a52);
-    this.group.add(...Object.values(this.player), ...Object.values(this.enemy));
+    this.player = this.createSideMeshes(0x1b1510, 0x5c3b22, 0x1a120c, 0x65b69a);
+    this.enemy = this.createSideMeshes(0x8a4a2f, 0x5c2418, 0x2a100b, 0xd07a52);
+    this.group.add(...this.sideObjects(this.player), ...this.sideObjects(this.enemy));
 
     this.contactLines = new THREE.LineSegments(
       this.trackGeometry(new THREE.BufferGeometry()),
       this.trackMaterial(new THREE.LineBasicMaterial({
         color: 0xf2c66d,
         transparent: true,
-        opacity: 0.65,
+        opacity: 0.42,
       })),
     );
-    this.contactLines.position.y = 0.35;
+    this.contactLines.position.y = 0.36;
     this.group.add(this.contactLines);
   }
 
@@ -66,8 +114,8 @@ export class ExpeditionThreeView {
   }
 
   update(state: BattleState): void {
-    this.updateSide(this.player, state.playerSlimes, 0x5c3b22);
-    this.updateSide(this.enemy, state.enemySlimes, 0x8a4a2f);
+    this.updateSide(this.player, state.playerSlimes, 0x5c3b22, 1);
+    this.updateSide(this.enemy, state.enemySlimes, 0x8a4a2f, 1.08);
     this.updateContacts([...state.playerSlimes, ...state.enemySlimes]);
   }
 
@@ -77,8 +125,9 @@ export class ExpeditionThreeView {
   }
 
   private createSideMeshes(
-    particleColor: number,
+    bodyColor: number,
     lineColor: number,
+    appendageColor: number,
     zocColor: number,
   ): SideMeshes {
     const formation = new THREE.LineSegments(
@@ -86,58 +135,77 @@ export class ExpeditionThreeView {
       this.trackMaterial(new THREE.LineBasicMaterial({
         color: lineColor,
         transparent: true,
-        opacity: 0.74,
+        opacity: 0.1,
       })),
     );
-    formation.position.y = 0.44;
+    formation.position.y = 0.34;
 
     const pheromone = new THREE.LineSegments(
       this.trackGeometry(new THREE.BufferGeometry()),
       this.trackMaterial(new THREE.LineBasicMaterial({
         color: zocColor,
         transparent: true,
-        opacity: 0.2,
+        opacity: 0.05,
       })),
     );
-    pheromone.position.y = 0.22;
+    pheromone.position.y = 0.18;
 
     const stress = new THREE.LineSegments(
       this.trackGeometry(new THREE.BufferGeometry()),
       this.trackMaterial(new THREE.LineBasicMaterial({
         color: 0xf0a43a,
         transparent: true,
-        opacity: 0.78,
+        opacity: 0.6,
       })),
     );
     stress.position.y = 0.55;
 
-    const legs = new THREE.LineSegments(
-      this.trackGeometry(new THREE.BufferGeometry()),
-      this.trackMaterial(new THREE.LineBasicMaterial({
-        color: particleColor,
+    const material = this.trackMaterial(new THREE.MeshBasicMaterial({ color: bodyColor }));
+    const antSphere = this.trackGeometry(new THREE.SphereGeometry(1, 10, 6));
+    const bodyParts = new Map<string, THREE.InstancedMesh>();
+    const bodyCounts = new Map<string, number>();
+    for (const part of ANT_BODY_PARTS) {
+      const mesh = new THREE.InstancedMesh(antSphere, material, MAX_ANTS_PER_SIDE);
+      mesh.count = 0;
+      mesh.castShadow = true;
+      mesh.frustumCulled = false;
+      bodyParts.set(part.name, mesh);
+      bodyCounts.set(part.name, 0);
+    }
+
+    const appendageGeometry = this.trackGeometry(new THREE.CylinderGeometry(1, 1, 1, 4, 1));
+    const appendages = new THREE.InstancedMesh(
+      appendageGeometry,
+      this.trackMaterial(new THREE.MeshBasicMaterial({
+        color: appendageColor,
         transparent: true,
-        opacity: 0.48,
+        opacity: 0.34,
       })),
+      MAX_ANTS_PER_SIDE * ANT_APPENDAGE_SEGMENTS.length,
     );
-    legs.position.y = 0.86;
+    appendages.count = 0;
+    appendages.castShadow = true;
+    appendages.frustumCulled = false;
 
-    const particles = new THREE.InstancedMesh(
-      this.trackGeometry(new THREE.SphereGeometry(0.68, 8, 5)),
-      this.trackMaterial(new THREE.MeshBasicMaterial({ color: particleColor })),
-      MAX_PARTICLES_PER_SIDE,
-    );
-    particles.position.y = 0.72;
-    particles.count = 0;
+    return {
+      formation,
+      pheromone,
+      stress,
+      bodyParts,
+      bodyCounts,
+      appendages,
+      appendageCount: 0,
+    };
+  }
 
-    const heads = new THREE.InstancedMesh(
-      this.trackGeometry(new THREE.SphereGeometry(0.38, 8, 4)),
-      this.trackMaterial(new THREE.MeshBasicMaterial({ color: particleColor })),
-      MAX_PARTICLES_PER_SIDE,
-    );
-    heads.position.y = 0.78;
-    heads.count = 0;
-
-    return { formation, pheromone, stress, legs, particles, heads };
+  private sideObjects(meshes: SideMeshes): THREE.Object3D[] {
+    return [
+      meshes.formation,
+      meshes.pheromone,
+      meshes.stress,
+      ...meshes.bodyParts.values(),
+      meshes.appendages,
+    ];
   }
 
   private soilMarks(): THREE.LineSegments {
@@ -201,48 +269,107 @@ export class ExpeditionThreeView {
     return line;
   }
 
-  private updateSide(meshes: SideMeshes, slimes: ArmySlime[], lineColor: number): void {
+  private updateSide(meshes: SideMeshes, slimes: ArmySlime[], lineColor: number, sideScale: number): void {
     this.setSegments(meshes.formation, slimes.flatMap((slime) => formationSegments(slime)));
     this.setSegments(meshes.pheromone, slimes.flatMap((slime) => brokenBoundarySegments(slime, slime.zocRadius)));
     this.setSegments(meshes.stress, slimes.flatMap((slime) => stressSegments(slime)));
     (meshes.formation.material as THREE.LineBasicMaterial).color.setHex(lineColor);
-    this.updateParticles(meshes, slimes);
+    this.updateAnts(meshes, createExpeditionAntRenderStates(slimes, MAX_ANTS_PER_SIDE, sideScale));
   }
 
-  private updateParticles(meshes: SideMeshes, slimes: ArmySlime[]): void {
-    let count = 0;
-    const legPoints: THREE.Vector3[] = [];
-    for (const slime of slimes) {
-      for (const particle of slime.particles) {
-        if (!particle.alive || count >= MAX_PARTICLES_PER_SIDE) continue;
-        const body = toWorld(particle.position);
-        const head = toWorld({
-          x: particle.position.x + slime.facing.x * 8,
-          y: particle.position.y + slime.facing.y * 8,
-        });
-        const bodyScale = 1 + slime.currentDensity * 0.12;
-        this.dummy.position.copy(body);
-        this.dummy.rotation.set(0, Math.atan2(slime.facing.x, slime.facing.y), 0);
-        this.dummy.scale.set(1.15 * bodyScale, 0.34, 0.72 * bodyScale);
-        this.dummy.updateMatrix();
-        meshes.particles.setMatrixAt(count, this.dummy.matrix);
+  private updateAnts(meshes: SideMeshes, ants: ExpeditionAntRenderState[]): void {
+    for (const key of meshes.bodyCounts.keys()) meshes.bodyCounts.set(key, 0);
+    meshes.appendageCount = 0;
 
-        this.dummy.position.copy(head);
-        this.dummy.rotation.set(0, Math.atan2(slime.facing.x, slime.facing.y), 0);
-        this.dummy.scale.set(0.82, 0.26, 0.58);
-        this.dummy.updateMatrix();
-        meshes.heads.setMatrixAt(count, this.dummy.matrix);
-        if (count % 2 === 0) {
-          legPoints.push(...antLegSegments(particle.position, slime.facing, count));
-        }
-        count += 1;
+    let antIndex = 0;
+    for (const ant of ants) {
+      for (const part of ANT_BODY_PARTS) {
+        const index = meshes.bodyCounts.get(part.name) ?? 0;
+        const mesh = meshes.bodyParts.get(part.name);
+        if (!mesh || index >= MAX_ANTS_PER_SIDE) continue;
+        this.composeLocalMatrix(ant, part.x, part.y, part.z, part.sx, part.sy, part.sz);
+        mesh.setMatrixAt(index, this.dummy.matrix);
+        meshes.bodyCounts.set(part.name, index + 1);
       }
+
+      if (antIndex % 6 === 0) {
+        for (const segment of ANT_APPENDAGE_SEGMENTS) {
+          if (meshes.appendageCount >= MAX_ANTS_PER_SIDE * ANT_APPENDAGE_SEGMENTS.length) break;
+          this.composeSegmentMatrix(ant, segment);
+          meshes.appendages.setMatrixAt(meshes.appendageCount, this.dummy.matrix);
+          meshes.appendageCount += 1;
+        }
+      }
+      antIndex += 1;
     }
-    meshes.particles.count = count;
-    meshes.heads.count = count;
-    meshes.particles.instanceMatrix.needsUpdate = true;
-    meshes.heads.instanceMatrix.needsUpdate = true;
-    this.setSegments(meshes.legs, legPoints);
+
+    for (const [partName, mesh] of meshes.bodyParts.entries()) {
+      mesh.count = meshes.bodyCounts.get(partName) ?? 0;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    meshes.appendages.count = meshes.appendageCount;
+    meshes.appendages.instanceMatrix.needsUpdate = true;
+  }
+
+  private composeLocalMatrix(
+    ant: ExpeditionAntRenderState,
+    localX: number,
+    localY: number,
+    localZ: number,
+    scaleX: number,
+    scaleY: number,
+    scaleZ: number,
+  ): void {
+    const sin = Math.sin(ant.angle);
+    const cos = Math.cos(ant.angle);
+    const visualScale = ant.scale * ANT_VISUAL_SCALE;
+    const x = localX * visualScale;
+    const y = localY * visualScale;
+    const z = localZ * visualScale;
+    this.dummy.position.set(
+      ant.x + x * cos + z * sin,
+      ant.y + y,
+      ant.z - x * sin + z * cos,
+    );
+    this.dummy.rotation.set(0, ant.angle, 0);
+    this.dummy.scale.set(scaleX * visualScale, scaleY * visualScale, scaleZ * visualScale);
+    this.dummy.updateMatrix();
+  }
+
+  private composeSegmentMatrix(
+    ant: ExpeditionAntRenderState,
+    segment: (typeof ANT_APPENDAGE_SEGMENTS)[number],
+  ): void {
+    this.localPointToWorld(ant, segment.from, this.segmentStart);
+    this.localPointToWorld(ant, segment.to, this.segmentEnd);
+    this.segmentMid.addVectors(this.segmentStart, this.segmentEnd).multiplyScalar(0.5);
+    this.segmentDirection.subVectors(this.segmentEnd, this.segmentStart);
+    const length = this.segmentDirection.length();
+    this.segmentDirection.normalize();
+    this.segmentQuaternion.setFromUnitVectors(this.up, this.segmentDirection);
+    this.dummy.position.copy(this.segmentMid);
+    this.dummy.quaternion.copy(this.segmentQuaternion);
+    const radius = segment.radius * ant.scale * ANT_VISUAL_SCALE * 0.72;
+    this.dummy.scale.set(radius, length, radius);
+    this.dummy.updateMatrix();
+  }
+
+  private localPointToWorld(
+    ant: ExpeditionAntRenderState,
+    point: readonly [number, number, number],
+    target: THREE.Vector3,
+  ): void {
+    const sin = Math.sin(ant.angle);
+    const cos = Math.cos(ant.angle);
+    const visualScale = ant.scale * ANT_VISUAL_SCALE;
+    const localX = point[0] * visualScale;
+    const localY = point[1] * visualScale;
+    const localZ = point[2] * visualScale;
+    target.set(
+      ant.x + localX * cos + localZ * sin,
+      ant.y + localY,
+      ant.z - localX * sin + localZ * cos,
+    );
   }
 
   private updateContacts(slimes: ArmySlime[]): void {
@@ -277,13 +404,82 @@ export class ExpeditionThreeView {
   }
 }
 
+export function createExpeditionAntRenderStates(
+  slimes: ArmySlime[],
+  maxCount = MAX_ANTS_PER_SIDE,
+  sideScale = 1,
+): ExpeditionAntRenderState[] {
+  const states: ExpeditionAntRenderState[] = [];
+  for (const slime of slimes) {
+    for (const particle of slime.particles) {
+      if (!particle.alive || states.length >= maxCount) continue;
+      const world = toWorld(particle.position);
+      const facing = particleFacing(slime, particle);
+      const scale = sideScale * (slime.isRouting ? 0.86 : 1) * (0.98 + Math.min(0.08, slime.currentDensity * 0.025));
+      states.push({
+        x: world.x,
+        z: world.z,
+        y: 0.76 + Math.sin(particle.phase * 1.7) * 0.018,
+        angle: Math.atan2(facing.x, facing.y),
+        scale,
+      });
+    }
+  }
+  relaxAntRenderStates(states);
+  return states;
+}
+
+export function nearestAntRenderGap(states: ExpeditionAntRenderState[]): number {
+  let nearest = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < states.length; i += 1) {
+    for (let j = i + 1; j < states.length; j += 1) {
+      nearest = Math.min(nearest, Math.hypot(states[i].x - states[j].x, states[i].z - states[j].z));
+    }
+  }
+  return nearest;
+}
+
+function relaxAntRenderStates(states: ExpeditionAntRenderState[]): void {
+  for (let pass = 0; pass < 8; pass += 1) {
+    for (let i = 0; i < states.length; i += 1) {
+      for (let j = i + 1; j < states.length; j += 1) {
+        const a = states[i];
+        const b = states[j];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const gap = Math.hypot(dx, dz);
+        if (gap >= EXPEDITION_ANT_MIN_WORLD_GAP) continue;
+        const nx = gap > 0.001 ? dx / gap : 1;
+        const nz = gap > 0.001 ? dz / gap : 0;
+        const push = (EXPEDITION_ANT_MIN_WORLD_GAP - gap) * 0.56;
+        a.x -= nx * push;
+        a.z -= nz * push;
+        b.x += nx * push;
+        b.z += nz * push;
+      }
+    }
+    for (const state of states) {
+      state.x = clamp(state.x, -BOARD_WIDTH * 0.5 + 5, BOARD_WIDTH * 0.5 - 5);
+      state.z = clamp(state.z, -BOARD_HEIGHT * 0.5 + 5, BOARD_HEIGHT * 0.5 - 5);
+    }
+  }
+}
+
+function particleFacing(slime: ArmySlime, particle: SlimeParticle): Vector2Like {
+  const speed = Math.hypot(particle.velocity.x, particle.velocity.y);
+  if (speed > 0.8) {
+    return { x: particle.velocity.x / speed, y: particle.velocity.y / speed };
+  }
+  return slime.facing;
+}
+
 function formationSegments(slime: ArmySlime): THREE.Vector3[] {
   const forward = slime.facing;
   const side = { x: -forward.y, y: forward.x };
   const points: THREE.Vector3[] = [];
-  const depth = Math.max(70, slime.currentDepth * 0.78);
-  const width = Math.max(52, slime.currentWidth * 0.52);
-  const rankCount = Math.max(3, Math.min(7, Math.round(slime.currentWidth / 56)));
+  const depth = Math.max(62, slime.currentDepth * 0.64);
+  const width = Math.max(42, slime.currentWidth * 0.42);
+  const rankCount = Math.max(2, Math.min(4, Math.round(slime.currentWidth / 96)));
   const front = {
     x: slime.center.x + forward.x * depth * 0.5,
     y: slime.center.y + forward.y * depth * 0.5,
@@ -296,7 +492,7 @@ function formationSegments(slime: ArmySlime): THREE.Vector3[] {
   for (let i = 0; i < rankCount; i += 1) {
     const t = rankCount === 1 ? 0.5 : i / (rankCount - 1);
     const center = lerpPoint(rear, front, t);
-    const localWidth = width * (0.72 + Math.sin(t * Math.PI) * 0.28);
+    const localWidth = width * (0.75 + Math.sin(t * Math.PI) * 0.2);
     points.push(
       toWorld({
         x: center.x - side.x * localWidth * 0.5,
@@ -322,38 +518,10 @@ function brokenBoundarySegments(slime: ArmySlime, padding: number): THREE.Vector
   const boundary = getBoundaryNodes(slime);
   if (boundary.length < 2) return [];
   const points: THREE.Vector3[] = [];
-  for (let i = 0; i < boundary.length; i += 1) {
-    if (i % 2 !== 0) continue;
+  for (let i = 0; i < boundary.length; i += 2) {
     const current = paddedPoint(slime.center, boundary[i].position, padding);
     const next = paddedPoint(slime.center, boundary[(i + 1) % boundary.length].position, padding);
     points.push(toWorld(current), toWorld(next));
-  }
-  return points;
-}
-
-function antLegSegments(position: Vector2Like, facing: Vector2Like, index: number): THREE.Vector3[] {
-  const side = { x: -facing.y, y: facing.x };
-  const gait = index % 4 < 2 ? 1 : -1;
-  const points: THREE.Vector3[] = [];
-  for (const offset of [-5, 0, 5]) {
-    const base = {
-      x: position.x + facing.x * offset,
-      y: position.y + facing.y * offset,
-    };
-    const reach = 4.6 + Math.abs(offset) * 0.22;
-    const skew = gait * (offset === 0 ? 1.5 : -1.2);
-    points.push(
-      toWorld(base),
-      toWorld({
-        x: base.x + side.x * reach + facing.x * skew,
-        y: base.y + side.y * reach + facing.y * skew,
-      }),
-      toWorld(base),
-      toWorld({
-        x: base.x - side.x * reach - facing.x * skew,
-        y: base.y - side.y * reach - facing.y * skew,
-      }),
-    );
   }
   return points;
 }
@@ -400,4 +568,8 @@ function toWorld(point: Vector2Like): THREE.Vector3 {
     0,
     (point.y - 325) * WORLD_SCALE,
   );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

@@ -2328,7 +2328,7 @@ class AntColony3D {
     this.cameraTarget.set(0, 0, 0);
     this.targetCameraYaw = 0;
     this.targetCameraPitch = 1.35;
-    this.targetCameraDistance = window.innerWidth < 680 ? 176 : 162;
+    this.targetCameraDistance = window.innerWidth < 680 ? 164 : 148;
   }
 
   updateCamera() {

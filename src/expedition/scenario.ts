@@ -90,6 +90,7 @@ export function createExpeditionScenario(
       toughness: clamp(0.58 + input.defensePower * 0.045, 0.56, 0.78),
       width: clamp(210 + assignedSoldiers * 4, 185, 345),
       depth: 168,
+      particleCount: Math.floor(clamp(42 + assignedSoldiers * 3.2, 46, 92)),
       manualControl: false,
     },
     enemySeed: {
@@ -101,6 +102,7 @@ export function createExpeditionScenario(
       toughness: clamp(0.58 + threatPressure * 0.12, 0.56, 0.82),
       width: clamp(222 + input.territory * 7, 200, 390),
       depth: 176,
+      particleCount: Math.floor(clamp(40 + enemyPower * 0.75, 42, 76)),
       manualControl: false,
     },
   };
