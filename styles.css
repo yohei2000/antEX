@@ -532,6 +532,7 @@ button {
 
 .upgrade-card p,
 .upgrade-meta,
+.expedition-status,
 .battle-log {
   font-size: 0.72rem;
   line-height: 1.35;
@@ -548,6 +549,14 @@ button {
   padding: 8px;
   border-radius: 7px;
   background: rgba(0, 0, 0, 0.2);
+}
+
+.expedition-status {
+  min-height: 56px;
+  padding: 8px;
+  border: 1px solid rgba(216, 138, 99, 0.22);
+  border-radius: 7px;
+  background: rgba(55, 30, 18, 0.18);
 }
 
 @media (min-width: 820px) {

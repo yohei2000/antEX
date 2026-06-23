@@ -296,6 +296,13 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         Math.random = () => 0;
         sim.startExpedition();
         Math.random = randomBefore;
+        const expeditionStarted = Boolean(sim.expeditionSession);
+        if (sim.expeditionSession) {
+          for (const slime of sim.expeditionSession.state.enemySlimes) {
+            slime.morale = 20;
+          }
+          for (let i = 0; i < 24; i += 1) sim.updateGame(1 / 60);
+        }
         sim.saveColony();
         const saved = JSON.parse(localStorage.getItem("ant3d.colonyState"));
         return {
@@ -307,6 +314,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           capacityBeforeUpgrade,
           capacityAfterUpgrade,
           boughtUpgrade,
+          expeditionStarted,
           territoryAfterBattle: sim.colony.territory,
           foodAfterBattle: sim.colony.food,
           cooldownActive: sim.colony.battleCooldownUntil > Date.now(),
@@ -319,6 +327,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       idle.returnFoodAfter <= idle.returnFoodBefore ||
       !idle.boughtUpgrade ||
       idle.capacityAfterUpgrade <= idle.capacityBeforeUpgrade ||
+      !idle.expeditionStarted ||
       idle.territoryAfterBattle <= idle.before.territory ||
       !idle.cooldownActive ||
       idle.savedAnts !== 24 ||

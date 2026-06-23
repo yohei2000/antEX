@@ -1,5 +1,8 @@
 // @ts-nocheck
 import * as THREE from "three";
+import { createExpeditionScenario, expeditionResultImpact } from "./expedition/scenario";
+import { ExpeditionBattleSession } from "./expedition/session";
+import { ExpeditionThreeView } from "./expedition/threeView";
 
 const ui = {
   world: document.querySelector("#world3d"),
@@ -26,6 +29,7 @@ const ui = {
   expeditionChance: document.querySelector("#expeditionChance"),
   expeditionReward: document.querySelector("#expeditionReward"),
   expeditionBtn: document.querySelector("#expeditionBtn"),
+  expeditionStatus: document.querySelector("#expeditionStatus"),
   battleLog: document.querySelector("#battleLog"),
   empirePanel: document.querySelector("#empirePanel"),
   panelGrip: document.querySelector("#panelGrip"),
@@ -1663,6 +1667,9 @@ class AntColony3D {
     this.predators = [];
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+    this.expeditionSession = null;
+    this.expeditionResultApplied = false;
+    this.expeditionResultHold = 0;
     this.renderAntBuffer = [];
     this.lastUiUpdate = 0;
     this.resizeWidth = 0;
@@ -1686,6 +1693,8 @@ class AntColony3D {
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RIVAL_ANT_COUNT);
     this.createWorld();
+    this.expeditionView = new ExpeditionThreeView();
+    this.scene.add(this.expeditionView.group);
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
     this.reset(false);
@@ -2001,6 +2010,10 @@ class AntColony3D {
   }
 
   reset(newGame = true) {
+    this.expeditionSession = null;
+    this.expeditionResultApplied = false;
+    this.expeditionResultHold = 0;
+    this.expeditionView?.setVisible(false);
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.predators]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
@@ -2156,32 +2169,6 @@ class AntColony3D {
 
   buyUpgrade(id) {
     const upgrade = UPGRADE_DEFS.find((item) => item.id === id);
-    if (!upgrade) return;
-    const level = this.colony.upgrades[id] ?? 0;
-    if (level >= upgrade.max) return;
-    const cost = upgradeCost(upgrade, level);
-    if (this.missingRequirements(upgrade, cost).length > 0) return;
-    this.colony.food -= cost;
-    this.colony.upgrades[id] = level + 1;
-    this.pushLog(`${upgrade.name} Lv${level + 1}を整備した`);
-    this.computeDerived();
-    this.renderUpgrades();
-    this.updateStats();
-    this.saveColony();
-  }
-
-  missingRequirements(upgrade, cost) {
-    const missing = [];
-    if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}`);
-    if (upgrade.requires.ants && this.colony.antPopulation < upgrade.requires.ants) missing.push(`アリ ${upgrade.requires.ants}`);
-    if (upgrade.requires.lifetimeFood && this.colony.lifetimeFood < upgrade.requires.lifetimeFood) missing.push(`累計食料 ${upgrade.requires.lifetimeFood}`);
-    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`領土 ${upgrade.requires.territory}`);
-    if (upgrade.requires.nestLevel && this.colony.nestLevel < upgrade.requires.nestLevel) missing.push(`巣Lv ${upgrade.requires.nestLevel}`);
-    return missing;
-  }
-
-  buyUpgrade(id) {
-    const upgrade = UPGRADE_DEFS.find((item) => item.id === id);
     if (!upgrade) return false;
     const level = this.colony.upgrades[id] ?? 0;
     if (level >= upgrade.max) return false;
@@ -2199,38 +2186,79 @@ class AntColony3D {
 
   startExpedition() {
     const now = Date.now();
+    if (this.expeditionSession) return;
     if (now < this.colony.battleCooldownUntil) return;
-    const d = this.computeDerived();
-    const soldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
-    if (soldiers < 1) {
+    const scenario = this.createCurrentExpeditionScenario();
+    if (scenario.assignedSoldiers < 1) {
       this.pushLog("遠征には兵隊が1匹以上必要");
       this.updateStats();
       return;
     }
-    const assigned = Math.max(1, Math.floor(soldiers * 0.65));
-    const playerPower = assigned * d.attackPower;
-    const enemyPower = 5 + this.colony.territory * 1.8 + this.colony.enemyThreat * 0.42;
-    const winChance = clamp(playerPower / (playerPower + enemyPower), 0.08, 0.92);
-    const reward = Math.floor(34 + this.colony.territory * 9 + assigned * 4);
-    if (Math.random() < winChance) {
-      this.colony.food += reward;
-      this.colony.lifetimeFood += reward;
-      this.colony.territory += 1;
-      this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - 2.5);
-      this.colony.woundedAnts += Math.max(0, Math.floor(assigned * 0.08));
-      this.pushLog(`遠征成功: 食料+${reward} / 領土+1`);
-    } else {
-      const wounded = Math.max(1, Math.floor(assigned * 0.28));
-      this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + wounded);
-      this.colony.food = Math.max(0, this.colony.food - Math.floor(reward * 0.35));
-      this.colony.enemyThreat += 3.5;
-      this.pushLog(`遠征失敗: 負傷${wounded} / 脅威上昇`);
+    this.expeditionSession = new ExpeditionBattleSession(scenario);
+    this.expeditionResultApplied = false;
+    this.expeditionResultHold = 0;
+    this.expeditionView.setVisible(true);
+    this.expeditionView.update(this.expeditionSession.state);
+    this.pushLog(`遠征開始: 兵隊アリ${scenario.assignedSoldiers} / 敵アリ圧${fmt(scenario.enemyPower, 1)}`);
+    this.updateStats();
+  }
+
+  createCurrentExpeditionScenario() {
+    const d = this.computeDerived();
+    return createExpeditionScenario({
+      activeAnts: d.activeAnts,
+      soldierAnts: this.colony.soldierAnts,
+      attackPower: d.attackPower,
+      defensePower: d.defensePower,
+      territory: this.colony.territory,
+      enemyThreat: this.colony.enemyThreat,
+    });
+  }
+
+  updateExpedition(dt) {
+    if (!this.expeditionSession) return;
+    const result = this.expeditionSession.update(dt);
+    this.expeditionView.update(this.expeditionSession.state);
+    if (result && !this.expeditionResultApplied) {
+      this.applyExpeditionResult(result.outcome);
+      this.expeditionResultApplied = true;
+      this.expeditionResultHold = 4.5;
     }
-    this.colony.battleCooldownUntil = now + 45000;
+    if (this.expeditionResultApplied) {
+      this.expeditionResultHold -= dt;
+      if (this.expeditionResultHold <= 0) this.endExpeditionView();
+    }
+  }
+
+  applyExpeditionResult(outcome) {
+    const scenario = this.expeditionSession.scenario;
+    const impact = expeditionResultImpact(scenario, outcome);
+    this.colony.food = Math.max(0, this.colony.food + impact.foodDelta);
+    this.colony.lifetimeFood += impact.lifetimeFoodDelta;
+    this.colony.territory += impact.territoryDelta;
+    this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat + impact.enemyThreatDelta);
+    this.colony.woundedAnts = Math.min(
+      this.colony.antPopulation - 1,
+      this.colony.woundedAnts + impact.woundedDelta,
+    );
+    this.colony.battleCooldownUntil = Date.now() + scenario.cooldownMs;
+    this.pushLog(impact.logMessage);
     this.syncAntPopulation();
     this.renderUpgrades();
     this.updateStats();
     this.saveColony();
+  }
+
+  endExpeditionView() {
+    this.expeditionSession = null;
+    this.expeditionResultApplied = false;
+    this.expeditionResultHold = 0;
+    this.expeditionView.setVisible(false);
+    this.cameraTarget.set(this.nest.x * 0.36, 0, this.nest.z * 0.36);
+    this.targetCameraYaw = -0.62;
+    this.targetCameraPitch = 1.05;
+    this.targetCameraDistance = window.innerWidth < 680 ? 252 : 238;
+    this.updateStats();
   }
 
   updateColonyVisuals() {
@@ -2260,27 +2288,7 @@ class AntColony3D {
         </article>
       `;
     }).join("");
-    ui.upgradeList.innerHTML = html;
-  }
-
-  renderUpgrades() {
-    const html = UPGRADE_DEFS.map((upgrade) => {
-      const level = this.colony.upgrades[upgrade.id] ?? 0;
-      const complete = level >= upgrade.max;
-      const cost = complete ? 0 : upgradeCost(upgrade, level);
-      const missing = complete ? [] : this.missingRequirements(upgrade, cost);
-      const disabled = complete || missing.length > 0 ? "disabled" : "";
-      const meta = complete ? "最大Lv" : missing.length ? `不足: ${missing.join(" / ")}` : `費用: 食料 ${fmt(cost, 0)}`;
-      return `
-        <article class="upgrade-card">
-          <strong>${upgrade.name} Lv${level}/${upgrade.max}</strong>
-          <p>${upgrade.desc}</p>
-          <div class="upgrade-meta">${meta}</div>
-          <button type="button" data-upgrade="${upgrade.id}" ${disabled}>強化</button>
-        </article>
-      `;
-    }).join("");
-    ui.upgradeList.innerHTML = html;
+    if (ui.upgradeList.innerHTML !== html) ui.upgradeList.innerHTML = html;
   }
 
   disposeDynamicItem(item) {
@@ -2316,7 +2324,15 @@ class AntColony3D {
     this.updateCamera();
   }
 
+  focusExpeditionCamera() {
+    this.cameraTarget.set(0, 0, 0);
+    this.targetCameraYaw = 0;
+    this.targetCameraPitch = 1.35;
+    this.targetCameraDistance = window.innerWidth < 680 ? 176 : 162;
+  }
+
   updateCamera() {
+    if (this.expeditionSession) this.focusExpeditionCamera();
     this.cameraYaw += (this.targetCameraYaw - this.cameraYaw) * 0.16;
     this.cameraPitch += (this.targetCameraPitch - this.cameraPitch) * 0.16;
     this.cameraDistance += (this.targetCameraDistance - this.cameraDistance) * 0.16;
@@ -2379,6 +2395,7 @@ class AntColony3D {
 
   updateGame(dt) {
     this.updateColony(dt);
+    this.updateExpedition(dt);
 
     for (const patch of this.water) {
       patch.age += dt;
@@ -2473,6 +2490,7 @@ class AntColony3D {
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.predators]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
+    this.expeditionView?.dispose();
     this.assetService.dispose();
     for (const geometry of this.sharedGeometries) geometry.dispose();
     for (const material of this.sharedMaterials) disposeMaterial(material);
@@ -2889,12 +2907,10 @@ class AntColony3D {
   updateStats() {
     const d = this.computeDerived();
     const cooldownLeft = Math.max(0, Math.ceil((this.colony.battleCooldownUntil - Date.now()) / 1000));
-    const availableSoldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
-    const assigned = Math.max(0, Math.floor(availableSoldiers * 0.65));
-    const playerPower = assigned * d.attackPower;
-    const enemyPower = 5 + this.colony.territory * 1.8 + this.colony.enemyThreat * 0.42;
-    const chancePct = assigned > 0 ? Math.round(clamp(playerPower / (playerPower + enemyPower), 0.08, 0.92) * 100) : 0;
-    const reward = Math.floor(34 + this.colony.territory * 9 + assigned * 4);
+    const scenario = this.expeditionSession?.scenario ?? this.createCurrentExpeditionScenario();
+    const assigned = scenario.assignedSoldiers;
+    const chancePct = assigned > 0 ? Math.round(scenario.winChance * 100) : 0;
+    const reward = scenario.reward;
 
     ui.statFood.textContent = fmt(this.colony.food, 0);
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;
@@ -2912,10 +2928,37 @@ class AntColony3D {
     ui.expeditionSoldiers.textContent = fmt(assigned, 0);
     ui.expeditionChance.textContent = `${chancePct}%`;
     ui.expeditionReward.textContent = fmt(reward, 0);
-    ui.expeditionBtn.disabled = cooldownLeft > 0 || assigned < 1;
-    ui.expeditionBtn.textContent = cooldownLeft > 0 ? `再遠征まで ${cooldownLeft}s` : "近隣の餌場へ遠征";
+    ui.expeditionBtn.disabled = Boolean(this.expeditionSession) || cooldownLeft > 0 || assigned < 1;
+    ui.expeditionBtn.textContent = this.expeditionSession
+      ? "遠征中"
+      : cooldownLeft > 0
+        ? `再遠征まで ${cooldownLeft}s`
+        : "近隣の餌場へ遠征";
+    if (ui.expeditionStatus) {
+      ui.expeditionStatus.innerHTML = this.renderExpeditionStatus(cooldownLeft);
+    }
     ui.battleLog.innerHTML = this.colony.battleLog.map((entry) => `<div>${entry}</div>`).join("");
     this.renderUpgrades();
+  }
+
+  renderExpeditionStatus(cooldownLeft) {
+    if (!this.expeditionSession) {
+      if (cooldownLeft > 0) return `<div>再編中: ${cooldownLeft}s</div>`;
+      return "<div>兵隊アリを送り出し、近隣の餌場を制圧する</div>";
+    }
+    const telemetry = this.expeditionSession.telemetry();
+    const outcome = telemetry.outcome
+      ? telemetry.outcome === "player"
+        ? "勝利"
+        : telemetry.outcome === "enemy"
+          ? "敗北"
+          : "膠着"
+      : "交戦中";
+    return `
+      <div>餌場争奪 ${outcome} / ${fmt(telemetry.elapsed, 0)}s</div>
+      <div>遠征隊 士気${fmt(telemetry.player.morale, 0)} 結束${fmt(telemetry.player.cohesion, 0)} 疲労${fmt(telemetry.player.fatigue, 0)} 包囲圧${fmt(telemetry.player.encirclement * 100, 0)}%</div>
+      <div>敵アリ隊 士気${fmt(telemetry.enemy.morale, 0)} 結束${fmt(telemetry.enemy.cohesion, 0)} 疲労${fmt(telemetry.enemy.fatigue, 0)} 包囲圧${fmt(telemetry.enemy.encirclement * 100, 0)}%</div>
+    `;
   }
 
   updateInspector() {

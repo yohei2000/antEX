@@ -189,6 +189,84 @@ test("upgrade click increments an available upgrade", async ({ page }) => {
   expect(after).toBe(before + 1);
 });
 
+test("expedition starts an autonomous battle and applies the result once", async ({ page }) => {
+  await waitForSimulation(page);
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 48;
+    sim.colony.soldierAnts = 24;
+    sim.colony.woundedAnts = 0;
+    sim.colony.territory = 0;
+    sim.colony.enemyThreat = 1;
+    sim.colony.battleCooldownUntil = 0;
+    sim.setPanelCompact(false, false);
+    sim.updateStats();
+  });
+
+  await page.locator('[data-tab="expedition"]').click();
+  const before = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    return {
+      food: sim.colony.food,
+      territory: sim.colony.territory,
+      wounded: sim.colony.woundedAnts,
+    };
+  });
+  await page.locator("#expeditionBtn").click();
+
+  const started = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    return {
+      active: Boolean(sim.expeditionSession),
+      viewVisible: sim.expeditionView.group.visible,
+      food: sim.colony.food,
+      territory: sim.colony.territory,
+      latestLog: sim.colony.battleLog[0],
+    };
+  });
+
+  expect(started.active).toBe(true);
+  expect(started.viewVisible).toBe(true);
+  expect(started.food).toBe(before.food);
+  expect(started.territory).toBe(before.territory);
+  expect(started.latestLog).toContain("遠征開始");
+
+  const resolved = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    for (const slime of sim.expeditionSession.state.enemySlimes) {
+      slime.morale = 20;
+    }
+    for (let i = 0; i < 20; i += 1) sim.updateGame(1 / 60);
+    const first = {
+      food: sim.colony.food,
+      territory: sim.colony.territory,
+      wounded: sim.colony.woundedAnts,
+      latestLog: sim.colony.battleLog[0],
+    };
+    for (let i = 0; i < 40; i += 1) sim.updateGame(1 / 60);
+    return {
+      first,
+      second: {
+        food: sim.colony.food,
+        territory: sim.colony.territory,
+        wounded: sim.colony.woundedAnts,
+        latestLog: sim.colony.battleLog[0],
+      },
+    };
+  });
+
+  expect(resolved.first.latestLog).toContain("遠征成功");
+  expect(resolved.first.food).toBeGreaterThan(before.food);
+  expect(resolved.first.territory).toBe(before.territory + 1);
+  expect(resolved.second.food).toBe(resolved.first.food);
+  expect(resolved.second.territory).toBe(resolved.first.territory);
+  expect(resolved.second.latestLog).toBe(resolved.first.latestLog);
+  expect(resolved.second.wounded).toBeLessThanOrEqual(resolved.first.wounded);
+});
+
 test("rival ant combat grapples before the loser flees home", async ({ page }) => {
   await waitForSimulation(page);
 
