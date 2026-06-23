@@ -14,6 +14,14 @@ test("persists colony state through localStorage", async ({ page }) => {
     sim.colony.lifetimeFood = 654;
     sim.colony.antPopulation = 18;
     sim.colony.nestLevel = 2;
+    sim.colony.upgrades = {
+      foragerTrails: 1,
+      storageChambers: 2,
+      broodNursery: 1,
+      queenCare: 0,
+      soldierTraining: 0,
+      nestGuard: 0,
+    };
     sim.saveColony();
   });
 
@@ -27,6 +35,9 @@ test("persists colony state through localStorage", async ({ page }) => {
       lifetimeFood: sim.colony.lifetimeFood,
       antPopulation: sim.colony.antPopulation,
       nestLevel: sim.colony.nestLevel,
+      storageChambers: sim.colony.upgrades.storageChambers,
+      chamberExcavation: sim.colony.upgrades.chamberExcavation,
+      trailPheromones: sim.colony.upgrades.trailPheromones,
     };
   });
 
@@ -34,4 +45,7 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.lifetimeFood).toBeGreaterThanOrEqual(654);
   expect(restored.antPopulation).toBe(18);
   expect(restored.nestLevel).toBe(2);
+  expect(restored.storageChambers).toBe(2);
+  expect(restored.chamberExcavation).toBe(0);
+  expect(restored.trailPheromones).toBe(0);
 });

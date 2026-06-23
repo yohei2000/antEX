@@ -1,5 +1,7 @@
 // @ts-nocheck
 import * as THREE from "three";
+import { AntAgentInstancedRenderer, runExpeditionAgentBattle } from "./expedition/agent";
+import { runLegacyExpeditionBattle } from "./expedition/legacyAdapter";
 
 const ui = {
   world: document.querySelector("#world3d"),
@@ -47,9 +49,19 @@ const DISPLAY_ANT_CAP = 80;
 const RIVAL_ANT_COUNT = 4;
 const RIVAL_CONTACT_RADIUS = 4.1;
 const RIVAL_CLASH_DURATION = 2.0;
+const CAMERA_DISTANCE_MIN = 138;
+const CAMERA_DISTANCE_MAX = 340;
+const CAMERA_DISTANCE_MOBILE = 252;
+const CAMERA_DISTANCE_DESKTOP = 238;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
+const EXPEDITION_ENGINE_KEY = "ant3d.expeditionEngine";
+const SUPPORTED_EXPEDITION_ENGINES = new Set(["agent", "legacy"]);
+
+function resolveExpeditionEngine(value) {
+  return SUPPORTED_EXPEDITION_ENGINES.has(value) ? value : "agent";
+}
 
 const QUALITY_PRESETS = {
   low: {
@@ -138,47 +150,130 @@ const distance2 = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const normAngle = (angle) => Math.atan2(Math.sin(angle), Math.cos(angle));
 const fmt = (value, digits = 0) => Number(value).toLocaleString("ja-JP", { maximumFractionDigits: digits });
 
+const UPGRADE_BRANCHES = [
+  { id: "foraging", name: "採餌網" },
+  { id: "nursery", name: "育房" },
+  { id: "architecture", name: "巣構造" },
+  { id: "defense", name: "防衛" },
+];
+
 const UPGRADE_DEFS = [
   {
     id: "foragerTrails",
+    branch: "foraging",
     name: "採餌道",
-    desc: "働き蟻の採餌効率を上げる",
+    desc: "働き蟻が餌場へ戻る道を覚えやすくする",
+    effect: "採餌効率を大きく上げる",
     max: 8,
     baseCost: 40,
     costScale: 1.72,
     requires: {},
   },
   {
-    id: "broodNursery",
-    name: "育児室",
-    desc: "孵化速度と負傷回復を上げる",
-    max: 8,
-    baseCost: 65,
-    costScale: 1.82,
-    requires: { ants: 14 },
+    id: "trailPheromones",
+    branch: "foraging",
+    name: "匂い道の維持",
+    desc: "成功した採餌道の情報を長く使う",
+    effect: "採餌効率を少し上げる",
+    max: 4,
+    baseCost: 95,
+    costScale: 1.86,
+    requires: { ants: 16, upgrades: { foragerTrails: 2 } },
   },
   {
     id: "storageChambers",
+    branch: "architecture",
     name: "貯蔵室",
-    desc: "収容上限と食料保管力を広げる",
+    desc: "餌と働き蟻を受け入れる空間を広げる",
+    effect: "収容上限と採餌の安定性を上げる",
     max: 8,
     baseCost: 85,
     costScale: 1.9,
     requires: { ants: 18 },
   },
   {
+    id: "chamberExcavation",
+    branch: "architecture",
+    name: "坑道分岐",
+    desc: "巣内の通路を増やし、混雑を減らす",
+    effect: "収容上限と採餌効率を上げる",
+    max: 6,
+    baseCost: 75,
+    costScale: 1.75,
+    requires: { ants: 14 },
+  },
+  {
+    id: "ventilationShafts",
+    branch: "architecture",
+    name: "換気孔",
+    desc: "巣内の空気と湿度を安定させる",
+    effect: "収容上限、防御、脅威耐性を少し上げる",
+    max: 5,
+    baseCost: 140,
+    costScale: 1.88,
+    requires: { nestLevel: 2, upgrades: { chamberExcavation: 2 } },
+  },
+  {
+    id: "wasteGallery",
+    branch: "architecture",
+    name: "廃棄坑",
+    desc: "食べ残しや死骸を生活区から離す",
+    effect: "回復、防御、脅威耐性を上げる",
+    max: 4,
+    baseCost: 190,
+    costScale: 1.95,
+    requires: { nestLevel: 3, upgrades: { ventilationShafts: 2 } },
+  },
+  {
+    id: "broodNursery",
+    branch: "nursery",
+    name: "育児室",
+    desc: "卵と幼虫をまとめて世話しやすくする",
+    effect: "孵化速度と負傷回復を上げる",
+    max: 8,
+    baseCost: 65,
+    costScale: 1.82,
+    requires: { ants: 14 },
+  },
+  {
+    id: "broodClimate",
+    branch: "nursery",
+    name: "育房の保温",
+    desc: "幼虫と蛹を安定した場所へ移しやすくする",
+    effect: "孵化速度を上げる",
+    max: 5,
+    baseCost: 115,
+    costScale: 1.86,
+    requires: { nestLevel: 2, upgrades: { broodNursery: 2 } },
+  },
+  {
+    id: "foodDistribution",
+    branch: "nursery",
+    name: "食料分配",
+    desc: "働き蟻どうしの食料受け渡しを滑らかにする",
+    effect: "幼虫コストを下げ、採餌効率を少し上げる",
+    max: 5,
+    baseCost: 130,
+    costScale: 1.9,
+    requires: { upgrades: { storageChambers: 1, broodNursery: 1 } },
+  },
+  {
     id: "queenCare",
+    branch: "nursery",
     name: "女王の世話",
-    desc: "産卵基礎力を上げる",
+    desc: "女王の周囲に世話役を集める",
+    effect: "孵化速度を大きく上げる",
     max: 8,
     baseCost: 120,
     costScale: 2.05,
-    requires: { lifetimeFood: 160 },
+    requires: { lifetimeFood: 160, upgrades: { broodNursery: 1 } },
   },
   {
     id: "soldierTraining",
+    branch: "defense",
     name: "兵隊訓練",
-    desc: "兵隊比率と遠征戦力を上げる",
+    desc: "大きめの働き蟻を防衛と遠征に回す",
+    effect: "兵隊比率と攻撃力を上げる",
     max: 6,
     baseCost: 180,
     costScale: 2.1,
@@ -186,12 +281,25 @@ const UPGRADE_DEFS = [
   },
   {
     id: "nestGuard",
+    branch: "defense",
     name: "巣の守り",
-    desc: "防御と負傷回復を上げる",
+    desc: "入口周辺を守る働き蟻を増やす",
+    effect: "防御力と負傷回復を上げる",
     max: 6,
     baseCost: 220,
     costScale: 2.12,
     requires: { territory: 2 },
+  },
+  {
+    id: "sentinelPosts",
+    branch: "defense",
+    name: "見張り口",
+    desc: "外敵に近い入口へ警戒役を置く",
+    effect: "防御力、攻撃力、脅威耐性を上げる",
+    max: 4,
+    baseCost: 260,
+    costScale: 2.0,
+    requires: { territory: 3, upgrades: { nestGuard: 2 } },
   },
 ];
 
@@ -242,6 +350,9 @@ function migrateColony(raw) {
   next.hatchProgress = clamp(Number(next.hatchProgress) || 0, 0, 0.999);
   next.battleCooldownUntil = Number(next.battleCooldownUntil) || 0;
   next.lastSavedAt = Number(next.lastSavedAt) || Date.now();
+  for (const upgrade of UPGRADE_DEFS) {
+    next.upgrades[upgrade.id] = Math.floor(clamp(Number(next.upgrades[upgrade.id]) || 0, 0, upgrade.max));
+  }
   return next;
 }
 
@@ -257,6 +368,14 @@ function readColonyState() {
 
 function upgradeCost(upgrade, level) {
   return Math.floor(upgrade.baseCost * Math.pow(upgrade.costScale, level));
+}
+
+function upgradeLevel(upgrades, id) {
+  return Math.max(0, Number(upgrades?.[id]) || 0);
+}
+
+function upgradeName(id) {
+  return UPGRADE_DEFS.find((upgrade) => upgrade.id === id)?.name ?? id;
 }
 
 // Food trails model short-lived recruitment signals: successful returners reinforce them,
@@ -417,6 +536,7 @@ class InputManager {
       pointermove: (event) => sim.onPointerMove(event),
       pointerup: (event) => sim.onPointerUp(event),
       pointercancel: (event) => sim.onPointerUp(event),
+      wheel: (event) => sim.onWheel(event),
     };
     for (const [type, handler] of Object.entries(this.handlers)) {
       element.addEventListener(type, handler, { passive: false });
@@ -652,10 +772,6 @@ class Ant3D {
       return;
     }
     this.clashTimer = Math.max(0, this.clashTimer - dt);
-    const orbit = this.clashPhase + this.stateTime * 9.5;
-    const offset = 0.42 + Math.sin(this.stateTime * 17 + this.id) * 0.08;
-    this.x += (this.clashAnchorX + Math.sin(orbit) * offset - this.x) * 0.36;
-    this.z += (this.clashAnchorZ + Math.cos(orbit) * offset - this.z) * 0.36;
     this.angle = Math.atan2(rival.x - this.x, rival.z - this.z);
     this.energy = clamp(this.energy - dt * 0.018, 0, 1);
     this.keepInWorld(sim);
@@ -1243,6 +1359,11 @@ class RivalAnt3D {
 
   startClash(ant, anchorX, anchorZ) {
     if (this.clash || this.retreat > 0 || !ant.startRivalClash(this, anchorX, anchorZ, RIVAL_CLASH_DURATION)) return false;
+    const dx = ant.x - this.x;
+    const dz = ant.z - this.z;
+    const length = Math.hypot(dx, dz);
+    const lineX = length > 0.0001 ? dx / length : Math.sin(this.angle);
+    const lineZ = length > 0.0001 ? dz / length : Math.cos(this.angle);
     this.clash = {
       ant,
       elapsed: 0,
@@ -1250,6 +1371,8 @@ class RivalAnt3D {
       anchorX,
       anchorZ,
       phase: rand(0, Math.PI * 2),
+      lineX,
+      lineZ,
       nextTrail: 0.24,
     };
     this.state = "clash";
@@ -1268,12 +1391,19 @@ class RivalAnt3D {
 
     clash.elapsed += dt;
     const progress = clamp(clash.elapsed / clash.duration, 0, 1);
-    const spin = clash.phase + clash.elapsed * 8.8;
-    const spacing = 0.95 + Math.sin(clash.elapsed * 18 + this.id) * 0.16;
-    const antTargetX = clash.anchorX + Math.sin(spin) * spacing;
-    const antTargetZ = clash.anchorZ + Math.cos(spin) * spacing;
-    const rivalTargetX = clash.anchorX - Math.sin(spin) * spacing * 0.86;
-    const rivalTargetZ = clash.anchorZ - Math.cos(spin) * spacing * 0.86;
+    const lineX = clash.lineX;
+    const lineZ = clash.lineZ;
+    const sideX = -lineZ;
+    const sideZ = lineX;
+    const shove = Math.sin(clash.elapsed * 18 + clash.phase) * 0.1;
+    const brace = Math.sin(clash.elapsed * 27 + this.id) * 0.07;
+    const spacing = 0.72 + brace;
+    const lateral = sideX * shove;
+    const lateralZ = sideZ * shove;
+    const antTargetX = clash.anchorX + lineX * spacing + lateral;
+    const antTargetZ = clash.anchorZ + lineZ * spacing + lateralZ;
+    const rivalTargetX = clash.anchorX - lineX * spacing * 0.86 - lateral * 0.72;
+    const rivalTargetZ = clash.anchorZ - lineZ * spacing * 0.86 - lateralZ * 0.72;
 
     ant.x += (antTargetX - ant.x) * 0.45;
     ant.z += (antTargetZ - ant.z) * 0.45;
@@ -1643,6 +1773,7 @@ class AntColony3D {
     this.nest = { x: -42, z: 12, radius: 8 };
     this.colony = readColonyState();
     this.derived = {};
+    this.expeditionEngine = resolveExpeditionEngine(DEBUG_QUERY.get("expeditionEngine") ?? readStorage(EXPEDITION_ENGINE_KEY));
     this.saveTimer = 0;
     this.activeTab = "growth";
     {
@@ -1660,10 +1791,15 @@ class AntColony3D {
     this.branches = [];
     this.trails = [];
     this.terrain = [];
+    this.terrainBumps = [];
+    this.nestEntrances = [];
+    this.nestSpoils = [];
     this.predators = [];
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer = [];
+    this.expeditionReplay = null;
+    this.lastExpeditionBattle = null;
     this.lastUiUpdate = 0;
     this.resizeWidth = 0;
     this.resizeHeight = 0;
@@ -1674,7 +1810,7 @@ class AntColony3D {
     this.cameraPitch = 1.05;
     this.targetCameraYaw = this.cameraYaw;
     this.targetCameraPitch = this.cameraPitch;
-    this.cameraDistance = window.innerWidth < 680 ? 252 : 238;
+    this.cameraDistance = window.innerWidth < 680 ? CAMERA_DISTANCE_MOBILE : CAMERA_DISTANCE_DESKTOP;
     this.targetCameraDistance = this.cameraDistance;
 
     this.sharedGeometries = new Set();
@@ -1686,6 +1822,9 @@ class AntColony3D {
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RIVAL_ANT_COUNT);
     this.createWorld();
+    this.expeditionAgentRenderer = new AntAgentInstancedRenderer(this.scene, 96);
+    this.expeditionAgentRenderer.setTransform(18, -18, 1.18);
+    this.expeditionAgentRenderer.setVisible(false);
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
     this.reset(false);
@@ -1736,6 +1875,10 @@ class AntColony3D {
       waterCircle: new THREE.CircleGeometry(1, 64),
       trailCircle: new THREE.CircleGeometry(1, 18),
       impactRing: new THREE.TorusGeometry(1, 0.035, 8, 72),
+      nestRim: new THREE.TorusGeometry(1, 0.11, 8, 36),
+      soilPebble: new THREE.DodecahedronGeometry(1, 0),
+      terrainBump: new THREE.SphereGeometry(1, 12, 8),
+      stoneRock: new THREE.DodecahedronGeometry(1, 0),
     };
 
     this.materials = {
@@ -1745,7 +1888,9 @@ class AntColony3D {
         metalness: 0,
       }),
       nest: new THREE.MeshStandardMaterial({ color: 0x6d4e2a, roughness: 0.95 }),
-      nestDark: new THREE.MeshBasicMaterial({ color: 0x1d140e }),
+      nestLoose: new THREE.MeshStandardMaterial({ color: 0x8a6335, roughness: 0.96 }),
+      nestRim: new THREE.MeshStandardMaterial({ color: 0x5a3a1f, roughness: 0.98 }),
+      nestDark: new THREE.MeshBasicMaterial({ color: 0x1d140e, side: THREE.DoubleSide }),
       antDefault: new THREE.MeshStandardMaterial({ color: 0x18130f, roughness: 0.72 }),
       antRival: new THREE.MeshStandardMaterial({ color: 0x8a4a2f, emissive: 0x120705, roughness: 0.8 }),
       antAppendage: new THREE.MeshStandardMaterial({ color: 0x17100b, roughness: 0.82 }),
@@ -1759,6 +1904,7 @@ class AntColony3D {
       terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x7b5b30, transparent: true, opacity: 0.28, depthWrite: false }),
       terrainSand: new THREE.MeshBasicMaterial({ color: 0xd1b36d, transparent: true, opacity: 0.24, depthWrite: false }),
       terrainDamp: new THREE.MeshBasicMaterial({ color: 0x3d5f58, transparent: true, opacity: 0.25, depthWrite: false }),
+      terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
       predatorBody: new THREE.MeshStandardMaterial({ color: 0x2b211c, roughness: 0.78 }),
       predatorAccent: new THREE.MeshBasicMaterial({ color: 0xb44a36, transparent: true, opacity: 0.58 }),
       water: new THREE.MeshPhysicalMaterial({
@@ -1850,6 +1996,7 @@ class AntColony3D {
     ];
 
     for (const patch of patches) this.createTerrainPatch(patch);
+    this.seedTerrainBumps();
   }
 
   createTerrainPatch(patch) {
@@ -1871,6 +2018,33 @@ class AntColony3D {
       speed: patch.speed,
       mesh,
     });
+  }
+
+  seedTerrainBumps() {
+    const bumps = [
+      { x: -86, z: 28, rx: 5.8, rz: 2.2, h: 0.55, rotation: -0.2 },
+      { x: -70, z: -66, rx: 4.8, rz: 2.4, h: 0.48, rotation: 0.45 },
+      { x: -36, z: 58, rx: 4.4, rz: 2.0, h: 0.42, rotation: -0.72 },
+      { x: -4, z: -24, rx: 6.1, rz: 2.7, h: 0.5, rotation: 0.18 },
+      { x: 22, z: 88, rx: 5.2, rz: 2.1, h: 0.45, rotation: -0.36 },
+      { x: 46, z: 16, rx: 7.2, rz: 2.9, h: 0.58, rotation: 0.62 },
+      { x: 66, z: -58, rx: 4.9, rz: 2.2, h: 0.44, rotation: -0.14 },
+      { x: 88, z: 34, rx: 4.0, rz: 1.8, h: 0.38, rotation: 0.72 },
+      { x: 104, z: -8, rx: 5.1, rz: 2.0, h: 0.46, rotation: -0.54 },
+      { x: -108, z: -12, rx: 4.6, rz: 1.9, h: 0.36, rotation: 0.08 },
+    ];
+    for (const bump of bumps) this.addTerrainBump(bump);
+  }
+
+  addTerrainBump(bump) {
+    const mesh = new THREE.Mesh(this.geometries.terrainBump, this.materials.terrainRise);
+    mesh.position.set(bump.x, bump.h * 0.44, bump.z);
+    mesh.scale.set(bump.rx, bump.h, bump.rz);
+    mesh.rotation.set(0, bump.rotation, 0);
+    mesh.castShadow = this.quality.shadowQuality !== "off";
+    mesh.receiveShadow = this.quality.shadowQuality !== "off";
+    this.scene.add(mesh);
+    this.terrainBumps.push({ ...bump, mesh });
   }
 
   terrainSpeedAt(x, z) {
@@ -1897,23 +2071,68 @@ class AntColony3D {
     this.scene.add(mound);
     this.sharedGeometries.add(mound.geometry);
     this.nestMound = mound;
-    this.nestHoles = [];
+    this.nestEntrances = [];
+    this.nestSpoils = [];
+    this.nestHoles = this.nestEntrances;
 
-    for (let i = 0; i < 5; i += 1) {
-      const angle = i * 1.25 + 0.4;
-      const hole = new THREE.Mesh(new THREE.CircleGeometry(1, 22), this.materials.nestDark);
-      hole.rotation.x = -Math.PI / 2;
-      hole.position.set(
-        this.nest.x + Math.cos(angle) * this.nest.radius * rand(0.08, 0.45),
-        2.72,
-        this.nest.z + Math.sin(angle) * this.nest.radius * rand(0.08, 0.35),
-      );
-      hole.scale.set(rand(1.0, 1.8), rand(0.55, 0.95), 1);
-      this.scene.add(hole);
-      this.sharedGeometries.add(hole.geometry);
-      this.nestHoles.push(hole);
-    }
+    const entrances = [
+      { angle: -0.45, distance: 0.62, y: 2.12, rx: 2.45, ry: 0.92, tilt: -0.5, spoils: 12 },
+      { angle: 1.02, distance: 0.42, y: 2.55, rx: 1.18, ry: 0.52, tilt: -0.72, spoils: 6 },
+      { angle: 2.55, distance: 0.5, y: 2.42, rx: 1.02, ry: 0.46, tilt: -0.64, spoils: 5 },
+      { angle: 3.76, distance: 0.34, y: 2.72, rx: 0.82, ry: 0.38, tilt: -0.78, spoils: 4 },
+    ];
+    for (const entrance of entrances) this.createNestEntrance(entrance);
     this.updateColonyVisuals();
+  }
+
+  createNestEntrance(config) {
+    const radial = this.nest.radius * config.distance;
+    const x = this.nest.x + Math.cos(config.angle) * radial;
+    const z = this.nest.z + Math.sin(config.angle) * radial;
+    const group = new THREE.Group();
+    group.position.set(x, config.y, z);
+    group.rotation.y = Math.PI / 2 - config.angle;
+    group.userData.base = { ...config, radial };
+
+    const shadow = new THREE.Mesh(this.geometries.trailCircle, this.materials.nestDark);
+    shadow.rotation.x = config.tilt;
+    shadow.scale.set(config.rx, config.ry, 1);
+    shadow.position.z = 0.035;
+    group.add(shadow);
+
+    const rim = new THREE.Mesh(this.geometries.nestRim, this.materials.nestRim);
+    rim.rotation.x = config.tilt;
+    rim.scale.set(config.rx * 1.1, config.ry * 1.04, 1);
+    rim.position.z = 0.085;
+    rim.castShadow = this.quality.shadowQuality !== "off";
+    rim.receiveShadow = this.quality.shadowQuality !== "off";
+    group.add(rim);
+
+    this.scene.add(group);
+    this.nestEntrances.push(group);
+
+    for (let i = 0; i < config.spoils; i += 1) {
+      const spread = 0.7 + (i % 4) * 0.38 + Math.floor(i / 4) * 0.22;
+      const offset = (i - (config.spoils - 1) * 0.5) * 0.18;
+      const a = config.angle + offset;
+      this.addNestSpoil(
+        this.nest.x + Math.cos(config.angle) * (radial + config.rx * 0.58 + spread) + Math.cos(a + Math.PI / 2) * offset * 2.3,
+        this.nest.z + Math.sin(config.angle) * (radial + config.rx * 0.58 + spread) + Math.sin(a + Math.PI / 2) * offset * 2.3,
+        0.16 + (i % 3) * 0.04,
+      );
+    }
+  }
+
+  addNestSpoil(x, z, scale) {
+    const pebble = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
+    pebble.position.set(x, 0.16 + scale * 0.32, z);
+    pebble.scale.setScalar(scale);
+    pebble.rotation.set(rand(-0.4, 0.4), rand(0, Math.PI), rand(-0.3, 0.3));
+    pebble.castShadow = this.quality.shadowQuality !== "off";
+    pebble.receiveShadow = this.quality.shadowQuality !== "off";
+    pebble.userData.base = { x, z, scale };
+    this.scene.add(pebble);
+    this.nestSpoils.push(pebble);
   }
 
   bindEvents() {
@@ -2015,6 +2234,9 @@ class AntColony3D {
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer.length = 0;
+    this.expeditionReplay = null;
+    this.expeditionAgentRenderer?.setVisible(false);
+    this.expeditionAgentRenderer?.render([]);
     this.antRenderer?.beginFrame();
     this.antRenderer?.endFrame();
     this.collectedFood = 0;
@@ -2034,22 +2256,66 @@ class AntColony3D {
 
   computeDerived() {
     const upgrades = this.colony.upgrades;
-    const capacity = Math.floor(18 + this.colony.nestLevel * 10 + upgrades.storageChambers * 16 + this.colony.territory * 3);
+    const foragerTrails = upgradeLevel(upgrades, "foragerTrails");
+    const trailPheromones = upgradeLevel(upgrades, "trailPheromones");
+    const storageChambers = upgradeLevel(upgrades, "storageChambers");
+    const chamberExcavation = upgradeLevel(upgrades, "chamberExcavation");
+    const ventilationShafts = upgradeLevel(upgrades, "ventilationShafts");
+    const wasteGallery = upgradeLevel(upgrades, "wasteGallery");
+    const broodNursery = upgradeLevel(upgrades, "broodNursery");
+    const broodClimate = upgradeLevel(upgrades, "broodClimate");
+    const foodDistribution = upgradeLevel(upgrades, "foodDistribution");
+    const queenCare = upgradeLevel(upgrades, "queenCare");
+    const soldierTraining = upgradeLevel(upgrades, "soldierTraining");
+    const nestGuard = upgradeLevel(upgrades, "nestGuard");
+    const sentinelPosts = upgradeLevel(upgrades, "sentinelPosts");
+
+    const capacity = Math.floor(
+      18 +
+      this.colony.nestLevel * 10 +
+      storageChambers * 12 +
+      chamberExcavation * 10 +
+      ventilationShafts * 4 +
+      this.colony.territory * 3,
+    );
     const activeAnts = Math.max(0, this.colony.antPopulation - this.colony.woundedAnts);
-    const soldierTarget = Math.floor(this.colony.antPopulation * (0.08 + upgrades.soldierTraining * 0.025));
+    const soldierTarget = Math.floor(this.colony.antPopulation * (0.08 + soldierTraining * 0.023 + sentinelPosts * 0.004));
     this.colony.soldierAnts = Math.floor(clamp(this.colony.soldierAnts, 0, activeAnts));
     const workers = Math.max(0, activeAnts - this.colony.soldierAnts);
-    const foodRate = workers * 0.034 * (1 + upgrades.foragerTrails * 0.28) + this.colony.territory * 0.075 + this.colony.nestLevel * 0.025;
-    const antCost = 5.5 + this.colony.nestLevel * 1.3 + this.colony.antPopulation * 0.035;
+    const foragingBonus = 1 + foragerTrails * 0.24 + trailPheromones * 0.07 + foodDistribution * 0.025;
+    const trafficBonus = 1 + chamberExcavation * 0.035 + ventilationShafts * 0.018;
+    const foodRate =
+      workers * 0.034 * foragingBonus * trafficBonus +
+      this.colony.territory * 0.075 +
+      this.colony.nestLevel * 0.025 +
+      storageChambers * 0.012;
+    const distributionDiscount = clamp(1 - foodDistribution * 0.025 - storageChambers * 0.008, 0.78, 1);
+    const antCost = (5.5 + this.colony.nestLevel * 1.3 + this.colony.antPopulation * 0.035) * distributionDiscount;
     const growthPerSecond =
-      (0.017 + upgrades.queenCare * 0.007 + upgrades.broodNursery * 0.005) *
-      clamp(this.colony.food / Math.max(antCost * 2, 1), 0.18, 1);
-    const recoveryPerSecond = 0.006 + upgrades.broodNursery * 0.003 + upgrades.nestGuard * 0.004;
-    const attackPower = 1 + upgrades.soldierTraining * 0.18;
-    const defensePower = 1 + upgrades.nestGuard * 0.22;
+      (0.017 + queenCare * 0.0058 + broodNursery * 0.0038 + broodClimate * 0.003 + foodDistribution * 0.0012) *
+      clamp(this.colony.food / Math.max(antCost * 2, 1), 0.18, 1) *
+      (1 + ventilationShafts * 0.008);
+    const recoveryPerSecond = 0.006 + broodNursery * 0.0025 + nestGuard * 0.0032 + wasteGallery * 0.0026 + broodClimate * 0.0008;
+    const attackPower = 1 + soldierTraining * 0.15 + sentinelPosts * 0.03;
+    const defensePower = 1 + nestGuard * 0.18 + sentinelPosts * 0.1 + ventilationShafts * 0.02 + wasteGallery * 0.03;
+    const threatGrowthMultiplier = clamp(1 - wasteGallery * 0.055 - sentinelPosts * 0.03 - ventilationShafts * 0.015, 0.55, 1);
+    const foragedFoodMultiplier = 1 + foodDistribution * 0.025 + storageChambers * 0.01;
     this.colony.attackPower = attackPower;
     this.colony.defensePower = defensePower;
-    this.derived = { capacity, activeAnts, soldierTarget, workers, foodRate, antCost, growthPerSecond, recoveryPerSecond, attackPower, defensePower };
+    this.derived = {
+      capacity,
+      activeAnts,
+      soldierTarget,
+      workers,
+      foodRate,
+      antCost,
+      growthPerSecond,
+      recoveryPerSecond,
+      attackPower,
+      defensePower,
+      threatGrowthMultiplier,
+      foragedFoodMultiplier,
+    };
     return this.derived;
   }
 
@@ -2078,7 +2344,7 @@ class AntColony3D {
       this.colony.woundedAnts = Math.max(0, this.colony.woundedAnts - healed);
     }
 
-    this.colony.enemyThreat += dt * (0.0014 + this.colony.territory * 0.00022);
+    this.colony.enemyThreat += dt * (0.0014 + this.colony.territory * 0.00022) * nextDerived.threatGrowthMultiplier;
     this.autoLevelNest();
     this.syncAntPopulation();
 
@@ -2112,9 +2378,10 @@ class AntColony3D {
   }
 
   gainFood(amount, fromAnt = false) {
-    this.colony.food += amount;
-    this.colony.lifetimeFood += amount;
-    if (fromAnt) this.collectedFood += amount;
+    const gained = fromAnt ? amount * (this.computeDerived().foragedFoodMultiplier ?? 1) : amount;
+    this.colony.food += gained;
+    this.colony.lifetimeFood += gained;
+    if (fromAnt) this.collectedFood += gained;
   }
 
   saveColony() {
@@ -2151,39 +2418,16 @@ class AntColony3D {
     if (upgrade.requires.lifetimeFood && this.colony.lifetimeFood < upgrade.requires.lifetimeFood) missing.push(`累計食料 ${upgrade.requires.lifetimeFood}`);
     if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`領土 ${upgrade.requires.territory}`);
     if (upgrade.requires.nestLevel && this.colony.nestLevel < upgrade.requires.nestLevel) missing.push(`巣Lv ${upgrade.requires.nestLevel}`);
-    return missing;
-  }
-
-  buyUpgrade(id) {
-    const upgrade = UPGRADE_DEFS.find((item) => item.id === id);
-    if (!upgrade) return;
-    const level = this.colony.upgrades[id] ?? 0;
-    if (level >= upgrade.max) return;
-    const cost = upgradeCost(upgrade, level);
-    if (this.missingRequirements(upgrade, cost).length > 0) return;
-    this.colony.food -= cost;
-    this.colony.upgrades[id] = level + 1;
-    this.pushLog(`${upgrade.name} Lv${level + 1}を整備した`);
-    this.computeDerived();
-    this.renderUpgrades();
-    this.updateStats();
-    this.saveColony();
-  }
-
-  missingRequirements(upgrade, cost) {
-    const missing = [];
-    if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}`);
-    if (upgrade.requires.ants && this.colony.antPopulation < upgrade.requires.ants) missing.push(`アリ ${upgrade.requires.ants}`);
-    if (upgrade.requires.lifetimeFood && this.colony.lifetimeFood < upgrade.requires.lifetimeFood) missing.push(`累計食料 ${upgrade.requires.lifetimeFood}`);
-    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`領土 ${upgrade.requires.territory}`);
-    if (upgrade.requires.nestLevel && this.colony.nestLevel < upgrade.requires.nestLevel) missing.push(`巣Lv ${upgrade.requires.nestLevel}`);
+    for (const [id, requiredLevel] of Object.entries(upgrade.requires.upgrades ?? {})) {
+      if (upgradeLevel(this.colony.upgrades, id) < requiredLevel) missing.push(`${upgradeName(id)} Lv${requiredLevel}`);
+    }
     return missing;
   }
 
   buyUpgrade(id) {
     const upgrade = UPGRADE_DEFS.find((item) => item.id === id);
     if (!upgrade) return false;
-    const level = this.colony.upgrades[id] ?? 0;
+    const level = upgradeLevel(this.colony.upgrades, id);
     if (level >= upgrade.max) return false;
     const cost = upgradeCost(upgrade, level);
     if (this.missingRequirements(upgrade, cost).length > 0) return false;
@@ -2199,6 +2443,7 @@ class AntColony3D {
 
   startExpedition() {
     const now = Date.now();
+    this.expeditionEngine = resolveExpeditionEngine(this.expeditionEngine);
     if (now < this.colony.battleCooldownUntil) return;
     const d = this.computeDerived();
     const soldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
@@ -2208,23 +2453,47 @@ class AntColony3D {
       return;
     }
     const assigned = Math.max(1, Math.floor(soldiers * 0.65));
-    const playerPower = assigned * d.attackPower;
-    const enemyPower = 5 + this.colony.territory * 1.8 + this.colony.enemyThreat * 0.42;
-    const winChance = clamp(playerPower / (playerPower + enemyPower), 0.08, 0.92);
-    const reward = Math.floor(34 + this.colony.territory * 9 + assigned * 4);
-    if (Math.random() < winChance) {
-      this.colony.food += reward;
-      this.colony.lifetimeFood += reward;
-      this.colony.territory += 1;
-      this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - 2.5);
-      this.colony.woundedAnts += Math.max(0, Math.floor(assigned * 0.08));
-      this.pushLog(`遠征成功: 食料+${reward} / 領土+1`);
+    const seed = (
+      (now & 0xffffffff) ^
+      (assigned * 2654435761) ^
+      (this.colony.territory * 2246822519) ^
+      Math.floor(this.colony.enemyThreat * 1000)
+    ) >>> 0;
+    const battleInput = {
+      seed,
+      assignedSoldiers: assigned,
+      activeAnts: d.activeAnts,
+      soldierAnts: soldiers,
+      territory: this.colony.territory,
+      enemyThreat: this.colony.enemyThreat,
+      attackPower: d.attackPower,
+      defensePower: d.defensePower,
+      recoveryPerSecond: d.recoveryPerSecond,
+      threatGrowthMultiplier: d.threatGrowthMultiplier,
+    };
+    const outcome = this.expeditionEngine === "legacy"
+      ? runLegacyExpeditionBattle(battleInput)
+      : runExpeditionAgentBattle(battleInput);
+    this.lastExpeditionBattle = outcome.battle;
+    if (outcome.success) {
+      this.colony.food += outcome.rewardFood;
+      this.colony.lifetimeFood += outcome.rewardFood;
+      this.colony.territory += outcome.territoryDelta;
+      this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat + outcome.threatDelta);
+      this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + outcome.wounded);
+      this.pushLog(`遠征成功: 食料+${outcome.rewardFood} / 領土+${outcome.territoryDelta}`);
     } else {
-      const wounded = Math.max(1, Math.floor(assigned * 0.28));
-      this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + wounded);
-      this.colony.food = Math.max(0, this.colony.food - Math.floor(reward * 0.35));
-      this.colony.enemyThreat += 3.5;
-      this.pushLog(`遠征失敗: 負傷${wounded} / 脅威上昇`);
+      this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + outcome.wounded);
+      this.colony.food = Math.max(0, this.colony.food - outcome.foodLoss);
+      this.colony.enemyThreat += outcome.threatDelta;
+      this.pushLog(`遠征失敗: 負傷${outcome.wounded} / ${outcome.reason}`);
+    }
+    for (const line of outcome.diagnosis.slice(0, 2).reverse()) this.pushLog(line);
+    if (outcome.battle.frameLogs?.length) this.startExpeditionReplay(outcome.battle);
+    else {
+      this.expeditionReplay = null;
+      this.expeditionAgentRenderer?.setVisible(false);
+      this.expeditionAgentRenderer?.render([]);
     }
     this.colony.battleCooldownUntil = now + 45000;
     this.syncAntPopulation();
@@ -2233,52 +2502,162 @@ class AntColony3D {
     this.saveColony();
   }
 
+  startExpeditionReplay(battle) {
+    const framesById = new Map();
+    for (const frame of battle.frameLogs) {
+      const list = framesById.get(frame.id);
+      if (list) list.push(frame);
+      else framesById.set(frame.id, [frame]);
+    }
+    this.lastExpeditionBattle = battle;
+    this.expeditionReplay = {
+      battle,
+      framesById,
+      ids: [...framesById.keys()].sort((a, b) => a - b),
+      time: 0,
+      duration: Math.max(1, battle.steps / 60),
+      speed: 1,
+      renderAgents: [],
+    };
+    this.expeditionAgentRenderer?.setVisible(true);
+    this.expeditionAgentRenderer?.setTransform(18, -18, 1.18);
+  }
+
+  updateExpeditionReplay(dt) {
+    const replay = this.expeditionReplay;
+    if (!replay) return;
+    replay.time += dt * replay.speed;
+    if (replay.time > replay.duration + 4) {
+      this.expeditionAgentRenderer?.setVisible(false);
+      this.expeditionAgentRenderer?.render([]);
+      this.expeditionReplay = null;
+    }
+  }
+
+  renderExpeditionReplay() {
+    const replay = this.expeditionReplay;
+    if (!replay || !this.expeditionAgentRenderer) return;
+    const step = Math.min(replay.battle.steps, replay.time * 60);
+    replay.renderAgents.length = 0;
+    for (const id of replay.ids) {
+      const frames = replay.framesById.get(id);
+      if (!frames?.length) continue;
+      const current = this.sampleExpeditionFrame(frames, step);
+      if (current && current.hp > 0) replay.renderAgents.push(current);
+    }
+    this.expeditionAgentRenderer.render(replay.renderAgents);
+  }
+
+  sampleExpeditionFrame(frames, step) {
+    if (step <= frames[0].step) return this.frameToAgent(frames[0]);
+    const last = frames[frames.length - 1];
+    if (step >= last.step) return this.frameToAgent(last);
+    let lo = 0;
+    let hi = frames.length - 1;
+    while (lo + 1 < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (frames[mid].step <= step) lo = mid;
+      else hi = mid;
+    }
+    const a = frames[lo];
+    const b = frames[hi];
+    const t = clamp((step - a.step) / Math.max(1, b.step - a.step), 0, 1);
+    const heading = normAngle(a.heading + normAngle(b.heading - a.heading) * t);
+    return this.frameToAgent({
+      ...b,
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+      vx: a.vx + (b.vx - a.vx) * t,
+      vy: a.vy + (b.vy - a.vy) * t,
+      heading,
+      gaitPhase: a.gaitPhase + (b.gaitPhase - a.gaitPhase) * t,
+      hp: a.hp + (b.hp - a.hp) * t,
+    });
+  }
+
+  frameToAgent(frame) {
+    return {
+      id: frame.id,
+      side: frame.side,
+      position: { x: frame.x, y: frame.y },
+      previousPosition: { x: frame.x, y: frame.y },
+      velocity: { x: frame.vx, y: frame.vy },
+      heading: frame.heading,
+      angularVelocity: 0,
+      bodyLength: frame.bodyLength ?? 1.55,
+      radius: frame.radius ?? 0.56,
+      state: frame.state,
+      stamina: frame.stamina,
+      morale: frame.morale,
+      hp: frame.hp,
+      wounded: frame.hp < 0.68,
+      target: null,
+      gaitPhase: frame.gaitPhase ?? 0,
+      lastContactId: frame.contactId,
+      stateTime: 0,
+      biteCooldown: 0,
+      contactTime: 0,
+      retreatDirection: frame.side === "player" ? { x: -1, y: 0 } : { x: 1, y: 0 },
+      variation: 0,
+      params: {
+        mandiblePower: 1,
+        carapace: 1,
+        mobility: 1,
+        stamina: 1,
+        discipline: 1,
+        pheromoneCommand: 1,
+      },
+    };
+  }
+
   updateColonyVisuals() {
     if (!this.nestMound) return;
     const growth = 1 + Math.min(2.3, (this.colony.nestLevel - 1) * 0.13 + this.colony.territory * 0.025);
     this.nestMound.scale.set(this.nest.radius * 1.15 * growth, 2.1 + growth * 0.55, this.nest.radius * 0.82 * growth);
-    for (const hole of this.nestHoles ?? []) {
-      hole.position.y = 2.35 + growth * 0.42;
-      hole.scale.multiplyScalar(1.0005);
+    for (const entrance of this.nestEntrances ?? []) {
+      const base = entrance.userData.base;
+      if (!base) continue;
+      const radial = base.radial * (1 + (growth - 1) * 0.1);
+      entrance.position.set(
+        this.nest.x + Math.cos(base.angle) * radial,
+        base.y + (growth - 1) * 0.24,
+        this.nest.z + Math.sin(base.angle) * radial,
+      );
+      entrance.scale.setScalar(1 + (growth - 1) * 0.08);
+    }
+    for (const spoil of this.nestSpoils ?? []) {
+      const base = spoil.userData.base;
+      if (!base) continue;
+      const spread = 1 + (growth - 1) * 0.13;
+      spoil.position.set(
+        this.nest.x + (base.x - this.nest.x) * spread,
+        0.16 + base.scale * 0.32,
+        this.nest.z + (base.z - this.nest.z) * spread,
+      );
+      spoil.scale.setScalar(base.scale * (1 + (growth - 1) * 0.06));
     }
   }
 
   renderUpgrades() {
-    const html = UPGRADE_DEFS.map((upgrade) => {
-      const level = this.colony.upgrades[upgrade.id] ?? 0;
-      const complete = level >= upgrade.max;
-      const cost = complete ? 0 : upgradeCost(upgrade, level);
-      const missing = complete ? [] : this.missingRequirements(upgrade, cost);
-      const disabled = complete || missing.length > 0 ? "disabled" : "";
-      const meta = complete ? "最大Lv" : missing.length ? `不足: ${missing.join(" / ")}` : `費用: 食料 ${fmt(cost, 0)}`;
-      return `
-        <article class="upgrade-card">
-          <strong>${upgrade.name} Lv${level}/${upgrade.max}</strong>
-          <p>${upgrade.desc}</p>
-          <div class="upgrade-meta">${meta}</div>
-          <button type="button" data-upgrade="${upgrade.id}" ${disabled}>強化</button>
-        </article>
-      `;
-    }).join("");
-    ui.upgradeList.innerHTML = html;
-  }
-
-  renderUpgrades() {
-    const html = UPGRADE_DEFS.map((upgrade) => {
-      const level = this.colony.upgrades[upgrade.id] ?? 0;
-      const complete = level >= upgrade.max;
-      const cost = complete ? 0 : upgradeCost(upgrade, level);
-      const missing = complete ? [] : this.missingRequirements(upgrade, cost);
-      const disabled = complete || missing.length > 0 ? "disabled" : "";
-      const meta = complete ? "最大Lv" : missing.length ? `不足: ${missing.join(" / ")}` : `費用: 食料 ${fmt(cost, 0)}`;
-      return `
-        <article class="upgrade-card">
-          <strong>${upgrade.name} Lv${level}/${upgrade.max}</strong>
-          <p>${upgrade.desc}</p>
-          <div class="upgrade-meta">${meta}</div>
-          <button type="button" data-upgrade="${upgrade.id}" ${disabled}>強化</button>
-        </article>
-      `;
+    const html = UPGRADE_BRANCHES.map((branch) => {
+      const cards = UPGRADE_DEFS.filter((upgrade) => upgrade.branch === branch.id).map((upgrade) => {
+        const level = upgradeLevel(this.colony.upgrades, upgrade.id);
+        const complete = level >= upgrade.max;
+        const cost = complete ? 0 : upgradeCost(upgrade, level);
+        const missing = complete ? [] : this.missingRequirements(upgrade, cost);
+        const disabled = complete || missing.length > 0 ? "disabled" : "";
+        const meta = complete ? "最大Lv" : missing.length ? `不足: ${missing.join(" / ")}` : `費用: 食料 ${fmt(cost, 0)}`;
+        return `
+          <article class="upgrade-card" data-branch="${branch.id}">
+            <strong>${upgrade.name} Lv${level}/${upgrade.max}</strong>
+            <p>${upgrade.desc}</p>
+            <div class="upgrade-effect">${upgrade.effect}</div>
+            <div class="upgrade-meta">${meta}</div>
+            <button type="button" data-upgrade="${upgrade.id}" ${disabled}>強化</button>
+          </article>
+        `;
+      }).join("");
+      return `<div class="upgrade-branch">${branch.name}</div>${cards}`;
     }).join("");
     ui.upgradeList.innerHTML = html;
   }
@@ -2311,8 +2690,9 @@ class AntColony3D {
     this.currentPixelRatio = Math.min((window.devicePixelRatio || 1) * this.quality.resolutionScale, this.quality.maxPixelRatio);
     this.renderer.setPixelRatio(this.currentPixelRatio);
     this.renderer.setSize(width, height, false);
-    this.cameraDistance = width < 680 ? 252 : 238;
-    this.targetCameraDistance = this.cameraDistance;
+    const baseCameraDistance = width < 680 ? CAMERA_DISTANCE_MOBILE : CAMERA_DISTANCE_DESKTOP;
+    this.cameraDistance = clamp(this.cameraDistance || baseCameraDistance, CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
+    this.targetCameraDistance = clamp(this.targetCameraDistance || baseCameraDistance, CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
     this.updateCamera();
   }
 
@@ -2395,6 +2775,7 @@ class AntColony3D {
 
     for (const stone of this.stones) {
       stone.shock = Math.max(0, stone.shock - dt * 0.7);
+      if (!stone.ring) continue;
       stone.ring.visible = stone.shock > 0.02;
       if (stone.ring.visible) {
         stone.ring.scale.setScalar(1 + (1 - stone.shock) * 7);
@@ -2418,6 +2799,7 @@ class AntColony3D {
 
     for (const ant of this.ants) ant.update(dt, this);
     for (const rival of this.rivalAnts) rival.update(dt, this);
+    this.updateExpeditionReplay(dt);
     this.lastUiUpdate += dt;
     if (this.lastUiUpdate > 0.15) {
       this.updateStats();
@@ -2451,6 +2833,7 @@ class AntColony3D {
     for (const ant of this.ants) renderAnts.push(ant);
     for (const rival of this.rivalAnts) renderAnts.push(rival);
     this.antRenderer.render(renderAnts, this, alpha);
+    this.renderExpeditionReplay();
     this.renderer.render(this.scene, this.camera);
     window.__ANT_SIM_READY = true;
   }
@@ -2470,6 +2853,8 @@ class AntColony3D {
     window.removeEventListener("pagehide", this.boundPageHide);
     this.clearBranchPreview();
     this.antRenderer?.destroy();
+    this.expeditionAgentRenderer?.dispose();
+    this.expeditionAgentRenderer = null;
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.predators]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
@@ -2484,7 +2869,11 @@ class AntColony3D {
 
   onPointerDown(event) {
     event.preventDefault();
-    this.renderer.domElement.setPointerCapture(event.pointerId);
+    try {
+      this.renderer.domElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic events in tests may not own a real pointer capture.
+    }
     this.pointerMap.set(event.pointerId, { x: event.clientX, y: event.clientY });
     this.dragMoved = false;
     if (this.pointerMap.size === 2) {
@@ -2510,7 +2899,7 @@ class AntColony3D {
     if (this.pointerMap.size === 2 && this.pinchStart) {
       const points = [...this.pointerMap.values()];
       const current = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-      this.targetCameraDistance = clamp(this.pinchStart.cameraDistance * (this.pinchStart.distance / (current || 1)), 138, 340);
+      this.targetCameraDistance = clamp(this.pinchStart.cameraDistance * (this.pinchStart.distance / (current || 1)), CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
       return;
     }
 
@@ -2528,6 +2917,14 @@ class AntColony3D {
     if (point && !this.dragMoved) this.selectNearestAnt(point.x, point.z);
     this.pointerMap.delete(event.pointerId);
     if (this.pointerMap.size < 2) this.pinchStart = null;
+  }
+
+  onWheel(event) {
+    event.preventDefault();
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? window.innerHeight : 1;
+    const delta = clamp(event.deltaY * unit, -480, 480);
+    const factor = Math.exp(delta * 0.0012);
+    this.targetCameraDistance = clamp(this.targetCameraDistance * factor, CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
   }
 
   screenToGround(clientX, clientY) {
@@ -2550,6 +2947,28 @@ class AntColony3D {
       { x: 8, z: -82, amount: 10, radius: 3.2, crumbs: 10, material: this.materials.foodFruit, kind: "fruit" },
     ];
     for (const food of naturalFoods) this.addFood(food.x, food.z, food);
+    this.seedNaturalObstacles();
+  }
+
+  seedNaturalObstacles() {
+    const stones = [
+      { x: -92, z: 18, radius: 3.3, scaleY: 0.52, rotation: 0.2 },
+      { x: -58, z: 78, radius: 2.7, scaleY: 0.44, rotation: 1.2 },
+      { x: -14, z: -42, radius: 3.0, scaleY: 0.5, rotation: 2.4 },
+      { x: 26, z: 68, radius: 2.4, scaleY: 0.42, rotation: -0.7 },
+      { x: 62, z: -66, radius: 3.5, scaleY: 0.48, rotation: 0.9 },
+      { x: 92, z: 12, radius: 2.8, scaleY: 0.46, rotation: -1.1 },
+    ];
+    for (const stone of stones) this.addNaturalStone(stone);
+
+    const branches = [
+      { x1: -4, z1: 62, x2: 22, z2: 76, width: 0.9 },
+      { x1: 44, z1: -8, x2: 70, z2: -2, width: 0.82 },
+      { x1: -88, z1: -18, x2: -68, z2: -34, width: 0.86 },
+      { x1: 2, z1: -60, x2: 28, z2: -72, width: 0.78 },
+      { x1: -34, z1: 34, x2: -20, z2: 22, width: 0.72 },
+    ];
+    for (const branch of branches) this.addBranch(branch);
   }
 
   seedRivalAnts() {
@@ -2671,6 +3090,21 @@ class AntColony3D {
     this.water.push({ x, z, radius, power: clamp(0.45 + intensity * 0.13 * scale, 0.35, 1.08), age: 0, group, ring });
   }
 
+  addNaturalStone(config) {
+    const group = new THREE.Group();
+    const stone = new THREE.Mesh(this.geometries.stoneRock, this.materials.stone);
+    stone.position.y = config.radius * 0.42;
+    stone.scale.set(config.radius * 1.05, config.radius * config.scaleY, config.radius * 0.86);
+    stone.rotation.set(0.14, config.rotation, -0.08);
+    stone.castShadow = this.quality.shadowQuality !== "off";
+    stone.receiveShadow = this.quality.shadowQuality !== "off";
+    group.add(stone);
+    group.position.set(config.x, 0, config.z);
+    this.scene.add(group);
+    this.dynamicObjects.add(group);
+    this.stones.push({ x: config.x, z: config.z, radius: config.radius, shock: 0, group });
+  }
+
   addStone(x, z) {
     const intensity = ui.intensity ? Number(ui.intensity.value) : 3;
     const radius = 3.1 + intensity * 0.85 + rand(-0.2, 0.4);
@@ -2754,7 +3188,7 @@ class AntColony3D {
     const dx = branch.x2 - branch.x1;
     const dz = branch.z2 - branch.z1;
     const length = Math.hypot(dx, dz);
-    const width = 1.35 + (ui.intensity ? Number(ui.intensity.value) : 3) * 0.18;
+    const width = branch.width ?? 1.35 + (ui.intensity ? Number(ui.intensity.value) : 3) * 0.18;
     const geometry = new THREE.CylinderGeometry(width, width * 0.75, length, 10);
     const mesh = new THREE.Mesh(geometry, this.materials.branch);
     mesh.position.set((branch.x1 + branch.x2) / 2, width * 0.95, (branch.z1 + branch.z2) / 2);
@@ -2891,9 +3325,6 @@ class AntColony3D {
     const cooldownLeft = Math.max(0, Math.ceil((this.colony.battleCooldownUntil - Date.now()) / 1000));
     const availableSoldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
     const assigned = Math.max(0, Math.floor(availableSoldiers * 0.65));
-    const playerPower = assigned * d.attackPower;
-    const enemyPower = 5 + this.colony.territory * 1.8 + this.colony.enemyThreat * 0.42;
-    const chancePct = assigned > 0 ? Math.round(clamp(playerPower / (playerPower + enemyPower), 0.08, 0.92) * 100) : 0;
     const reward = Math.floor(34 + this.colony.territory * 9 + assigned * 4);
 
     ui.statFood.textContent = fmt(this.colony.food, 0);
@@ -2910,7 +3341,7 @@ class AntColony3D {
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     ui.activeToolLabel.textContent = `領土 ${fmt(this.colony.territory, 0)} / 大帝国まで拡張中`;
     ui.expeditionSoldiers.textContent = fmt(assigned, 0);
-    ui.expeditionChance.textContent = `${chancePct}%`;
+    ui.expeditionChance.textContent = assigned > 0 ? this.expeditionEngine : "待機";
     ui.expeditionReward.textContent = fmt(reward, 0);
     ui.expeditionBtn.disabled = cooldownLeft > 0 || assigned < 1;
     ui.expeditionBtn.textContent = cooldownLeft > 0 ? `再遠征まで ${cooldownLeft}s` : "近隣の餌場へ遠征";
