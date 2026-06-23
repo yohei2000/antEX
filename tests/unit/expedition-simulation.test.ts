@@ -16,10 +16,10 @@ import { updateSlime } from "../../src/expedition/sim/slimePhysics";
 import { splitArmySlime } from "../../src/expedition/sim/slimeSplit";
 import { sampleEnemyZoc } from "../../src/expedition/sim/zoc";
 import {
-  EXPEDITION_ANT_MIN_WORLD_GAP,
-  createExpeditionAntRenderStates,
-  nearestAntRenderGap,
-} from "../../src/expedition/threeView";
+  VisualAntController,
+  createVisualAntTargetsFromSlimes,
+  nearestVisualAntGap,
+} from "../../src/expedition/visualAnt";
 
 const fixedRng = () => 0.42;
 
@@ -192,17 +192,21 @@ describe("expedition battle simulation", () => {
 
     for (let i = 0; i < 90; i += 1) battle.update(1 / 60);
 
-    const playerAnts = createExpeditionAntRenderStates(battle.state.playerSlimes);
-    const enemyAnts = createExpeditionAntRenderStates(battle.state.enemySlimes);
+    const playerController = new VisualAntController("player");
+    const enemyController = new VisualAntController("enemy");
+    const playerAnts = playerController.update(
+      createVisualAntTargetsFromSlimes(battle.state.playerSlimes, 384),
+      battle.state.elapsed,
+    );
+    const enemyAnts = enemyController.update(
+      createVisualAntTargetsFromSlimes(battle.state.enemySlimes, 384),
+      battle.state.elapsed,
+    );
 
     expect(playerAnts.length).toBeGreaterThanOrEqual(46);
     expect(enemyAnts.length).toBeGreaterThanOrEqual(52);
-    expect(nearestAntRenderGap(playerAnts)).toBeGreaterThanOrEqual(
-      EXPEDITION_ANT_MIN_WORLD_GAP * 0.72,
-    );
-    expect(nearestAntRenderGap(enemyAnts)).toBeGreaterThanOrEqual(
-      EXPEDITION_ANT_MIN_WORLD_GAP * 0.72,
-    );
+    expect(nearestVisualAntGap(playerAnts)).toBeGreaterThanOrEqual(1.3);
+    expect(nearestVisualAntGap(enemyAnts)).toBeGreaterThanOrEqual(1.3);
   });
 });
 

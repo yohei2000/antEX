@@ -171,3 +171,17 @@ v1では戦闘中のドラッグやピンチによる直接操作は入れず、
 - 戦闘結果は winner、reason、metrics、diagnosis を持つ
 - 診断は士気、結束、疲労、包囲、前線速度、圧力時間から生成する
 - 報酬と負傷は勝率ではなく、圧力、疲労、結束崩壊、包囲、objective control から算出する
+
+## 2026-06-23: 遠征アリ表示を visual agent へ分離
+
+### Decision
+
+遠征の勝敗を決める `BattleSimulation` はそのまま戦闘の真実として維持し、画面上のアリは物理状態を読むだけの `VisualAntController` で描画する。`SlimeParticle` の毎フレーム補正を直接表示しない。
+
+### Result
+
+- visual ant は formation slot を低頻度で読み、dead zone、target smoothing、加速度制限、旋回制限で追従する
+- 格子状に見える隊列を避けるため、slot は段違い配置と安定した個体差を持たせ、marching/probing は低頻度の歩行目標で移動感を残す
+- 停止時は body heading と gait を止め、移動距離に応じて gait phase を進める
+- routing、pushing、engaged、regrouping などの表示状態を持ち、物理結果へ逆流しない
+- jitter 指標と unit test を追加し、微振動、heading 反転、target snap、停止中 gait の再発を検出する
