@@ -47,15 +47,16 @@ const MAX_FRAME_DELTA = 0.25;
 const MAX_FIXED_STEPS = 5;
 const SAVE_KEY = "ant3d.colonyState";
 const DISPLAY_ANT_CAP = 80;
-const RAID_RIVAL_CAP = 4;
+const RAID_RIVAL_CAP = 10;
 const RIVAL_CONTACT_RADIUS = 4.1;
-const RIVAL_CLASH_DURATION = 2.0;
+const RIVAL_CLASH_DURATION = 2.7;
 const RAID_INITIAL_DELAY_SECONDS = 78;
 const RAID_BASE_INTERVAL_SECONDS = 132;
-const RAID_WARNING_SECONDS = 20;
-const RAID_ACTIVE_SECONDS = 72;
+const RAID_WARNING_SECONDS = 18;
+const RAID_ACTIVE_SECONDS = 92;
 const RAID_RETREAT_SECONDS = 18;
 const RAID_RECOVERY_SECONDS = 26;
+const MIN_COLONY_SURVIVORS = 4;
 const CAMERA_DISTANCE_MIN = 138;
 const CAMERA_DISTANCE_MAX = 340;
 const CAMERA_DISTANCE_MOBILE = 252;
@@ -315,7 +316,7 @@ const UPGRADE_DEFS = [
 
 function createDefaultColony() {
   return {
-    version: 3,
+    version: 4,
     food: 36,
     lifetimeFood: 36,
     antPopulation: 12,
@@ -326,6 +327,7 @@ function createDefaultColony() {
     nestLevel: 1,
     territory: 0,
     enemyThreat: 6,
+    fallenAnts: 0,
     hatchProgress: 0,
     battleCooldownUntil: 0,
     raidState: createDefaultRaidState(),
@@ -344,6 +346,9 @@ function createDefaultRaidState() {
     activeCount: 0,
     approachAngle: -0.25,
     signalTimer: 0,
+    breachTimer: 0,
+    casualties: 0,
+    enemyCasualties: 0,
     lastOutcome: "none",
   };
 }
@@ -361,6 +366,9 @@ function normalizeRaidState(raw, options = {}) {
     activeCount: Math.floor(clamp(Number(raw.activeCount) || 0, 0, RAID_RIVAL_CAP)),
     approachAngle: Number.isFinite(Number(raw.approachAngle)) ? Number(raw.approachAngle) : base.approachAngle,
     signalTimer: clamp(Number(raw.signalTimer) || 0, 0, 30),
+    breachTimer: clamp(Number(raw.breachTimer) || 0, 0, 30),
+    casualties: Math.floor(clamp(Number(raw.casualties) || 0, 0, 999999)),
+    enemyCasualties: Math.floor(clamp(Number(raw.enemyCasualties) || 0, 0, 999999)),
     lastOutcome: typeof raw.lastOutcome === "string" ? raw.lastOutcome : base.lastOutcome,
   };
   if (options.resetActiveOnLoad && (next.phase === "active" || next.phase === "retreating")) {
@@ -378,7 +386,7 @@ function migrateColony(raw) {
   const next = {
     ...base,
     ...raw,
-    version: 3,
+    version: 4,
     upgrades: { ...base.upgrades, ...(raw.upgrades ?? {}) },
     raidState: normalizeRaidState(raw.raidState, { resetActiveOnLoad: true }),
     battleLog: Array.isArray(raw.battleLog) ? raw.battleLog.slice(0, 5) : base.battleLog,
@@ -395,6 +403,7 @@ function migrateColony(raw) {
   next.nestLevel = Math.floor(clamp(Number(next.nestLevel) || 1, 1, 999));
   next.territory = Math.floor(clamp(Number(next.territory) || 0, 0, 999999));
   next.enemyThreat = clamp(Number(next.enemyThreat) || base.enemyThreat, 0, 999999);
+  next.fallenAnts = Math.floor(clamp(Number(next.fallenAnts) || 0, 0, 999999));
   next.hatchProgress = clamp(Number(next.hatchProgress) || 0, 0, 0.999);
   next.battleCooldownUntil = Number(next.battleCooldownUntil) || 0;
   next.lastSavedAt = Number(next.lastSavedAt) || Date.now();
@@ -886,7 +895,7 @@ class Ant3D {
 
   updateClash(dt, sim) {
     const rival = this.clashRival;
-    if (!rival || rival.clash?.ant !== this) {
+    if (!rival || !rival.clash?.ants?.includes(this)) {
       this.clashRival = null;
       this.clashTimer = 0;
       if (this.state === "clash") this.setState(this.fleeTimer > 0 ? "flee" : "explore");
@@ -1552,33 +1561,82 @@ class RivalAnt3D {
     return { rivalPower, antPower };
   }
 
-  startClash(ant, anchorX, anchorZ) {
-    if (this.clash || this.retreat > 0 || !ant.startRivalClash(this, anchorX, anchorZ, RIVAL_CLASH_DURATION)) return false;
+  startClash(ant, anchorX, anchorZ, sim) {
+    const duration = RIVAL_CLASH_DURATION + (this.isRaidRival ? 0.45 : 0);
+    if (this.clash || this.retreat > 0 || !ant.startRivalClash(this, anchorX, anchorZ, duration)) return false;
     const dx = ant.x - this.x;
     const dz = ant.z - this.z;
     const length = Math.hypot(dx, dz);
     const lineX = length > 0.0001 ? dx / length : Math.sin(this.angle);
     const lineZ = length > 0.0001 ? dz / length : Math.cos(this.angle);
     this.clash = {
-      ant,
+      ants: [ant],
       elapsed: 0,
-      duration: RIVAL_CLASH_DURATION,
+      duration,
       anchorX,
       anchorZ,
       phase: rand(0, Math.PI * 2),
       lineX,
       lineZ,
       nextTrail: 0.24,
+      nextRecruit: 0.16,
     };
     this.state = "clash";
     this.disrupt = Math.max(this.disrupt, 0.55);
+    this.recruitGrapplers(sim);
     return true;
+  }
+
+  maxGrapplers(sim) {
+    const defense = sim.computeDerived().defensePower ?? 1;
+    const guardBonus = defense >= 1.45 ? 1 : 0;
+    return Math.min(this.isRaidRival ? 4 : 3, 2 + guardBonus);
+  }
+
+  addGrappler(ant) {
+    const clash = this.clash;
+    if (!clash || clash.ants.includes(ant)) return false;
+    const remaining = Math.max(0.45, clash.duration - clash.elapsed);
+    if (!ant.startRivalClash(this, clash.anchorX, clash.anchorZ, remaining)) return false;
+    clash.ants.push(ant);
+    return true;
+  }
+
+  recruitGrapplers(sim) {
+    const clash = this.clash;
+    if (!clash) return;
+    const limit = this.maxGrapplers(sim);
+    if (clash.ants.length >= limit) return;
+    const candidates = sim.ants
+      .filter((ant) =>
+        !clash.ants.includes(ant) &&
+        !ant.expeditionControl &&
+        ant.state !== "stunned" &&
+        ant.state !== "flee" &&
+        ant.fleeTimer <= 0 &&
+        ant.stun <= 0 &&
+        distance2(ant.x, ant.z, this.x, this.z) < 9.4,
+      )
+      .sort((a, b) => {
+        const roleRank = (a.role === "guard" ? 0 : a.role === "worker" ? 1 : 2) - (b.role === "guard" ? 0 : b.role === "worker" ? 1 : 2);
+        if (roleRank) return roleRank;
+        return distance2(a.x, a.z, this.x, this.z) - distance2(b.x, b.z, this.x, this.z);
+      });
+    for (const ant of candidates) {
+      if (clash.ants.length >= limit) break;
+      this.addGrappler(ant);
+    }
   }
 
   updateClash(dt, sim) {
     const clash = this.clash;
-    const ant = clash?.ant;
-    if (!clash || !ant || !sim.ants.includes(ant)) {
+    if (!clash) {
+      this.clash = null;
+      this.state = "rival";
+      return;
+    }
+    clash.ants = clash.ants.filter((ant) => sim.ants.includes(ant) && ant.clashRival === this);
+    if (clash.ants.length === 0) {
       this.clash = null;
       this.state = "rival";
       return;
@@ -1586,33 +1644,46 @@ class RivalAnt3D {
 
     clash.elapsed += dt;
     const progress = clamp(clash.elapsed / clash.duration, 0, 1);
-    const lineX = clash.lineX;
-    const lineZ = clash.lineZ;
-    const sideX = -lineZ;
-    const sideZ = lineX;
-    const shove = Math.sin(clash.elapsed * 18 + clash.phase) * 0.1;
-    const brace = Math.sin(clash.elapsed * 27 + this.id) * 0.07;
-    const spacing = 0.72 + brace;
-    const lateral = sideX * shove;
-    const lateralZ = sideZ * shove;
-    const antTargetX = clash.anchorX + lineX * spacing + lateral;
-    const antTargetZ = clash.anchorZ + lineZ * spacing + lateralZ;
-    const rivalTargetX = clash.anchorX - lineX * spacing * 0.86 - lateral * 0.72;
-    const rivalTargetZ = clash.anchorZ - lineZ * spacing * 0.86 - lateralZ * 0.72;
+    if (clash.elapsed >= clash.nextRecruit) {
+      this.recruitGrapplers(sim);
+      clash.nextRecruit += 0.38;
+    }
 
-    ant.x += (antTargetX - ant.x) * 0.45;
-    ant.z += (antTargetZ - ant.z) * 0.45;
+    const lineAngle = Math.atan2(clash.lineZ, clash.lineX);
+    let pullX = 0;
+    let pullZ = 0;
+    const count = Math.max(1, clash.ants.length);
+    clash.ants.forEach((ant, index) => {
+      const spread = count === 1 ? 0 : (index - (count - 1) * 0.5) * 0.82;
+      const sideBias = index % 2 === 0 ? 0.18 : -0.18;
+      const orbit = lineAngle + spread + sideBias + Math.sin(clash.elapsed * 7.5 + ant.id) * 0.08;
+      const tug = 0.95 + index * 0.16 + Math.sin(clash.elapsed * 17 + ant.id) * 0.06;
+      const biteX = Math.cos(orbit) * tug;
+      const biteZ = Math.sin(orbit) * tug;
+      const antTargetX = clash.anchorX + biteX;
+      const antTargetZ = clash.anchorZ + biteZ;
+      ant.x += (antTargetX - ant.x) * 0.42;
+      ant.z += (antTargetZ - ant.z) * 0.42;
+      ant.angle = Math.atan2(this.x - ant.x, this.z - ant.z) + Math.sin(clash.elapsed * 11 + index) * 0.22;
+      ant.energy = clamp(ant.energy - dt * (0.022 + this.aggression * 0.013), 0, 1);
+      ant.keepInWorld(sim);
+      pullX += biteX;
+      pullZ += biteZ;
+    });
+
+    const averagePullX = pullX / count;
+    const averagePullZ = pullZ / count;
+    const brace = Math.sin(clash.elapsed * 21 + this.id) * 0.06;
+    const rivalTargetX = clash.anchorX - averagePullX * (0.28 + count * 0.05) + Math.cos(lineAngle + Math.PI / 2) * brace;
+    const rivalTargetZ = clash.anchorZ - averagePullZ * (0.28 + count * 0.05) + Math.sin(lineAngle + Math.PI / 2) * brace;
     this.x += (rivalTargetX - this.x) * 0.45;
     this.z += (rivalTargetZ - this.z) * 0.45;
-    ant.angle = Math.atan2(this.x - ant.x, this.z - ant.z);
-    this.angle = Math.atan2(ant.x - this.x, ant.z - this.z);
-    ant.energy = clamp(ant.energy - dt * (0.018 + this.aggression * 0.012), 0, 1);
-    this.disrupt = Math.max(this.disrupt, 0.35 + progress * 0.28);
-    ant.keepInWorld(sim);
+    this.angle = Math.atan2(averagePullX, averagePullZ) + Math.sin(clash.elapsed * 9 + this.id) * 0.18;
+    this.disrupt = Math.max(this.disrupt, 0.35 + progress * 0.3 + Math.min(0.28, count * 0.06));
     this.keepInWorld(sim);
 
     if (clash.elapsed >= clash.nextTrail) {
-      sim.addTrail(clash.anchorX, clash.anchorZ, "alarm", 0.52);
+      sim.addTrail(clash.anchorX, clash.anchorZ, "alarm", 0.48 + count * 0.08);
       clash.nextTrail += 0.5;
     }
 
@@ -1622,43 +1693,68 @@ class RivalAnt3D {
   finishClash(sim) {
     const clash = this.clash;
     if (!clash) return;
-    const ant = clash.ant;
+    const ants = clash.ants.filter((ant) => sim.ants.includes(ant));
+    const primaryAnt = ants[0];
     this.clash = null;
     this.state = "rival";
-    ant.clashRival = null;
-    ant.clashTimer = 0;
-    ant.clashDuration = 0;
 
-    const { rivalPower, antPower } = this.combatPowers(ant, sim);
-    const dx = ant.x - this.x;
-    const dz = ant.z - this.z;
+    for (const ant of ants) {
+      ant.clashRival = null;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+    }
+    if (!primaryAnt) return;
+
+    const groupPower = ants.reduce((sum, ant) => sum + this.combatPowers(ant, sim).antPower, 0);
+    const groupBonus = 0.82 + Math.min(0.42, Math.max(0, ants.length - 1) * 0.14);
+    const colonyPower = groupPower * groupBonus;
+    const threatPressure = this.isRaidRival ? clamp(sim.colony.enemyThreat / 14, 0, 0.95) : 0;
+    const rivalPower = 1.35 + this.aggression * 1.04 + this.stubbornness * 0.64 + this.scale * 0.36 + threatPressure;
+    const dx = primaryAnt.x - this.x;
+    const dz = primaryAnt.z - this.z;
     const d = Math.hypot(dx, dz) || 1;
     const nx = dx / d;
     const nz = dz / d;
 
-    if (rivalPower >= antPower) {
-      ant.x += nx * 0.42;
-      ant.z += nz * 0.42;
-      ant.angle = Math.atan2(sim.nest.x - ant.x, sim.nest.z - ant.z);
-      ant.energy = clamp(ant.energy - 0.18 * this.aggression, 0, 1);
-      ant.startFleeHome(this.x, this.z, 4.4 + this.aggression * 1.4);
+    if (rivalPower >= colonyPower * 0.94) {
+      const victim = ants
+        .slice()
+        .sort((a, b) => this.combatPowers(a, sim).antPower - this.combatPowers(b, sim).antPower)[0];
+      for (const ant of ants) {
+        ant.x += nx * 0.34;
+        ant.z += nz * 0.34;
+        ant.angle = Math.atan2(sim.nest.x - ant.x, sim.nest.z - ant.z);
+        ant.energy = clamp(ant.energy - 0.16 * this.aggression, 0, 1);
+        if (ant !== victim) ant.startFleeHome(this.x, this.z, 4.2 + this.aggression * 1.2);
+      }
+      if (this.isRaidRival && sim.canLoseAnt()) {
+        sim.killAnt(victim, this);
+      } else {
+        victim.startFleeHome(this.x, this.z, 4.8 + this.aggression * 1.5);
+      }
       this.victoryFlash = 1;
       this.lastFightWinner = "rival";
-      sim.registerRivalFight("rival", ant, this);
+      sim.registerRivalFight("rival", victim, this, { grapplers: ants.length, casualty: this.isRaidRival });
     } else {
       this.x -= nx * 0.38;
       this.z -= nz * 0.38;
       this.angle = Math.atan2(this.homeX - this.x, this.homeZ - this.z);
       this.disrupt = Math.max(this.disrupt, 1.15);
-      this.startRetreatHome(ant.x, ant.z, 4.8 + ant.traits.persistence * 1.5);
-      if (ant.state === "clash") ant.setState(ant.carrying > 0 ? "return" : "explore");
+      this.startRetreatHome(primaryAnt.x, primaryAnt.z, 4.8 + primaryAnt.traits.persistence * 1.5);
+      for (const ant of ants) {
+        ant.energy = clamp(ant.energy - 0.08, 0, 1);
+        if (ant.state === "clash") ant.setState(ant.carrying > 0 ? "return" : "explore");
+      }
       this.lastFightWinner = "colony";
-      sim.registerRivalFight("colony", ant, this);
+      if (this.isRaidRival && colonyPower > rivalPower * 1.24) {
+        sim.defeatRivalAnt(this, primaryAnt);
+      }
+      sim.registerRivalFight("colony", primaryAnt, this, { grapplers: ants.length, enemyCasualty: this.leftRaid });
     }
 
-    sim.addTrail((this.x + ant.x) * 0.5, (this.z + ant.z) * 0.5, "alarm", 0.9);
-    this.fightCooldown = 1.05;
-    ant.keepInWorld(sim);
+    sim.addTrail((this.x + primaryAnt.x) * 0.5, (this.z + primaryAnt.z) * 0.5, "alarm", 1.0);
+    this.fightCooldown = 1.35;
+    for (const ant of ants) ant.keepInWorld(sim);
     this.keepInWorld(sim);
   }
 
@@ -1712,7 +1808,7 @@ class RivalAnt3D {
 
       const anchorX = (this.x + ant.x) * 0.5;
       const anchorZ = (this.z + ant.z) * 0.5;
-      if (this.startClash(ant, anchorX, anchorZ)) {
+      if (this.startClash(ant, anchorX, anchorZ, sim)) {
         sim.addTrail(anchorX, anchorZ, "alarm", 0.55);
         resolved = true;
         break;
@@ -2101,6 +2197,7 @@ class AntColony3D {
     this.selectedAnt = null;
     this.collectedFood = 0;
     this.nextFoodId = 1;
+    this.nextAntId = 1;
     this.ants = [];
     this.water = [];
     this.stones = [];
@@ -2569,6 +2666,7 @@ class AntColony3D {
     this.antRenderer?.endFrame();
     this.collectedFood = 0;
     this.nextFoodId = 1;
+    this.nextAntId = 1;
     this.selectedAnt = null;
     if (newGame) {
       this.colony = createDefaultColony();
@@ -2752,7 +2850,7 @@ class AntColony3D {
 
   syncAntPopulation() {
     const target = Math.floor(clamp(this.colony.antPopulation - this.colony.woundedAnts, 1, DISPLAY_ANT_CAP));
-    while (this.ants.length < target) this.ants.push(new Ant3D(this.ants.length + 1, this));
+    while (this.ants.length < target) this.ants.push(new Ant3D(this.nextAntId++, this));
     if (this.expeditionReplay && this.ants.length > target) return;
     while (this.ants.length > target) {
       let removeIndex = -1;
@@ -3533,8 +3631,8 @@ class AntColony3D {
 
   raidEnemyCount() {
     const d = this.computeDerived();
-    const pressure = this.colony.enemyThreat * 0.12 + this.colony.territory * 0.18 - (d.defensePower - 1) * 0.35;
-    return Math.floor(clamp(2 + pressure, 2, RAID_RIVAL_CAP));
+    const pressure = this.colony.enemyThreat * 0.42 + this.colony.territory * 0.26 - (d.defensePower - 1) * 0.55;
+    return Math.floor(clamp(4 + pressure, 4, RAID_RIVAL_CAP));
   }
 
   raidSignalPoint(raid = this.ensureRaidState(), radiusFactor = 0.86) {
@@ -3556,9 +3654,12 @@ class AntColony3D {
     raid.activeCount = this.raidEnemyCount();
     raid.approachAngle = rand(0, Math.PI * 2);
     raid.signalTimer = 0;
+    raid.breachTimer = 0;
+    raid.casualties = 0;
+    raid.enemyCasualties = 0;
     raid.lastOutcome = "warning";
     this.emitRaidSignal(raid, 0.88);
-    this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹が接近`);
+    this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹が集団接近`);
   }
 
   beginRaid() {
@@ -3581,7 +3682,7 @@ class AntColony3D {
     raid.activeCount = count;
     raid.signalTimer = 0;
     raid.lastOutcome = "active";
-    this.pushLog(`敵襲開始: ${count}匹が外縁から侵入`);
+    this.pushLog(`敵襲開始: ${count}匹が巣と餌場へ侵入`);
   }
 
   orderRaidRetreat(outcome = "held") {
@@ -3616,17 +3717,18 @@ class AntColony3D {
     const raid = this.ensureRaidState();
     const count = Math.max(1, raid.activeCount || this.raidEnemyCount());
     if (outcome === "repelled") {
-      const relief = 0.55 + count * 0.16 + Math.max(0, this.computeDerived().defensePower - 1) * 0.18;
+      const relief = 0.75 + count * 0.22 + Math.max(0, this.computeDerived().defensePower - 1) * 0.22;
       this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - relief);
-      this.pushLog(`襲撃を防衛: 脅威-${fmt(relief, 1)}`);
+      this.pushLog(`襲撃を防衛: 死亡${raid.casualties} / 脅威-${fmt(relief, 1)}`);
     } else {
       const defense = this.computeDerived().defensePower;
-      const loss = Math.min(this.colony.food, Math.max(1, count * 2.2 + this.colony.enemyThreat * 0.12) / defense);
-      const wounded = defense >= 1.45 ? 0 : Math.min(this.colony.antPopulation - 1, Math.ceil(count * 0.25));
+      const loss = Math.min(this.colony.food, Math.max(2, count * 4.8 + this.colony.enemyThreat * 0.32) / defense);
+      const wounded = defense >= 1.65 ? Math.min(1, count) : Math.min(this.colony.antPopulation - 1, Math.ceil(count * 0.45));
       this.colony.food = Math.max(0, this.colony.food - loss);
       this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + wounded);
-      this.colony.enemyThreat += 0.35 + count * 0.08;
-      this.pushLog(`襲撃をしのいだ: 食料-${fmt(loss, 0)} / 負傷${wounded}`);
+      this.applyRaidCasualties(Math.max(0, Math.ceil(count * 0.16) - raid.casualties), "breach");
+      this.colony.enemyThreat += 0.65 + count * 0.12;
+      this.pushLog(`襲撃被害: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${raid.casualties}`);
     }
     this.clearRaidRivals();
     raid.phase = "recovering";
@@ -3635,6 +3737,82 @@ class AntColony3D {
     raid.signalTimer = 0;
     raid.lastOutcome = outcome;
     this.saveColony();
+  }
+
+  canLoseAnt() {
+    return this.colony.antPopulation > MIN_COLONY_SURVIVORS && this.ants.length > MIN_COLONY_SURVIVORS;
+  }
+
+  killAnt(ant, rival = null) {
+    if (!ant || !this.canLoseAnt()) return false;
+    const index = this.ants.indexOf(ant);
+    if (index < 0) return false;
+    ant.clashRival = null;
+    ant.clashTimer = 0;
+    ant.clashDuration = 0;
+    ant.fleeTimer = 0;
+    this.ants.splice(index, 1);
+    this.antRenderer?.releaseRenderObject(ant);
+    this.colony.antPopulation = Math.max(MIN_COLONY_SURVIVORS, Math.floor(this.colony.antPopulation) - 1);
+    this.colony.woundedAnts = Math.min(this.colony.woundedAnts, Math.max(0, this.colony.antPopulation - 1));
+    this.colony.fallenAnts = Math.floor((this.colony.fallenAnts ?? 0) + 1);
+    const raid = this.ensureRaidState();
+    if (raid.phase === "active" || raid.phase === "retreating") raid.casualties += 1;
+    this.addTrail(ant.x, ant.z, "alarm", 1.15);
+    this.pushLog(`個体${ant.id}死亡: ${rival?.isRaidRival ? "襲撃で噛み倒された" : "外敵に倒された"}`);
+    this.syncAntPopulation();
+    return true;
+  }
+
+  applyRaidCasualties(count, reason = "breach") {
+    let losses = 0;
+    for (let i = 0; i < count; i += 1) {
+      if (!this.canLoseAnt()) break;
+      const candidates = this.ants
+        .filter((ant) => !ant.expeditionControl && ant.state !== "expedition" && ant.state !== "expedition_wounded")
+        .sort((a, b) => {
+          const roleRank = (a.role === "guard" ? 2 : a.role === "worker" ? 0 : 1) - (b.role === "guard" ? 2 : b.role === "worker" ? 0 : 1);
+          if (roleRank) return roleRank;
+          return a.energy - b.energy;
+        });
+      if (!this.killAnt(candidates[0], reason === "breach" ? { isRaidRival: true } : null)) break;
+      losses += 1;
+    }
+    return losses;
+  }
+
+  defeatRivalAnt(rival, ant = null) {
+    if (!rival || rival.leftRaid) return false;
+    rival.leftRaid = true;
+    rival.retreat = 0;
+    rival.disrupt = Math.max(rival.disrupt, 1.6);
+    const raid = this.ensureRaidState();
+    if (rival.isRaidRival && (raid.phase === "active" || raid.phase === "retreating")) raid.enemyCasualties += 1;
+    this.addTrail(rival.x, rival.z, "alarm", 0.95);
+    return true;
+  }
+
+  updateRaidBreachDamage(dt) {
+    const raid = this.ensureRaidState();
+    if (raid.phase !== "active") return;
+    const pressure = this.raidRivals().filter((rival) =>
+      distance2(rival.x, rival.z, this.nest.x, this.nest.z) < this.nest.radius + 24 ||
+      this.isNearFood(rival.x, rival.z, 7)
+    ).length;
+    if (pressure <= 0) {
+      raid.breachTimer = Math.max(0, raid.breachTimer - dt * 0.6);
+      return;
+    }
+    raid.breachTimer += dt * pressure;
+    if (raid.breachTimer < 7.2) return;
+    raid.breachTimer = 0;
+    const defense = this.computeDerived().defensePower;
+    const loss = Math.min(this.colony.food, (1.8 + pressure * 1.4 + this.colony.enemyThreat * 0.08) / defense);
+    this.colony.food = Math.max(0, this.colony.food - loss);
+    const casualtyChance = clamp((pressure - 1) * 0.18 + this.colony.enemyThreat * 0.012 - (defense - 1) * 0.18, 0, 0.62);
+    let casualties = 0;
+    if (Math.random() < casualtyChance) casualties = this.applyRaidCasualties(1, "breach");
+    this.pushLog(`敵が巣周辺を荒らした: 食料-${fmt(loss, 0)}${casualties ? ` / 死亡${casualties}` : ""}`);
   }
 
   updateRaid(dt) {
@@ -3660,6 +3838,7 @@ class AntColony3D {
 
     if (raid.phase === "active") {
       raid.timer -= dt;
+      this.updateRaidBreachDamage(dt);
       this.cleanupRaidRivals();
       if (this.raidRivals().length === 0 && raid.activeCount > 0) {
         this.resolveRaid("repelled");
@@ -3711,14 +3890,16 @@ class AntColony3D {
     return best;
   }
 
-  registerRivalFight(winner, ant, rival) {
+  registerRivalFight(winner, ant, rival, detail = {}) {
     this.rivalFightStats.clashes += 1;
     if (winner === "colony") {
       this.rivalFightStats.colonyWins += 1;
-      this.pushLog(`敵アリを撃退: 個体${ant.id}`);
+      const group = detail.grapplers && detail.grapplers > 1 ? `${detail.grapplers}匹で` : "";
+      this.pushLog(`敵アリを${group}制圧: 個体${ant.id}`);
     } else {
       this.rivalFightStats.rivalWins += 1;
-      this.pushLog(`敵アリが個体${ant.id}を弾いた`);
+      const loss = detail.casualty ? "死亡" : "退避";
+      this.pushLog(`敵アリが個体${ant.id}を噛み倒した: ${loss}`);
     }
   }
 

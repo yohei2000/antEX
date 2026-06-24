@@ -593,7 +593,7 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
 
   expect(raid.warning.phase).toBe("warning");
   expect(raid.warning.rivals).toBe(0);
-  expect(raid.warning.activeCount).toBeGreaterThanOrEqual(2);
+  expect(raid.warning.activeCount).toBeGreaterThanOrEqual(4);
   expect(raid.warning.log).toContain("敵アリの気配");
   expect(raid.activePhase).toBe("active");
   expect(raid.phaseAfterStats).toBe("active");
@@ -610,6 +610,8 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     const sim = window.__ANT_SIM as any;
     const ant = sim.ants[0];
     const guard = sim.ants[1];
+    const supportA = sim.ants[2];
+    const supportB = sim.ants[3];
     sim.colony.raidState = {
       phase: "warning",
       timer: 0,
@@ -622,6 +624,7 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     sim.updateRaid(0.01);
     const rival = sim.raidRivals()[0];
     sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+    const antPopulationBefore = sim.colony.antPopulation;
 
     ant.role = "worker";
     ant.traits.persistence = 0.1;
@@ -656,7 +659,7 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     const workerLineZ = rival.clash.lineZ;
     let workerMaxCenterDrift = 0;
     let workerMaxAxisDrift = 0;
-    for (let i = 0; i < 160; i += 1) {
+    for (let i = 0; i < 220; i += 1) {
       ant.update(1 / 60, sim);
       rival.update(1 / 60, sim);
       if (i < 100 && rival.clash) {
@@ -672,7 +675,9 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     }
     const workerStateAfter = ant.state;
     const workerFleeTimer = ant.fleeTimer;
-    const workerDistanceToNestAfter = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
+    const workerAlive = sim.ants.includes(ant);
+    const workerCasualties = sim.colony.raidState.casualties;
+    const antPopulationAfterWorker = sim.colony.antPopulation;
 
     ant.x = -80;
     ant.z = -80;
@@ -690,6 +695,26 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     guard.prevZ = guard.z;
     guard.fleeTimer = 0;
     guard.clashTimer = 0;
+    supportA.role = "guard";
+    supportA.traits.persistence = 1;
+    supportA.traits.caution = 1;
+    supportA.state = "explore";
+    supportA.x = 3.35;
+    supportA.z = 0.9;
+    supportA.prevX = supportA.x;
+    supportA.prevZ = supportA.z;
+    supportA.fleeTimer = 0;
+    supportA.clashTimer = 0;
+    supportB.role = "worker";
+    supportB.traits.persistence = 0.8;
+    supportB.traits.caution = 0.8;
+    supportB.state = "explore";
+    supportB.x = 3.55;
+    supportB.z = -0.9;
+    supportB.prevX = supportB.x;
+    supportB.prevZ = supportB.z;
+    supportB.fleeTimer = 0;
+    supportB.clashTimer = 0;
     rival.x = 4.5;
     rival.z = 0;
     rival.prevX = rival.x;
@@ -702,8 +727,11 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     rival.fightCooldown = 0;
     const guardStarted = rival.resolveAntContacts(sim);
     const guardStateAtStart = guard.state;
-    for (let i = 0; i < 150; i += 1) {
+    const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
+    for (let i = 0; i < 220; i += 1) {
       guard.update(1 / 60, sim);
+      supportA.update(1 / 60, sim);
+      supportB.update(1 / 60, sim);
       rival.update(1 / 60, sim);
     }
 
@@ -712,16 +740,21 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
       workerStateAtStart,
       workerStateAfter,
       workerFleeTimer,
+      workerAlive,
+      workerCasualties,
+      antPopulationBefore,
+      antPopulationAfterWorker,
       workerDistanceBefore,
       workerDistanceAfterStart,
       workerMaxCenterDrift,
       workerMaxAxisDrift,
       workerDistanceToNestBefore,
-      workerDistanceToNestAfter,
       guardStarted,
       guardStateAtStart,
+      guardGrapplersAtStart,
       lastWinner: rival.lastFightWinner,
       rivalRetreat: rival.retreat,
+      enemyMarkedGone: rival.leftRaid,
       stats: sim.rivalFightStats,
     };
   });
@@ -730,14 +763,15 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
   expect(fight.workerStateAtStart).toBe("clash");
   expect(Math.abs(fight.workerDistanceAfterStart - fight.workerDistanceBefore)).toBeLessThan(0.25);
   expect(fight.workerMaxCenterDrift).toBeLessThan(0.55);
-  expect(fight.workerMaxAxisDrift).toBeLessThan(0.22);
-  expect(fight.workerStateAfter).toBe("flee");
-  expect(fight.workerFleeTimer).toBeGreaterThan(0);
-  expect(fight.workerDistanceToNestAfter).toBeLessThan(fight.workerDistanceToNestBefore);
+  expect(fight.workerMaxAxisDrift).toBeLessThan(0.34);
+  expect(fight.workerAlive).toBe(false);
+  expect(fight.workerCasualties).toBeGreaterThanOrEqual(1);
+  expect(fight.antPopulationAfterWorker).toBe(fight.antPopulationBefore - 1);
   expect(fight.guardStarted).toBe(true);
   expect(fight.guardStateAtStart).toBe("clash");
+  expect(fight.guardGrapplersAtStart).toBeGreaterThanOrEqual(2);
   expect(fight.lastWinner).toBe("colony");
-  expect(fight.rivalRetreat).toBeGreaterThan(0);
+  expect(fight.enemyMarkedGone).toBe(true);
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);
   expect(fight.stats.colonyWins).toBeGreaterThanOrEqual(1);
 });
@@ -770,7 +804,7 @@ test("rival ants actively harass ants near food instead of only camping", async 
     ant.fleeTimer = 0;
     ant.clashTimer = 0;
     ant.carrying = 0;
-    ant.x = food.x + 9;
+    ant.x = food.x + 4.4;
     ant.z = food.z;
     rival.x = food.x;
     rival.z = food.z;
@@ -796,6 +830,8 @@ test("rival ants actively harass ants near food instead of only camping", async 
       minDistance,
       afterDistance,
       antState: ant.state,
+      antAlive: sim.ants.includes(ant),
+      casualties: sim.colony.raidState.casualties,
       rivalWins: sim.rivalFightStats.rivalWins,
       clashes: sim.rivalFightStats.clashes,
     };
@@ -804,5 +840,6 @@ test("rival ants actively harass ants near food instead of only camping", async 
   expect(result.minDistance).toBeLessThan(result.beforeDistance);
   expect(result.clashes).toBeGreaterThanOrEqual(1);
   expect(result.rivalWins).toBeGreaterThanOrEqual(1);
-  expect(result.antState).toBe("flee");
+  expect(result.antAlive).toBe(false);
+  expect(result.casualties).toBeGreaterThanOrEqual(1);
 });

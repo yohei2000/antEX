@@ -530,7 +530,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
     if (
       raid.warning.phase !== "warning" ||
       raid.warning.rivals !== 0 ||
-      raid.warning.activeCount < 2 ||
+      raid.warning.activeCount < 4 ||
       !raid.warning.log.includes("敵アリの気配") ||
       raid.activePhase !== "active" ||
       raid.phaseAfterStats !== "active" ||
@@ -546,8 +546,11 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const sim = window.__ANT_SIM;
         const ant = sim.ants[0];
         const guard = sim.ants[1];
+        const supportA = sim.ants[2];
+        const supportB = sim.ants[3];
         const rival = sim.raidRivals()[0];
         sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+        const antPopulationBefore = sim.colony.antPopulation;
         ant.role = "worker";
         ant.traits.persistence = 0.1;
         ant.traits.caution = 0.1;
@@ -582,7 +585,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const lineZ = rival.clash.lineZ;
         let maxCenterDrift = 0;
         let maxAxisDrift = 0;
-        for (let i = 0; i < 160; i += 1) {
+        for (let i = 0; i < 220; i += 1) {
           ant.update(1 / 60, sim);
           rival.update(1 / 60, sim);
           if (i < 100 && rival.clash) {
@@ -598,7 +601,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         }
         const stateAfterClash = ant.state;
         const fleeTimer = ant.fleeTimer;
-        const nestDistanceAfter = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
+        const workerAlive = sim.ants.includes(ant);
+        const workerCasualties = sim.colony.raidState.casualties;
+        const antPopulationAfterWorker = sim.colony.antPopulation;
         ant.x = -80;
         ant.z = -80;
         ant.fleeTimer = 0;
@@ -615,6 +620,26 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         guard.prevZ = guard.z;
         guard.fleeTimer = 0;
         guard.clashTimer = 0;
+        supportA.role = "guard";
+        supportA.traits.persistence = 1;
+        supportA.traits.caution = 1;
+        supportA.state = "explore";
+        supportA.x = 3.35;
+        supportA.z = 0.9;
+        supportA.prevX = supportA.x;
+        supportA.prevZ = supportA.z;
+        supportA.fleeTimer = 0;
+        supportA.clashTimer = 0;
+        supportB.role = "worker";
+        supportB.traits.persistence = 0.8;
+        supportB.traits.caution = 0.8;
+        supportB.state = "explore";
+        supportB.x = 3.55;
+        supportB.z = -0.9;
+        supportB.prevX = supportB.x;
+        supportB.prevZ = supportB.z;
+        supportB.fleeTimer = 0;
+        supportB.clashTimer = 0;
         rival.x = 4.5;
         rival.z = 0;
         rival.prevX = rival.x;
@@ -627,8 +652,11 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         rival.fightCooldown = 0;
         const repelled = rival.resolveAntContacts(sim);
         const guardStateAtStart = guard.state;
-        for (let i = 0; i < 150; i += 1) {
+        const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
+        for (let i = 0; i < 220; i += 1) {
           guard.update(1 / 60, sim);
+          supportA.update(1 / 60, sim);
+          supportB.update(1 / 60, sim);
           rival.update(1 / 60, sim);
         }
         return {
@@ -641,12 +669,17 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           stateAtStart,
           stateAfterClash,
           fleeTimer,
+          workerAlive,
+          workerCasualties,
+          antPopulationBefore,
+          antPopulationAfterWorker,
           nestDistanceBefore,
-          nestDistanceAfter,
           guardStateAtStart,
+          guardGrapplersAtStart,
           winner: rival.lastFightWinner,
           antEnergy: ant.energy,
           rivalRetreat: rival.retreat,
+          enemyMarkedGone: rival.leftRaid,
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
           alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
@@ -657,15 +690,16 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       !fight.repelled ||
       Math.abs(fight.afterDistance - fight.beforeDistance) >= 0.25 ||
       fight.maxCenterDrift >= 0.55 ||
-      fight.maxAxisDrift >= 0.22 ||
+      fight.maxAxisDrift >= 0.34 ||
       fight.stateAtStart !== "clash" ||
-      fight.stateAfterClash !== "flee" ||
-      fight.fleeTimer <= 0 ||
-      fight.nestDistanceAfter >= fight.nestDistanceBefore ||
+      fight.workerAlive ||
+      fight.workerCasualties < 1 ||
+      fight.antPopulationAfterWorker !== fight.antPopulationBefore - 1 ||
       fight.guardStateAtStart !== "clash" ||
+      fight.guardGrapplersAtStart < 2 ||
       fight.antEnergy >= 1 ||
       fight.winner !== "colony" ||
-      fight.rivalRetreat <= 0 ||
+      !fight.enemyMarkedGone ||
       fight.fightStats.rivalWins < 1 ||
       fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||
