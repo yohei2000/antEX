@@ -578,12 +578,17 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
     const rivals = sim.raidRivals();
     const minNestDistance = Math.min(...rivals.map((rival: any) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z)));
     const spawnRadii = rivals.map((rival: any) => Math.hypot(rival.x, rival.z));
-    const spawnZ = rivals.map((rival: any) => rival.z);
-    const targetZ = rivals.map((rival: any) => rival.raidTargetZ);
+    const approachAngle = sim.colony.raidState.approachAngle ?? 0;
+    const flankX = -Math.sin(approachAngle);
+    const flankZ = Math.cos(approachAngle);
+    const spawnLateral = rivals.map((rival: any) => rival.x * flankX + rival.z * flankZ);
+    const targetLateral = rivals.map((rival: any) => rival.raidTargetX * flankX + rival.raidTargetZ * flankZ);
+    const exitRadii = rivals.map((rival: any) => Math.hypot(rival.homeX, rival.homeZ));
     const minWorldRadius = Math.min(...spawnRadii);
     const spawnDepthSpread = Math.max(...spawnRadii) - Math.min(...spawnRadii);
-    const spawnLateralSpread = Math.max(...spawnZ) - Math.min(...spawnZ);
-    const targetLateralSpread = Math.max(...targetZ) - Math.min(...targetZ);
+    const spawnLateralSpread = Math.max(...spawnLateral) - Math.min(...spawnLateral);
+    const targetLateralSpread = Math.max(...targetLateral) - Math.min(...targetLateral);
+    const minExitRadius = Math.min(...exitRadii);
     return {
       warning,
       activePhase,
@@ -595,6 +600,7 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
       spawnDepthSpread,
       spawnLateralSpread,
       targetLateralSpread,
+      minExitRadius,
       worldRadius: sim.worldRadius,
       log: sim.colony.battleLog.join("\n"),
     };
@@ -612,10 +618,11 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
   expect(raid.spawnDepthSpread).toBeGreaterThan(2);
   expect(raid.spawnLateralSpread).toBeGreaterThan(12);
   expect(raid.targetLateralSpread).toBeGreaterThan(6);
+  expect(raid.minExitRadius).toBeGreaterThan(raid.worldRadius + 16);
   expect(raid.log).toContain("敵襲開始");
 });
 
-test("rival ant combat grapples before the loser flees home", async ({ page }) => {
+test("rival ant combat grapples before the loser exits or remains", async ({ page }) => {
   await waitForSimulation(page);
 
   const fight = await page.evaluate(() => {
@@ -743,6 +750,7 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     rival.retreat = 0;
     rival.clash = null;
     rival.fightCooldown = 0;
+    const corpseCountBeforeGuard = sim.rivalCorpses?.length ?? 0;
     const guardStarted = rival.resolveAntContacts(sim);
     const guardStateAtStart = guard.state;
     const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
@@ -783,6 +791,9 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
       rivalRetreat: rival.retreat,
       enemyDefeated: rival.defeated,
       enemyMarkedGone: rival.leftRaid,
+      enemyStillLive: sim.rivalAnts.includes(rival),
+      enemyCorpseCount: sim.rivalCorpses?.length ?? 0,
+      corpseCountBeforeGuard,
       stats: sim.rivalFightStats,
     };
   });
@@ -804,8 +815,9 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
   expect(fight.combatEffects).toBeGreaterThan(fight.workerCombatEffects);
   expect(fight.lastWinner).toBe("colony");
   expect(fight.enemyDefeated).toBe(true);
-  expect(fight.rivalRetreat).toBeGreaterThan(0);
-  expect(fight.enemyMarkedGone).toBe(false);
+  expect(fight.enemyMarkedGone).toBe(true);
+  expect(fight.enemyStillLive).toBe(false);
+  expect(fight.enemyCorpseCount).toBeGreaterThan(fight.corpseCountBeforeGuard);
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);
   expect(fight.stats.colonyWins).toBeGreaterThanOrEqual(1);
 });
@@ -850,6 +862,7 @@ test("rival ants actively harass ants near food instead of only camping", async 
     rival.retreat = 0;
     rival.clash = null;
     rival.fightCooldown = 0;
+    const targetBeforeMove = rival.findHarassmentTarget(sim);
     const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
     let minDistance = beforeDistance;
     for (let i = 0; i < 140; i += 1) {
@@ -863,6 +876,7 @@ test("rival ants actively harass ants near food instead of only camping", async 
       beforeDistance,
       minDistance,
       afterDistance,
+      targetRole: targetBeforeMove?.role ?? null,
       antState: ant.state,
       antAlive: sim.ants.includes(ant),
       casualties: sim.colony.raidState.casualties,
@@ -872,6 +886,7 @@ test("rival ants actively harass ants near food instead of only camping", async 
   });
 
   expect(result.minDistance).toBeLessThan(result.beforeDistance);
+  expect(result.targetRole).toBe("worker");
   expect(result.clashes).toBeGreaterThanOrEqual(1);
   expect(result.rivalWins).toBeGreaterThanOrEqual(1);
   expect(result.antAlive).toBe(false);

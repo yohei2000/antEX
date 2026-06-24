@@ -516,8 +516,12 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         sim.updateStats();
         const rivals = sim.raidRivals();
         const spawnRadii = rivals.map((rival) => Math.hypot(rival.x, rival.z));
-        const spawnZ = rivals.map((rival) => rival.z);
-        const targetZ = rivals.map((rival) => rival.raidTargetZ);
+        const approachAngle = sim.colony.raidState.approachAngle ?? 0;
+        const flankX = -Math.sin(approachAngle);
+        const flankZ = Math.cos(approachAngle);
+        const spawnLateral = rivals.map((rival) => rival.x * flankX + rival.z * flankZ);
+        const targetLateral = rivals.map((rival) => rival.raidTargetX * flankX + rival.raidTargetZ * flankZ);
+        const exitRadii = rivals.map((rival) => Math.hypot(rival.homeX, rival.homeZ));
         return {
           warning,
           activePhase,
@@ -527,8 +531,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           minNestDistance: Math.min(...rivals.map((rival) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z))),
           minWorldRadius: Math.min(...spawnRadii),
           spawnDepthSpread: Math.max(...spawnRadii) - Math.min(...spawnRadii),
-          spawnLateralSpread: Math.max(...spawnZ) - Math.min(...spawnZ),
-          targetLateralSpread: Math.max(...targetZ) - Math.min(...targetZ),
+          spawnLateralSpread: Math.max(...spawnLateral) - Math.min(...spawnLateral),
+          targetLateralSpread: Math.max(...targetLateral) - Math.min(...targetLateral),
+          minExitRadius: Math.min(...exitRadii),
           worldRadius: sim.worldRadius,
           log: sim.colony.battleLog.join("\\n"),
         };
@@ -546,6 +551,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       raid.spawnDepthSpread <= 2 ||
       raid.spawnLateralSpread <= 12 ||
       raid.targetLateralSpread <= 6 ||
+      raid.minExitRadius <= raid.worldRadius + 16 ||
       !raid.log.includes("敵襲開始")
     ) {
       throw new Error(`${label}: raid warning and spawn check failed: ${JSON.stringify(raid)}`);
@@ -665,6 +671,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         rival.retreat = 0;
         rival.clash = null;
         rival.fightCooldown = 0;
+        const corpseCountBeforeGuard = sim.rivalCorpses?.length ?? 0;
         const repelled = rival.resolveAntContacts(sim);
         const guardStateAtStart = guard.state;
         const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
@@ -704,6 +711,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           rivalRetreat: rival.retreat,
           enemyDefeated: rival.defeated,
           enemyMarkedGone: rival.leftRaid,
+          enemyStillLive: sim.rivalAnts.includes(rival),
+          enemyCorpseCount: sim.rivalCorpses?.length ?? 0,
+          corpseCountBeforeGuard,
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
           alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
@@ -728,8 +738,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       fight.antEnergy >= 1 ||
       fight.winner !== "colony" ||
       !fight.enemyDefeated ||
-      fight.rivalRetreat <= 0 ||
-      fight.enemyMarkedGone ||
+      !fight.enemyMarkedGone ||
+      fight.enemyStillLive ||
+      fight.enemyCorpseCount <= fight.corpseCountBeforeGuard ||
       fight.fightStats.rivalWins < 1 ||
       fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||
