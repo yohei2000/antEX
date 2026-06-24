@@ -50,6 +50,8 @@ const DISPLAY_ANT_CAP = 80;
 const RAID_RIVAL_CAP = 10;
 const RIVAL_CONTACT_RADIUS = 4.1;
 const RIVAL_CLASH_DURATION = 2.7;
+const COMBAT_EFFECT_CAP = 96;
+const COMBAT_EFFECT_LIFE = 0.78;
 const RAID_INITIAL_DELAY_SECONDS = 78;
 const RAID_BASE_INTERVAL_SECONDS = 132;
 const RAID_WARNING_SECONDS = 18;
@@ -641,7 +643,7 @@ class DebugPanel {
       `textures ${info.memory.textures}`,
       `ants ${this.sim.ants.length}`,
       `rivals ${this.sim.rivalAnts.length}`,
-      `objects ${this.sim.water.length + this.sim.stones.length + this.sim.food.length + this.sim.branches.length + this.sim.predators.length}`,
+      `objects ${this.sim.water.length + this.sim.stones.length + this.sim.food.length + this.sim.branches.length + this.sim.combatEffects.length + this.sim.predators.length}`,
       `terrain ${this.sim.terrain.length}`,
     ].join("\n");
     this.elapsed = 0;
@@ -903,7 +905,10 @@ class Ant3D {
     }
     this.clashTimer = Math.max(0, this.clashTimer - dt);
     this.angle = Math.atan2(rival.x - this.x, rival.z - this.z);
+    this.gaitPhase = (this.gaitPhase + dt * (15 + this.traits.persistence * 8)) % (Math.PI * 2);
     this.energy = clamp(this.energy - dt * 0.018, 0, 1);
+    this.vx = (this.x - this.prevX) / Math.max(dt, 0.000001);
+    this.vz = (this.z - this.prevZ) / Math.max(dt, 0.000001);
     this.keepInWorld(sim);
   }
 
@@ -1344,6 +1349,7 @@ class RivalAnt3D {
     this.fightCooldown = rand(0, 0.8);
     this.lastFightWinner = null;
     this.clash = null;
+    this.gaitPhase = rand(0, Math.PI * 2);
     this.steering = { x: 0, z: 0 };
     if (this.isRaidRival) this.placeAtRaidSpawn(sim, options.raid);
     else this.placeAtSpawn(sim);
@@ -1580,10 +1586,12 @@ class RivalAnt3D {
       lineZ,
       nextTrail: 0.24,
       nextRecruit: 0.16,
+      nextEffect: 0.06,
     };
     this.state = "clash";
     this.disrupt = Math.max(this.disrupt, 0.55);
     this.recruitGrapplers(sim);
+    sim.addCombatEffect(anchorX, anchorZ, 0.85, 1, Math.atan2(lineZ, lineX));
     return true;
   }
 
@@ -1654,37 +1662,52 @@ class RivalAnt3D {
     let pullZ = 0;
     const count = Math.max(1, clash.ants.length);
     clash.ants.forEach((ant, index) => {
+      const beforeX = ant.x;
+      const beforeZ = ant.z;
       const spread = count === 1 ? 0 : (index - (count - 1) * 0.5) * 0.82;
       const sideBias = index % 2 === 0 ? 0.18 : -0.18;
-      const orbit = lineAngle + spread + sideBias + Math.sin(clash.elapsed * 7.5 + ant.id) * 0.08;
-      const tug = 0.95 + index * 0.16 + Math.sin(clash.elapsed * 17 + ant.id) * 0.06;
+      const orbit = lineAngle + spread + sideBias + Math.sin(clash.elapsed * 11 + ant.id) * 0.075;
+      const tug = 0.95 + index * 0.16 + Math.sin(clash.elapsed * 23 + ant.id) * 0.07;
+      const scrape = Math.cos(clash.elapsed * 31 + ant.id * 1.7) * (0.045 + count * 0.01);
       const biteX = Math.cos(orbit) * tug;
       const biteZ = Math.sin(orbit) * tug;
-      const antTargetX = clash.anchorX + biteX;
-      const antTargetZ = clash.anchorZ + biteZ;
-      ant.x += (antTargetX - ant.x) * 0.42;
-      ant.z += (antTargetZ - ant.z) * 0.42;
-      ant.angle = Math.atan2(this.x - ant.x, this.z - ant.z) + Math.sin(clash.elapsed * 11 + index) * 0.22;
+      const antTargetX = clash.anchorX + biteX + Math.cos(orbit + Math.PI / 2) * scrape;
+      const antTargetZ = clash.anchorZ + biteZ + Math.sin(orbit + Math.PI / 2) * scrape;
+      ant.x += (antTargetX - ant.x) * 0.5;
+      ant.z += (antTargetZ - ant.z) * 0.5;
+      ant.angle = Math.atan2(this.x - ant.x, this.z - ant.z) + Math.sin(clash.elapsed * 16 + index) * 0.3;
+      ant.gaitPhase = (ant.gaitPhase + dt * (18 + this.aggression * 7 + count * 2)) % (Math.PI * 2);
       ant.energy = clamp(ant.energy - dt * (0.022 + this.aggression * 0.013), 0, 1);
+      ant.vx = (ant.x - beforeX) / Math.max(dt, 0.000001);
+      ant.vz = (ant.z - beforeZ) / Math.max(dt, 0.000001);
       ant.keepInWorld(sim);
       pullX += biteX;
       pullZ += biteZ;
     });
 
+    const rivalBeforeX = this.x;
+    const rivalBeforeZ = this.z;
     const averagePullX = pullX / count;
     const averagePullZ = pullZ / count;
-    const brace = Math.sin(clash.elapsed * 21 + this.id) * 0.06;
+    const brace = Math.sin(clash.elapsed * 27 + this.id) * 0.1;
     const rivalTargetX = clash.anchorX - averagePullX * (0.28 + count * 0.05) + Math.cos(lineAngle + Math.PI / 2) * brace;
     const rivalTargetZ = clash.anchorZ - averagePullZ * (0.28 + count * 0.05) + Math.sin(lineAngle + Math.PI / 2) * brace;
-    this.x += (rivalTargetX - this.x) * 0.45;
-    this.z += (rivalTargetZ - this.z) * 0.45;
-    this.angle = Math.atan2(averagePullX, averagePullZ) + Math.sin(clash.elapsed * 9 + this.id) * 0.18;
+    this.x += (rivalTargetX - this.x) * 0.5;
+    this.z += (rivalTargetZ - this.z) * 0.5;
+    this.angle = Math.atan2(averagePullX, averagePullZ) + Math.sin(clash.elapsed * 13 + this.id) * 0.24;
+    this.gaitPhase = (this.gaitPhase + dt * (14 + this.aggression * 8 + count * 1.4)) % (Math.PI * 2);
+    this.vx = (this.x - rivalBeforeX) / Math.max(dt, 0.000001);
+    this.vz = (this.z - rivalBeforeZ) / Math.max(dt, 0.000001);
     this.disrupt = Math.max(this.disrupt, 0.35 + progress * 0.3 + Math.min(0.28, count * 0.06));
     this.keepInWorld(sim);
 
     if (clash.elapsed >= clash.nextTrail) {
       sim.addTrail(clash.anchorX, clash.anchorZ, "alarm", 0.48 + count * 0.08);
       clash.nextTrail += 0.5;
+    }
+    if (clash.elapsed >= clash.nextEffect) {
+      sim.addCombatEffect(clash.anchorX, clash.anchorZ, 0.72 + count * 0.14, count, lineAngle + Math.sin(clash.elapsed * 8) * 0.4);
+      clash.nextEffect += count > 1 ? 0.16 : 0.22;
     }
 
     if (clash.elapsed >= clash.duration) this.finishClash(sim);
@@ -1753,6 +1776,7 @@ class RivalAnt3D {
     }
 
     sim.addTrail((this.x + primaryAnt.x) * 0.5, (this.z + primaryAnt.z) * 0.5, "alarm", 1.0);
+    sim.addCombatEffect((this.x + primaryAnt.x) * 0.5, (this.z + primaryAnt.z) * 0.5, 1.25 + ants.length * 0.12, ants.length, Math.atan2(nz, nx));
     this.fightCooldown = 1.35;
     for (const ant of ants) ant.keepInWorld(sim);
     this.keepInWorld(sim);
@@ -1776,6 +1800,10 @@ class RivalAnt3D {
     const speed = this.baseSpeed * (1 - this.disrupt * 0.28) * (this.retreat > 0 ? 1.28 : 1) * sim.terrainSpeedAt(this.x, this.z) * sim.timeScale;
     this.x += Math.sin(this.angle) * speed * dt;
     this.z += Math.cos(this.angle) * speed * dt;
+    this.vx = (this.x - this.prevX) / Math.max(dt, 0.000001);
+    this.vz = (this.z - this.prevZ) / Math.max(dt, 0.000001);
+    const traveled = Math.hypot(this.x - this.prevX, this.z - this.prevZ);
+    if (traveled > 0.0001) this.gaitPhase = (this.gaitPhase + traveled * 3.1) % (Math.PI * 2);
     this.keepInWorld(sim);
   }
 
@@ -1838,6 +1866,8 @@ class RivalAnt3D {
       scale: this.scale + jitter + this.victoryFlash * 0.08,
       state: this.state,
       carrying: 0,
+      gaitPhase: this.gaitPhase,
+      id: this.id,
     };
   }
 }
@@ -1919,13 +1949,14 @@ const ANT_APPENDAGE_SEGMENTS = (() => {
       { rootX: 0.28, rootZ: 0.13, elbowX: 0.82, elbowZ: 0.08, footX: 1.36, footZ: -0.02 },
       { rootX: 0.22, rootZ: -0.22, elbowX: 0.64, elbowZ: -0.64, footX: 1.18, footZ: -1.08 },
     ];
-    for (const leg of legs) {
-      segments.push({ radius: 0.026, from: [side * leg.rootX, -0.02, leg.rootZ], to: [side * leg.elbowX, -0.13, leg.elbowZ] });
-      segments.push({ radius: 0.021, from: [side * leg.elbowX, -0.13, leg.elbowZ], to: [side * leg.footX, -0.25, leg.footZ] });
+    for (const [legIndex, leg] of legs.entries()) {
+      const phase = legIndex * 1.78 + (side > 0 ? Math.PI : 0);
+      segments.push({ kind: "leg", side, phase, radius: 0.026, from: [side * leg.rootX, -0.02, leg.rootZ], to: [side * leg.elbowX, -0.13, leg.elbowZ] });
+      segments.push({ kind: "leg", side, phase: phase + 0.7, radius: 0.021, from: [side * leg.elbowX, -0.13, leg.elbowZ], to: [side * leg.footX, -0.25, leg.footZ] });
     }
-    segments.push({ radius: 0.021, from: [side * 0.16, 0.05, 1.54], to: [side * 0.42, 0.02, 1.96] });
-    segments.push({ radius: 0.017, from: [side * 0.42, 0.02, 1.96], to: [side * 0.78, -0.06, 2.26] });
-    segments.push({ radius: 0.024, from: [side * 0.12, -0.04, 1.54], to: [side * 0.34, -0.08, 1.76] });
+    segments.push({ kind: "antenna", side, phase: side > 0 ? 0.4 : 2.1, radius: 0.021, from: [side * 0.16, 0.05, 1.54], to: [side * 0.42, 0.02, 1.96] });
+    segments.push({ kind: "antenna", side, phase: side > 0 ? 1.1 : 2.8, radius: 0.017, from: [side * 0.42, 0.02, 1.96], to: [side * 0.78, -0.06, 2.26] });
+    segments.push({ kind: "mandible", side, phase: side > 0 ? 0.2 : 1.9, radius: 0.024, from: [side * 0.12, -0.04, 1.54], to: [side * 0.34, -0.08, 1.76] });
   }
   return segments;
 })();
@@ -2083,8 +2114,8 @@ class AntRenderSystem {
   }
 
   composeSegmentMatrix(renderState, segment) {
-    this.localPointToWorld(renderState, segment.from, this.segmentStart);
-    this.localPointToWorld(renderState, segment.to, this.segmentEnd);
+    this.localPointToWorld(renderState, segment.from, this.segmentStart, segment, 0);
+    this.localPointToWorld(renderState, segment.to, this.segmentEnd, segment, 1);
     this.segmentMid.addVectors(this.segmentStart, this.segmentEnd).multiplyScalar(0.5);
     this.segmentDirection.subVectors(this.segmentEnd, this.segmentStart);
     const length = this.segmentDirection.length();
@@ -2097,13 +2128,34 @@ class AntRenderSystem {
     this.dummy.updateMatrix();
   }
 
-  localPointToWorld(renderState, point, target) {
+  localPointToWorld(renderState, point, target, segment = null, endpoint = 0) {
     const sin = Math.sin(renderState.angle);
     const cos = Math.cos(renderState.angle);
     const visualScale = renderState.scale * ANT_VISUAL_SCALE;
-    const localX = point[0] * visualScale;
-    const localY = point[1] * visualScale;
-    const localZ = point[2] * visualScale;
+    let px = point[0];
+    let py = point[1];
+    let pz = point[2];
+    const phase = Number.isFinite(renderState.gaitPhase) ? renderState.gaitPhase : (renderState.id ?? 0) * 0.17;
+    if (segment?.kind === "leg") {
+      const stride = Math.sin(phase + segment.phase);
+      const brace = Math.cos(phase * 1.2 + segment.phase);
+      const intensity = renderState.state === "clash" ? 1.85 : renderState.state === "panic" || renderState.state === "flee" ? 1.28 : 1;
+      px += segment.side * brace * (0.035 + endpoint * 0.055) * intensity;
+      pz += stride * (0.045 + endpoint * 0.115) * intensity;
+      py += Math.abs(stride) * (0.012 + endpoint * 0.026) * intensity;
+    } else if (segment?.kind === "antenna") {
+      const wave = Math.sin(phase * 0.72 + segment.phase);
+      const intensity = renderState.state === "clash" ? 1.6 : 1;
+      px += segment.side * wave * (0.035 + endpoint * 0.07) * intensity;
+      pz += Math.cos(phase * 0.52 + segment.phase) * endpoint * 0.045 * intensity;
+    } else if (segment?.kind === "mandible" && renderState.state === "clash") {
+      const bite = Math.sin(phase * 1.7 + segment.phase);
+      px += segment.side * bite * endpoint * 0.07;
+      pz -= Math.abs(bite) * endpoint * 0.08;
+    }
+    const localX = px * visualScale;
+    const localY = py * visualScale;
+    const localZ = pz * visualScale;
     target.set(
       renderState.x + localX * cos + localZ * sin,
       renderState.y + localY,
@@ -2204,6 +2256,7 @@ class AntColony3D {
     this.food = [];
     this.branches = [];
     this.trails = [];
+    this.combatEffects = [];
     this.terrain = [];
     this.terrainBumps = [];
     this.nestEntrances = [];
@@ -2290,6 +2343,8 @@ class AntColony3D {
       waterCircle: new THREE.CircleGeometry(1, 64),
       trailCircle: new THREE.CircleGeometry(1, 18),
       impactRing: new THREE.TorusGeometry(1, 0.035, 8, 72),
+      combatDust: new THREE.SphereGeometry(1, 8, 6),
+      combatSlash: new THREE.CylinderGeometry(1, 1, 1, 6, 1),
       nestRim: new THREE.TorusGeometry(1, 0.11, 8, 36),
       soilPebble: new THREE.DodecahedronGeometry(1, 0),
       terrainBump: new THREE.SphereGeometry(1, 12, 8),
@@ -2333,6 +2388,9 @@ class AntColony3D {
       }),
       waterRing: new THREE.MeshBasicMaterial({ color: 0x9ce7ff, transparent: true, opacity: 0.48 }),
       impact: new THREE.MeshBasicMaterial({ color: 0xe47f63, transparent: true, opacity: 0.42 }),
+      combatDust: new THREE.MeshBasicMaterial({ color: 0xb88a55, transparent: true, opacity: 0.32, depthWrite: false }),
+      combatFlash: new THREE.MeshBasicMaterial({ color: 0xffa15c, transparent: true, opacity: 0.5, depthWrite: false }),
+      combatRing: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.34, depthWrite: false }),
       trailFood: new THREE.MeshBasicMaterial({ color: 0xd9a63f, transparent: true, opacity: 0.2, depthWrite: false }),
       trailAlarm: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.24, depthWrite: false }),
       trailRescue: new THREE.MeshBasicMaterial({ color: 0x51b7a6, transparent: true, opacity: 0.22, depthWrite: false }),
@@ -2642,7 +2700,7 @@ class AntColony3D {
   }
 
   reset(newGame = true) {
-    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.predators]) {
+    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.combatEffects, this.predators]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
     this.dynamicObjects.clear();
@@ -2652,6 +2710,7 @@ class AntColony3D {
     this.food = [];
     this.branches = [];
     this.trails = [];
+    this.combatEffects = [];
     this.predators = [];
     for (const rival of this.rivalAnts) this.antRenderer?.releaseRenderObject(rival);
     this.rivalAnts = [];
@@ -3439,6 +3498,8 @@ class AntColony3D {
       return false;
     });
 
+    this.updateCombatEffects(dt);
+
     for (const ant of this.ants) ant.update(dt, this);
     for (const rival of this.rivalAnts) rival.update(dt, this);
     this.updateExpeditionReplay(dt);
@@ -3498,7 +3559,7 @@ class AntColony3D {
     this.antRenderer?.destroy();
     this.expeditionAgentRenderer?.dispose();
     this.expeditionAgentRenderer = null;
-    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.predators]) {
+    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.combatEffects, this.predators]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
     this.assetService.dispose();
@@ -4141,6 +4202,101 @@ class AntColony3D {
     removeFrom(this.branches, (item) => {
       const p = closestPointOnSegment(x, z, item.x1, item.z1, item.x2, item.z2);
       return distance2(x, z, p.x, p.z) < radius + item.width;
+    });
+  }
+
+  addCombatEffect(x, z, intensity = 1, grapplers = 1, angle = 0) {
+    const quality = this.quality.effectsQuality ?? 1;
+    if (quality <= 0) return;
+    const strength = clamp(intensity * quality, 0.35, 1.8);
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+
+    const ringMaterial = this.materials.combatRing.clone();
+    const ring = new THREE.Mesh(this.geometries.impactRing, ringMaterial);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.12;
+    ring.scale.setScalar(0.9 + strength * 0.5);
+    group.add(ring);
+
+    const dustMaterial = this.materials.combatDust.clone();
+    const puffs = [];
+    const puffCount = Math.floor(clamp(2 + grapplers, 3, 6) * quality);
+    for (let i = 0; i < puffCount; i += 1) {
+      const puff = new THREE.Mesh(this.geometries.combatDust, dustMaterial);
+      const spread = angle + rand(-1.9, 1.9) + (i / Math.max(1, puffCount - 1) - 0.5) * 1.1;
+      const baseScale = rand(0.18, 0.34) * (0.9 + strength * 0.22);
+      puff.position.set(Math.cos(spread) * rand(0.12, 0.42), 0.1 + rand(0, 0.08), Math.sin(spread) * rand(0.12, 0.42));
+      puff.scale.setScalar(baseScale);
+      group.add(puff);
+      puffs.push({
+        mesh: puff,
+        angle: spread,
+        speed: rand(0.95, 2.4) * (0.75 + strength * 0.24),
+        lift: rand(0.12, 0.34),
+        baseScale,
+      });
+    }
+
+    const flashMaterial = this.materials.combatFlash.clone();
+    const flashes = [];
+    for (let i = 0; i < 2; i += 1) {
+      const slash = new THREE.Mesh(this.geometries.combatSlash, flashMaterial);
+      const slashAngle = angle + (i === 0 ? Math.PI / 2 : -Math.PI / 2) + rand(-0.45, 0.45);
+      const direction = new THREE.Vector3(Math.cos(slashAngle), 0.14, Math.sin(slashAngle)).normalize();
+      slash.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+      slash.position.set(Math.cos(slashAngle) * rand(0.05, 0.28), 0.34 + rand(0, 0.14), Math.sin(slashAngle) * rand(0.05, 0.28));
+      slash.scale.set(0.045 + strength * 0.016, 0.9 + strength * 0.5, 0.045 + strength * 0.016);
+      group.add(slash);
+      flashes.push(slash);
+    }
+
+    this.scene.add(group);
+    this.dynamicObjects.add(group);
+    this.combatEffects.push({
+      age: 0,
+      life: COMBAT_EFFECT_LIFE,
+      strength,
+      radius: 1.1 + strength * 0.75,
+      group,
+      ring,
+      ringMaterial,
+      dustMaterial,
+      flashMaterial,
+      puffs,
+      flashes,
+    });
+    while (this.combatEffects.length > COMBAT_EFFECT_CAP) {
+      const old = this.combatEffects.shift();
+      this.disposeDynamicItem(old);
+    }
+  }
+
+  updateCombatEffects(dt) {
+    for (const effect of this.combatEffects) {
+      effect.age += dt;
+      const t = clamp(effect.age / effect.life, 0, 1);
+      const fade = Math.pow(1 - t, 1.35);
+      effect.group.position.y = Math.sin(t * Math.PI) * 0.08;
+      effect.ring.scale.setScalar(effect.radius * (0.58 + t * 1.35));
+      effect.ringMaterial.opacity = 0.42 * effect.strength * fade;
+      effect.dustMaterial.opacity = 0.38 * effect.strength * fade;
+      effect.flashMaterial.opacity = 0.58 * effect.strength * Math.max(0, 1 - t * 2.5);
+      for (const puff of effect.puffs) {
+        const outward = puff.speed * t;
+        puff.mesh.position.set(
+          Math.cos(puff.angle) * outward,
+          0.1 + puff.lift * Math.sin(t * Math.PI),
+          Math.sin(puff.angle) * outward,
+        );
+        puff.mesh.scale.setScalar(puff.baseScale * (1 + t * 1.8));
+      }
+      for (const flash of effect.flashes) flash.visible = t < 0.48;
+    }
+    this.combatEffects = this.combatEffects.filter((effect) => {
+      if (effect.age < effect.life) return true;
+      this.disposeDynamicItem(effect);
+      return false;
     });
   }
 

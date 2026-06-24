@@ -657,11 +657,16 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     const workerAnchorZ = rival.clash.anchorZ;
     const workerLineX = rival.clash.lineX;
     const workerLineZ = rival.clash.lineZ;
+    let workerPreviousGait = ant.gaitPhase;
+    let workerGaitAdvance = 0;
     let workerMaxCenterDrift = 0;
     let workerMaxAxisDrift = 0;
     for (let i = 0; i < 220; i += 1) {
       ant.update(1 / 60, sim);
       rival.update(1 / 60, sim);
+      const gaitDelta = Math.atan2(Math.sin(ant.gaitPhase - workerPreviousGait), Math.cos(ant.gaitPhase - workerPreviousGait));
+      workerGaitAdvance += Math.abs(gaitDelta);
+      workerPreviousGait = ant.gaitPhase;
       if (i < 100 && rival.clash) {
         const centerX = (ant.x + rival.x) * 0.5;
         const centerZ = (ant.z + rival.z) * 0.5;
@@ -678,6 +683,7 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     const workerAlive = sim.ants.includes(ant);
     const workerCasualties = sim.colony.raidState.casualties;
     const antPopulationAfterWorker = sim.colony.antPopulation;
+    const workerCombatEffects = sim.combatEffects?.length ?? 0;
 
     ant.x = -80;
     ant.z = -80;
@@ -728,11 +734,16 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     const guardStarted = rival.resolveAntContacts(sim);
     const guardStateAtStart = guard.state;
     const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
+    let guardPreviousGait = guard.gaitPhase;
+    let guardGaitAdvance = 0;
     for (let i = 0; i < 220; i += 1) {
       guard.update(1 / 60, sim);
       supportA.update(1 / 60, sim);
       supportB.update(1 / 60, sim);
       rival.update(1 / 60, sim);
+      const gaitDelta = Math.atan2(Math.sin(guard.gaitPhase - guardPreviousGait), Math.cos(guard.gaitPhase - guardPreviousGait));
+      guardGaitAdvance += Math.abs(gaitDelta);
+      guardPreviousGait = guard.gaitPhase;
     }
 
     return {
@@ -742,6 +753,8 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
       workerFleeTimer,
       workerAlive,
       workerCasualties,
+      workerGaitAdvance,
+      workerCombatEffects,
       antPopulationBefore,
       antPopulationAfterWorker,
       workerDistanceBefore,
@@ -752,6 +765,8 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
       guardStarted,
       guardStateAtStart,
       guardGrapplersAtStart,
+      guardGaitAdvance,
+      combatEffects: sim.combatEffects?.length ?? 0,
       lastWinner: rival.lastFightWinner,
       rivalRetreat: rival.retreat,
       enemyMarkedGone: rival.leftRaid,
@@ -766,10 +781,14 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
   expect(fight.workerMaxAxisDrift).toBeLessThan(0.34);
   expect(fight.workerAlive).toBe(false);
   expect(fight.workerCasualties).toBeGreaterThanOrEqual(1);
+  expect(fight.workerGaitAdvance).toBeGreaterThan(0.5);
+  expect(fight.workerCombatEffects).toBeGreaterThanOrEqual(3);
   expect(fight.antPopulationAfterWorker).toBe(fight.antPopulationBefore - 1);
   expect(fight.guardStarted).toBe(true);
   expect(fight.guardStateAtStart).toBe("clash");
   expect(fight.guardGrapplersAtStart).toBeGreaterThanOrEqual(2);
+  expect(fight.guardGaitAdvance).toBeGreaterThan(0.5);
+  expect(fight.combatEffects).toBeGreaterThan(fight.workerCombatEffects);
   expect(fight.lastWinner).toBe("colony");
   expect(fight.enemyMarkedGone).toBe(true);
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);

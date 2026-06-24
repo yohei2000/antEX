@@ -583,11 +583,16 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const anchorZ = rival.clash.anchorZ;
         const lineX = rival.clash.lineX;
         const lineZ = rival.clash.lineZ;
+        let workerPreviousGait = ant.gaitPhase;
+        let workerGaitAdvance = 0;
         let maxCenterDrift = 0;
         let maxAxisDrift = 0;
         for (let i = 0; i < 220; i += 1) {
           ant.update(1 / 60, sim);
           rival.update(1 / 60, sim);
+          const gaitDelta = Math.atan2(Math.sin(ant.gaitPhase - workerPreviousGait), Math.cos(ant.gaitPhase - workerPreviousGait));
+          workerGaitAdvance += Math.abs(gaitDelta);
+          workerPreviousGait = ant.gaitPhase;
           if (i < 100 && rival.clash) {
             const centerX = (ant.x + rival.x) * 0.5;
             const centerZ = (ant.z + rival.z) * 0.5;
@@ -604,6 +609,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const workerAlive = sim.ants.includes(ant);
         const workerCasualties = sim.colony.raidState.casualties;
         const antPopulationAfterWorker = sim.colony.antPopulation;
+        const workerCombatEffects = sim.combatEffects?.length ?? 0;
         ant.x = -80;
         ant.z = -80;
         ant.fleeTimer = 0;
@@ -653,11 +659,16 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const repelled = rival.resolveAntContacts(sim);
         const guardStateAtStart = guard.state;
         const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
+        let guardPreviousGait = guard.gaitPhase;
+        let guardGaitAdvance = 0;
         for (let i = 0; i < 220; i += 1) {
           guard.update(1 / 60, sim);
           supportA.update(1 / 60, sim);
           supportB.update(1 / 60, sim);
           rival.update(1 / 60, sim);
+          const gaitDelta = Math.atan2(Math.sin(guard.gaitPhase - guardPreviousGait), Math.cos(guard.gaitPhase - guardPreviousGait));
+          guardGaitAdvance += Math.abs(gaitDelta);
+          guardPreviousGait = guard.gaitPhase;
         }
         return {
           resolved,
@@ -671,11 +682,14 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           fleeTimer,
           workerAlive,
           workerCasualties,
+          workerGaitAdvance,
+          workerCombatEffects,
           antPopulationBefore,
           antPopulationAfterWorker,
           nestDistanceBefore,
           guardStateAtStart,
           guardGrapplersAtStart,
+          guardGaitAdvance,
           winner: rival.lastFightWinner,
           antEnergy: ant.energy,
           rivalRetreat: rival.retreat,
@@ -683,6 +697,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
           alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
+          combatEffects: sim.combatEffects?.length ?? 0,
         };
       })()`);
     if (
@@ -694,16 +709,20 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       fight.stateAtStart !== "clash" ||
       fight.workerAlive ||
       fight.workerCasualties < 1 ||
+      fight.workerGaitAdvance <= 0.5 ||
+      fight.workerCombatEffects < 3 ||
       fight.antPopulationAfterWorker !== fight.antPopulationBefore - 1 ||
       fight.guardStateAtStart !== "clash" ||
       fight.guardGrapplersAtStart < 2 ||
+      fight.guardGaitAdvance <= 0.5 ||
       fight.antEnergy >= 1 ||
       fight.winner !== "colony" ||
       !fight.enemyMarkedGone ||
       fight.fightStats.rivalWins < 1 ||
       fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||
-      fight.alarmTrails < 1
+      fight.alarmTrails < 1 ||
+      fight.combatEffects <= fight.workerCombatEffects
     ) {
       throw new Error(`${label}: rival ant contact check failed: ${JSON.stringify(fight)}`);
     }
