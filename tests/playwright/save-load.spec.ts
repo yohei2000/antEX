@@ -38,6 +38,8 @@ test("persists colony state through localStorage", async ({ page }) => {
       storageChambers: sim.colony.upgrades.storageChambers,
       chamberExcavation: sim.colony.upgrades.chamberExcavation,
       trailPheromones: sim.colony.upgrades.trailPheromones,
+      raidPhase: sim.colony.raidState.phase,
+      raidTimer: sim.colony.raidState.timer,
     };
   });
 
@@ -48,4 +50,6 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.storageChambers).toBe(2);
   expect(restored.chamberExcavation).toBe(0);
   expect(restored.trailPheromones).toBe(0);
+  expect(restored.raidPhase).toBe("calm");
+  expect(restored.raidTimer).toBeGreaterThan(0);
 });

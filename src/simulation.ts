@@ -47,9 +47,15 @@ const MAX_FRAME_DELTA = 0.25;
 const MAX_FIXED_STEPS = 5;
 const SAVE_KEY = "ant3d.colonyState";
 const DISPLAY_ANT_CAP = 80;
-const RIVAL_ANT_COUNT = 4;
+const RAID_RIVAL_CAP = 4;
 const RIVAL_CONTACT_RADIUS = 4.1;
 const RIVAL_CLASH_DURATION = 2.0;
+const RAID_INITIAL_DELAY_SECONDS = 78;
+const RAID_BASE_INTERVAL_SECONDS = 132;
+const RAID_WARNING_SECONDS = 20;
+const RAID_ACTIVE_SECONDS = 72;
+const RAID_RETREAT_SECONDS = 18;
+const RAID_RECOVERY_SECONDS = 26;
 const CAMERA_DISTANCE_MIN = 138;
 const CAMERA_DISTANCE_MAX = 340;
 const CAMERA_DISTANCE_MOBILE = 252;
@@ -309,7 +315,7 @@ const UPGRADE_DEFS = [
 
 function createDefaultColony() {
   return {
-    version: 2,
+    version: 3,
     food: 36,
     lifetimeFood: 36,
     antPopulation: 12,
@@ -322,11 +328,48 @@ function createDefaultColony() {
     enemyThreat: 6,
     hatchProgress: 0,
     battleCooldownUntil: 0,
+    raidState: createDefaultRaidState(),
     unlockedEnemyColonies: ["near-food"],
     upgrades: Object.fromEntries(UPGRADE_DEFS.map((upgrade) => [upgrade.id, 0])),
     battleLog: ["小さな巣が地中で動き始めた"],
     lastSavedAt: Date.now(),
   };
+}
+
+function createDefaultRaidState() {
+  return {
+    phase: "calm",
+    timer: RAID_INITIAL_DELAY_SECONDS,
+    wave: 0,
+    activeCount: 0,
+    approachAngle: -0.25,
+    signalTimer: 0,
+    lastOutcome: "none",
+  };
+}
+
+function normalizeRaidState(raw, options = {}) {
+  const base = createDefaultRaidState();
+  if (!raw || typeof raw !== "object") return base;
+  const phase = ["calm", "warning", "active", "retreating", "recovering"].includes(raw.phase) ? raw.phase : base.phase;
+  const next = {
+    ...base,
+    ...raw,
+    phase,
+    timer: clamp(Number(raw.timer) || 0, 0, 3600),
+    wave: Math.floor(clamp(Number(raw.wave) || 0, 0, 999999)),
+    activeCount: Math.floor(clamp(Number(raw.activeCount) || 0, 0, RAID_RIVAL_CAP)),
+    approachAngle: Number.isFinite(Number(raw.approachAngle)) ? Number(raw.approachAngle) : base.approachAngle,
+    signalTimer: clamp(Number(raw.signalTimer) || 0, 0, 30),
+    lastOutcome: typeof raw.lastOutcome === "string" ? raw.lastOutcome : base.lastOutcome,
+  };
+  if (options.resetActiveOnLoad && (next.phase === "active" || next.phase === "retreating")) {
+    next.phase = "warning";
+    next.timer = Math.max(6, Math.min(RAID_WARNING_SECONDS, next.timer || 10));
+    next.signalTimer = 0;
+  }
+  if (next.phase === "calm" && next.timer <= 0) next.timer = RAID_INITIAL_DELAY_SECONDS;
+  return next;
 }
 
 function migrateColony(raw) {
@@ -335,8 +378,9 @@ function migrateColony(raw) {
   const next = {
     ...base,
     ...raw,
-    version: 2,
+    version: 3,
     upgrades: { ...base.upgrades, ...(raw.upgrades ?? {}) },
+    raidState: normalizeRaidState(raw.raidState, { resetActiveOnLoad: true }),
     battleLog: Array.isArray(raw.battleLog) ? raw.battleLog.slice(0, 5) : base.battleLog,
   };
 
@@ -354,6 +398,7 @@ function migrateColony(raw) {
   next.hatchProgress = clamp(Number(next.hatchProgress) || 0, 0, 0.999);
   next.battleCooldownUntil = Number(next.battleCooldownUntil) || 0;
   next.lastSavedAt = Number(next.lastSavedAt) || Date.now();
+  next.raidState = normalizeRaidState(next.raidState);
   for (const upgrade of UPGRADE_DEFS) {
     next.upgrades[upgrade.id] = Math.floor(clamp(Number(next.upgrades[upgrade.id]) || 0, 0, upgrade.max));
   }
@@ -1262,9 +1307,16 @@ class Ant3D {
 }
 
 class RivalAnt3D {
-  constructor(id, sim) {
+  constructor(id, sim, options = {}) {
     this.id = id;
     this.isRival = true;
+    this.isRaidRival = Boolean(options.raid);
+    this.raidWave = options.raid?.wave ?? 0;
+    this.raidIndex = options.raid?.index ?? 0;
+    this.raidCount = options.raid?.count ?? 1;
+    this.raidTargetX = sim.nest.x;
+    this.raidTargetZ = sim.nest.z;
+    this.leftRaid = false;
     this.scale = rand(1.22, 1.42);
     this.baseSpeed = rand(4.6, 7.2);
     this.aggression = rand(0.42, 1);
@@ -1284,7 +1336,8 @@ class RivalAnt3D {
     this.lastFightWinner = null;
     this.clash = null;
     this.steering = { x: 0, z: 0 };
-    this.placeAtSpawn(sim);
+    if (this.isRaidRival) this.placeAtRaidSpawn(sim, options.raid);
+    else this.placeAtSpawn(sim);
   }
 
   placeAtSpawn(sim) {
@@ -1311,6 +1364,30 @@ class RivalAnt3D {
     this.homeZ = this.z;
   }
 
+  placeAtRaidSpawn(sim, raid = {}) {
+    const count = Math.max(1, raid.count ?? this.raidCount);
+    const offset = (this.raidIndex - (count - 1) * 0.5) * 0.13;
+    const angle = (raid.approachAngle ?? rand(0, Math.PI * 2)) + offset;
+    const radius = sim.worldRadius * rand(0.92, 0.98);
+    this.x = Math.cos(angle) * radius;
+    this.z = Math.sin(angle) * radius;
+    this.prevX = this.x;
+    this.prevZ = this.z;
+    this.homeX = this.x;
+    this.homeZ = this.z;
+
+    const towardNestX = sim.nest.x - this.x;
+    const towardNestZ = sim.nest.z - this.z;
+    const d = Math.hypot(towardNestX, towardNestZ) || 1;
+    const edgeX = towardNestX / d;
+    const edgeZ = towardNestZ / d;
+    const targetDistance = sim.nest.radius + 18 + (this.raidIndex % 2) * 7;
+    this.raidTargetX = sim.nest.x - edgeX * targetDistance;
+    this.raidTargetZ = sim.nest.z - edgeZ * targetDistance;
+    this.angle = Math.atan2(edgeX, edgeZ);
+    this.prevAngle = this.angle;
+  }
+
   update(dt, sim) {
     this.prevX = this.x;
     this.prevZ = this.z;
@@ -1333,7 +1410,10 @@ class RivalAnt3D {
     } else {
       const targetAnt = this.findHarassmentTarget(sim);
       if (targetAnt) this.addAntHarassment(steering, targetAnt);
-      else this.addFoodCompetition(steering, sim);
+      else {
+        this.addFoodCompetition(steering, sim);
+        if (this.isRaidRival) this.addRaidPressure(steering, sim);
+      }
       this.addNestAvoidance(steering, sim);
     }
     this.addRivalSeparation(steering, sim);
@@ -1370,6 +1450,31 @@ class RivalAnt3D {
     steering.z += ((closest.z - this.z) / (closestDistance || 1)) * strength;
   }
 
+  addRaidPressure(steering, sim) {
+    let targetX = this.raidTargetX;
+    let targetZ = this.raidTargetZ;
+    let bestFood = null;
+    let bestFoodScore = -Infinity;
+    for (const food of sim.food) {
+      if (food.amount <= 0) continue;
+      const distanceFromSelf = distance2(this.x, this.z, food.x, food.z);
+      const distanceFromNest = distance2(food.x, food.z, sim.nest.x, sim.nest.z);
+      const score = food.amount * 1.4 - distanceFromSelf * 0.04 - distanceFromNest * 0.012;
+      if (score > bestFoodScore) {
+        bestFood = food;
+        bestFoodScore = score;
+      }
+    }
+    if (bestFood) {
+      targetX = bestFood.x;
+      targetZ = bestFood.z;
+    }
+    const d = distance2(this.x, this.z, targetX, targetZ) || 1;
+    const pressure = d > 7 ? 1.28 + this.aggression * 0.72 : 0.34;
+    steering.x += ((targetX - this.x) / d) * pressure;
+    steering.z += ((targetZ - this.z) / d) * pressure;
+  }
+
   findHarassmentTarget(sim) {
     if (this.retreat > 0 || this.clash) return null;
     let best = null;
@@ -1399,9 +1504,9 @@ class RivalAnt3D {
 
   addNestAvoidance(steering, sim) {
     const d = distance2(this.x, this.z, sim.nest.x, sim.nest.z);
-    const reach = sim.nest.radius + 24;
+    const reach = sim.nest.radius + (this.isRaidRival ? 10 : 24);
     if (d >= reach) return;
-    const strength = (1 - d / reach) * 1.1;
+    const strength = (1 - d / reach) * (this.isRaidRival ? 0.72 : 1.1);
     steering.x += ((this.x - sim.nest.x) / (d || 1)) * strength;
     steering.z += ((this.z - sim.nest.z) / (d || 1)) * strength;
   }
@@ -1418,7 +1523,10 @@ class RivalAnt3D {
       steering.z += ((this.z - this.retreatFromZ) / threatDistance) * away;
     }
 
-    if (d < 3.2) this.retreat = Math.min(this.retreat, 0.35);
+    if (this.isRaidRival && d < 5.2) {
+      this.leftRaid = true;
+      this.retreat = 0;
+    } else if (d < 3.2) this.retreat = Math.min(this.retreat, 0.35);
     this.addNestAvoidance(steering, sim);
   }
 
@@ -1433,11 +1541,14 @@ class RivalAnt3D {
     }
   }
 
-  combatPowers(ant) {
-    const rivalPower = 0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28;
+  combatPowers(ant, sim = null) {
+    const threatPressure = this.isRaidRival && sim ? clamp(sim.colony.enemyThreat / 22, 0, 0.58) : 0;
+    const defenseBonus = sim ? Math.max(0, (sim.computeDerived().defensePower ?? 1) - 1) : 0;
+    const rivalPower = 0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28 + threatPressure;
     const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
     const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
-    const antPower = 0.7 + ant.traits.persistence * 0.74 + ant.traits.caution * 0.52 + rolePower + carriedPenalty;
+    const nestDefense = defenseBonus * (ant.role === "guard" ? 0.62 : 0.26);
+    const antPower = 0.7 + ant.traits.persistence * 0.74 + ant.traits.caution * 0.52 + rolePower + nestDefense + carriedPenalty;
     return { rivalPower, antPower };
   }
 
@@ -1518,7 +1629,7 @@ class RivalAnt3D {
     ant.clashTimer = 0;
     ant.clashDuration = 0;
 
-    const { rivalPower, antPower } = this.combatPowers(ant);
+    const { rivalPower, antPower } = this.combatPowers(ant, sim);
     const dx = ant.x - this.x;
     const dz = ant.z - this.z;
     const d = Math.hypot(dx, dz) || 1;
@@ -2028,7 +2139,7 @@ class AntColony3D {
     this.assetService.preloadProceduralAssets();
     if (!this.expeditionOnlyMode) this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
-    this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RIVAL_ANT_COUNT);
+    this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP);
     this.createWorld();
     this.expeditionAgentRenderer = null;
     this.bindEvents();
@@ -2445,6 +2556,7 @@ class AntColony3D {
     this.branches = [];
     this.trails = [];
     this.predators = [];
+    for (const rival of this.rivalAnts) this.antRenderer?.releaseRenderObject(rival);
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer.length = 0;
@@ -2462,8 +2574,8 @@ class AntColony3D {
       this.colony = createDefaultColony();
       this.saveColony();
     }
+    this.ensureRaidState();
     this.seedNaturalEnvironment();
-    this.seedRivalAnts();
     this.syncAntPopulation();
     this.updateColonyVisuals();
     this.renderUpgrades();
@@ -3190,6 +3302,7 @@ class AntColony3D {
 
   updateGame(dt) {
     if (!this.expeditionOnlyMode) this.updateColony(dt);
+    if (!this.expeditionOnlyMode) this.updateRaid(dt);
 
     for (const patch of this.water) {
       patch.age += dt;
@@ -3403,9 +3516,177 @@ class AntColony3D {
     for (const branch of branches) this.addBranch(branch);
   }
 
-  seedRivalAnts() {
-    this.rivalAnts.length = 0;
-    for (let i = 0; i < RIVAL_ANT_COUNT; i += 1) this.rivalAnts.push(new RivalAnt3D(i + 1, this));
+  ensureRaidState() {
+    this.colony.raidState = normalizeRaidState(this.colony.raidState);
+    return this.colony.raidState;
+  }
+
+  raidRivals() {
+    return this.rivalAnts.filter((rival) => rival.isRaidRival && !rival.isExpeditionEnemy);
+  }
+
+  raidNextInterval() {
+    const d = this.computeDerived();
+    const pressure = clamp(this.colony.enemyThreat * 1.7 + this.colony.territory * 3 - (d.defensePower - 1) * 16, 0, 76);
+    return Math.floor(clamp(RAID_BASE_INTERVAL_SECONDS - pressure, 64, 170));
+  }
+
+  raidEnemyCount() {
+    const d = this.computeDerived();
+    const pressure = this.colony.enemyThreat * 0.12 + this.colony.territory * 0.18 - (d.defensePower - 1) * 0.35;
+    return Math.floor(clamp(2 + pressure, 2, RAID_RIVAL_CAP));
+  }
+
+  raidSignalPoint(raid = this.ensureRaidState(), radiusFactor = 0.86) {
+    const angle = raid.approachAngle ?? 0;
+    const radius = this.worldRadius * radiusFactor;
+    return { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius };
+  }
+
+  emitRaidSignal(raid = this.ensureRaidState(), strength = 0.72) {
+    const point = this.raidSignalPoint(raid);
+    this.addTrail(point.x, point.z, "alarm", strength);
+  }
+
+  enterRaidWarning() {
+    const raid = this.ensureRaidState();
+    raid.phase = "warning";
+    raid.timer = RAID_WARNING_SECONDS;
+    raid.wave += 1;
+    raid.activeCount = this.raidEnemyCount();
+    raid.approachAngle = rand(0, Math.PI * 2);
+    raid.signalTimer = 0;
+    raid.lastOutcome = "warning";
+    this.emitRaidSignal(raid, 0.88);
+    this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹が接近`);
+  }
+
+  beginRaid() {
+    const raid = this.ensureRaidState();
+    this.clearRaidRivals();
+    const count = Math.floor(clamp(raid.activeCount || this.raidEnemyCount(), 1, RAID_RIVAL_CAP));
+    for (let i = 0; i < count; i += 1) {
+      const rival = new RivalAnt3D(i + 1, this, {
+        raid: {
+          wave: raid.wave,
+          index: i,
+          count,
+          approachAngle: raid.approachAngle,
+        },
+      });
+      this.rivalAnts.push(rival);
+    }
+    raid.phase = "active";
+    raid.timer = RAID_ACTIVE_SECONDS;
+    raid.activeCount = count;
+    raid.signalTimer = 0;
+    raid.lastOutcome = "active";
+    this.pushLog(`敵襲開始: ${count}匹が外縁から侵入`);
+  }
+
+  orderRaidRetreat(outcome = "held") {
+    const raid = this.ensureRaidState();
+    for (const rival of this.raidRivals()) {
+      rival.startRetreatHome(this.nest.x, this.nest.z, RAID_RETREAT_SECONDS);
+    }
+    raid.phase = "retreating";
+    raid.timer = RAID_RETREAT_SECONDS;
+    raid.lastOutcome = outcome;
+    this.pushLog("敵アリが外縁へ退却中");
+  }
+
+  clearRaidRivals() {
+    for (const rival of this.raidRivals()) {
+      const index = this.rivalAnts.indexOf(rival);
+      if (index >= 0) this.rivalAnts.splice(index, 1);
+      this.antRenderer?.releaseRenderObject(rival);
+    }
+  }
+
+  cleanupRaidRivals() {
+    for (const rival of [...this.raidRivals()]) {
+      if (!rival.leftRaid) continue;
+      const index = this.rivalAnts.indexOf(rival);
+      if (index >= 0) this.rivalAnts.splice(index, 1);
+      this.antRenderer?.releaseRenderObject(rival);
+    }
+  }
+
+  resolveRaid(outcome = "repelled") {
+    const raid = this.ensureRaidState();
+    const count = Math.max(1, raid.activeCount || this.raidEnemyCount());
+    if (outcome === "repelled") {
+      const relief = 0.55 + count * 0.16 + Math.max(0, this.computeDerived().defensePower - 1) * 0.18;
+      this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - relief);
+      this.pushLog(`襲撃を防衛: 脅威-${fmt(relief, 1)}`);
+    } else {
+      const defense = this.computeDerived().defensePower;
+      const loss = Math.min(this.colony.food, Math.max(1, count * 2.2 + this.colony.enemyThreat * 0.12) / defense);
+      const wounded = defense >= 1.45 ? 0 : Math.min(this.colony.antPopulation - 1, Math.ceil(count * 0.25));
+      this.colony.food = Math.max(0, this.colony.food - loss);
+      this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + wounded);
+      this.colony.enemyThreat += 0.35 + count * 0.08;
+      this.pushLog(`襲撃をしのいだ: 食料-${fmt(loss, 0)} / 負傷${wounded}`);
+    }
+    this.clearRaidRivals();
+    raid.phase = "recovering";
+    raid.timer = RAID_RECOVERY_SECONDS;
+    raid.activeCount = 0;
+    raid.signalTimer = 0;
+    raid.lastOutcome = outcome;
+    this.saveColony();
+  }
+
+  updateRaid(dt) {
+    if (this.expeditionReplay) return;
+    const raid = this.ensureRaidState();
+
+    if (raid.phase === "calm") {
+      raid.timer -= dt;
+      if (raid.timer <= 0) this.enterRaidWarning();
+      return;
+    }
+
+    if (raid.phase === "warning") {
+      raid.timer -= dt;
+      raid.signalTimer -= dt;
+      if (raid.signalTimer <= 0) {
+        this.emitRaidSignal(raid);
+        raid.signalTimer = 3.2;
+      }
+      if (raid.timer <= 0) this.beginRaid();
+      return;
+    }
+
+    if (raid.phase === "active") {
+      raid.timer -= dt;
+      this.cleanupRaidRivals();
+      if (this.raidRivals().length === 0 && raid.activeCount > 0) {
+        this.resolveRaid("repelled");
+        return;
+      }
+      if (raid.timer <= 0) this.orderRaidRetreat("held");
+      return;
+    }
+
+    if (raid.phase === "retreating") {
+      raid.timer -= dt;
+      this.cleanupRaidRivals();
+      if (this.raidRivals().length === 0 || raid.timer <= 0) {
+        if (raid.timer <= 0) this.clearRaidRivals();
+        this.resolveRaid(raid.lastOutcome === "held" ? "held" : "repelled");
+      }
+      return;
+    }
+
+    if (raid.phase === "recovering") {
+      raid.timer -= dt;
+      if (raid.timer <= 0) {
+        raid.phase = "calm";
+        raid.timer = this.raidNextInterval();
+        raid.lastOutcome = "none";
+      }
+    }
   }
 
   isNearFood(x, z, radius) {
@@ -3758,6 +4039,14 @@ class AntColony3D {
     const availableSoldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
     const assigned = Math.max(0, Math.floor(availableSoldiers * 0.65));
     const reward = Math.floor(34 + this.colony.territory * 9 + assigned * 4);
+    const raid = this.ensureRaidState();
+    const raidTime = Math.max(0, Math.ceil(raid.timer));
+    const raidLabel =
+      raid.phase === "warning" ? `敵襲予兆 ${raidTime}s / 防衛準備` :
+      raid.phase === "active" ? `敵襲防衛中 / 侵入 ${this.raidRivals().length}` :
+      raid.phase === "retreating" ? "敵アリ退却中" :
+      raid.phase === "recovering" ? `防衛後の警戒 ${raidTime}s` :
+      `次の敵襲まで ${raidTime}s`;
 
     ui.statFood.textContent = fmt(this.colony.food, 0);
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;
@@ -3773,7 +4062,7 @@ class AntColony3D {
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     ui.activeToolLabel.textContent = this.expeditionOnlyMode
       ? "遠征挙動だけ確認中"
-      : `領土 ${fmt(this.colony.territory, 0)} / 大帝国まで拡張中`;
+      : raidLabel;
     ui.expeditionSoldiers.textContent = fmt(assigned, 0);
     ui.expeditionChance.textContent = assigned > 0 ? this.expeditionEngine : "待機";
     ui.expeditionReward.textContent = fmt(reward, 0);

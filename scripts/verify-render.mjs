@@ -240,6 +240,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           rivalCount: sim?.rivalAnts?.length ?? null,
           rivalScaleMin: sim?.rivalAnts?.length ? Math.min(...sim.rivalAnts.map((ant) => ant.scale)) : null,
           rivalScaleMax: sim?.rivalAnts?.length ? Math.max(...sim.rivalAnts.map((ant) => ant.scale)) : null,
+          raidPhase: sim?.colony?.raidState?.phase ?? null,
+          raidTimer: sim?.colony?.raidState?.timer ?? null,
           rivalColor: sim?.materials?.antRival?.color?.getHexString?.() ?? null,
           terrainPatches: sim?.terrain?.length ?? null,
           terrainBumps: sim?.terrainBumps?.length ?? null,
@@ -289,8 +291,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.worldRadius < 120 ||
       metrics.foodSources < 4 ||
       metrics.predatorCount !== 0 ||
-      metrics.rivalCount !== 4 ||
-      metrics.rivalScaleMin <= 1.1 ||
+      metrics.rivalCount !== 0 ||
+      metrics.raidPhase !== "calm" ||
+      metrics.raidTimer <= 0 ||
       metrics.rivalColor !== "8a4a2f" ||
       metrics.terrainPatches < 6 ||
       metrics.terrainBumps < 8 ||
@@ -487,11 +490,63 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       throw new Error(`${label}: idle growth check failed: ${JSON.stringify(idle)}`);
     }
 
+    const raid = await page.evaluate(`(() => {
+        const sim = window.__ANT_SIM;
+        if (sim.expeditionReplay) sim.finishExpeditionReplay();
+        sim.clearRaidRivals();
+        sim.colony.raidState = {
+          phase: "calm",
+          timer: 0.01,
+          wave: 0,
+          activeCount: 0,
+          approachAngle: 0,
+          signalTimer: 0,
+          lastOutcome: "none",
+        };
+        sim.updateRaid(0.02);
+        const warning = {
+          phase: sim.colony.raidState.phase,
+          rivals: sim.rivalAnts.length,
+          activeCount: sim.colony.raidState.activeCount,
+          log: sim.colony.battleLog.join("\\n"),
+        };
+        sim.colony.raidState.timer = 0.01;
+        sim.updateRaid(0.02);
+        const activePhase = sim.colony.raidState.phase;
+        sim.updateStats();
+        const rivals = sim.raidRivals();
+        return {
+          warning,
+          activePhase,
+          phaseAfterStats: sim.colony.raidState.phase,
+          rivalCount: rivals.length,
+          activeCount: sim.colony.raidState.activeCount,
+          minNestDistance: Math.min(...rivals.map((rival) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z))),
+          minWorldRadius: Math.min(...rivals.map((rival) => Math.hypot(rival.x, rival.z))),
+          worldRadius: sim.worldRadius,
+          log: sim.colony.battleLog.join("\\n"),
+        };
+      })()`);
+    if (
+      raid.warning.phase !== "warning" ||
+      raid.warning.rivals !== 0 ||
+      raid.warning.activeCount < 2 ||
+      !raid.warning.log.includes("敵アリの気配") ||
+      raid.activePhase !== "active" ||
+      raid.phaseAfterStats !== "active" ||
+      raid.rivalCount !== raid.activeCount ||
+      raid.minNestDistance <= 50 ||
+      raid.minWorldRadius <= raid.worldRadius * 0.88 ||
+      !raid.log.includes("敵襲開始")
+    ) {
+      throw new Error(`${label}: raid warning and spawn check failed: ${JSON.stringify(raid)}`);
+    }
+
     const fight = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
         const ant = sim.ants[0];
         const guard = sim.ants[1];
-        const rival = sim.rivalAnts[0];
+        const rival = sim.raidRivals()[0];
         sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
         ant.role = "worker";
         ant.traits.persistence = 0.1;

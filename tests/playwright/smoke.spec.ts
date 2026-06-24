@@ -20,6 +20,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
       antPopulation: sim.colony.antPopulation,
       renderedAnts: sim.ants.length,
       rivalAnts: sim.rivalAnts.length,
+      raidPhase: sim.colony.raidState.phase,
+      raidTimer: sim.colony.raidState.timer,
       rivalColor: sim.materials.antRival.color.getHexString(),
       foodSources: sim.food.length,
       worldRadius: sim.worldRadius,
@@ -40,7 +42,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.cssHeight).toBeGreaterThan(500);
   expect(metrics.antPopulation).toBe(12);
   expect(metrics.renderedAnts).toBe(12);
-  expect(metrics.rivalAnts).toBe(4);
+  expect(metrics.rivalAnts).toBe(0);
+  expect(metrics.raidPhase).toBe("calm");
+  expect(metrics.raidTimer).toBeGreaterThan(0);
   expect(metrics.rivalColor).toBe("8a4a2f");
   expect(metrics.foodSources).toBeGreaterThanOrEqual(4);
   expect(metrics.worldRadius).toBeGreaterThanOrEqual(120);
@@ -543,6 +547,62 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
   expect(tree.threatGrowthMultiplier).toBeGreaterThanOrEqual(0.55);
 });
 
+test("rival raids warn first and enter from the map edge", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const raid = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.raidState = {
+      phase: "calm",
+      timer: 0.01,
+      wave: 0,
+      activeCount: 0,
+      approachAngle: 0,
+      signalTimer: 0,
+      lastOutcome: "none",
+    };
+    sim.updateRaid(0.02);
+    const warning = {
+      phase: sim.colony.raidState.phase,
+      timer: sim.colony.raidState.timer,
+      rivals: sim.rivalAnts.length,
+      activeCount: sim.colony.raidState.activeCount,
+      log: sim.colony.battleLog.join("\n"),
+    };
+
+    sim.colony.raidState.timer = 0.01;
+    sim.updateRaid(0.02);
+    const activePhase = sim.colony.raidState.phase;
+    sim.updateStats();
+    const rivals = sim.raidRivals();
+    const minNestDistance = Math.min(...rivals.map((rival: any) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z)));
+    const minWorldRadius = Math.min(...rivals.map((rival: any) => Math.hypot(rival.x, rival.z)));
+    return {
+      warning,
+      activePhase,
+      phaseAfterStats: sim.colony.raidState.phase,
+      activeCount: sim.colony.raidState.activeCount,
+      rivalCount: rivals.length,
+      minNestDistance,
+      minWorldRadius,
+      worldRadius: sim.worldRadius,
+      log: sim.colony.battleLog.join("\n"),
+    };
+  });
+
+  expect(raid.warning.phase).toBe("warning");
+  expect(raid.warning.rivals).toBe(0);
+  expect(raid.warning.activeCount).toBeGreaterThanOrEqual(2);
+  expect(raid.warning.log).toContain("敵アリの気配");
+  expect(raid.activePhase).toBe("active");
+  expect(raid.phaseAfterStats).toBe("active");
+  expect(raid.rivalCount).toBe(raid.activeCount);
+  expect(raid.minNestDistance).toBeGreaterThan(50);
+  expect(raid.minWorldRadius).toBeGreaterThan(raid.worldRadius * 0.88);
+  expect(raid.log).toContain("敵襲開始");
+});
+
 test("rival ant combat grapples before the loser flees home", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -550,7 +610,17 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
     const sim = window.__ANT_SIM as any;
     const ant = sim.ants[0];
     const guard = sim.ants[1];
-    const rival = sim.rivalAnts[0];
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
     sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
 
     ant.role = "worker";
@@ -677,9 +747,19 @@ test("rival ants actively harass ants near food instead of only camping", async 
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
     const food = sim.food[0];
     const ant = sim.ants[0];
-    const rival = sim.rivalAnts[0];
+    const rival = sim.raidRivals()[0];
     sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
 
     ant.role = "worker";
