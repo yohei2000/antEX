@@ -57,6 +57,7 @@ const CAMERA_DISTANCE_DESKTOP = 238;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
+const IS_EXPEDITION_ONLY = DEBUG_QUERY.get("expeditionOnly") === "1" || DEBUG_QUERY.get("mode") === "expedition";
 const EXPEDITION_ENGINE_KEY = "ant3d.expeditionEngine";
 const SUPPORTED_EXPEDITION_ENGINES = new Set(["agent", "legacy"]);
 
@@ -1971,9 +1972,12 @@ class AntColony3D {
     this.tool = "inspect";
     this.paused = false;
     this.timeScale = 1;
+    this.expeditionOnlyMode = IS_EXPEDITION_ONLY;
+    this.expeditionOnlyNextStartAt = 0;
+    document.body.classList.toggle("is-expedition-only", this.expeditionOnlyMode);
     this.worldRadius = 132;
     this.nest = { x: -42, z: 12, radius: 8 };
-    this.colony = readColonyState();
+    this.colony = this.expeditionOnlyMode ? createDefaultColony() : readColonyState();
     this.derived = {};
     this.expeditionEngine = resolveExpeditionEngine(DEBUG_QUERY.get("expeditionEngine") ?? readStorage(EXPEDITION_ENGINE_KEY));
     this.saveTimer = 0;
@@ -2022,7 +2026,7 @@ class AntColony3D {
     this.dynamicObjects = new Set();
 
     this.assetService.preloadProceduralAssets();
-    this.applyOfflineProgress(Date.now());
+    if (!this.expeditionOnlyMode) this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RIVAL_ANT_COUNT);
     this.createWorld();
@@ -2030,6 +2034,7 @@ class AntColony3D {
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
     this.reset(false);
+    if (this.expeditionOnlyMode) this.activateExpeditionOnlyMode();
     this.resize();
     window.__ANT_SIM = this;
     this.prewarmAndStart();
@@ -2352,10 +2357,7 @@ class AntColony3D {
 
     ui.buttons.forEach((button) => {
       button.addEventListener("click", () => {
-        this.activeTab = button.dataset.tab;
-        ui.buttons.forEach((item) => item.classList.toggle("active", item === button));
-        ui.growthTab.classList.toggle("active", this.activeTab === "growth");
-        ui.expeditionTab.classList.toggle("active", this.activeTab === "expedition");
+        this.setActiveTab(button.dataset.tab);
       });
     });
 
@@ -2377,6 +2379,14 @@ class AntColony3D {
 
     const canvas = this.renderer.domElement;
     this.input = new InputManager(this, canvas);
+  }
+
+  setActiveTab(tab) {
+    this.activeTab = tab === "expedition" ? "expedition" : "growth";
+    if (this.expeditionOnlyMode) this.activeTab = "expedition";
+    ui.buttons.forEach((item) => item.classList.toggle("active", item.dataset.tab === this.activeTab));
+    ui.growthTab.classList.toggle("active", this.activeTab === "growth");
+    ui.expeditionTab.classList.toggle("active", this.activeTab === "expedition");
   }
 
   bindPanelGestures() {
@@ -2458,6 +2468,57 @@ class AntColony3D {
     this.updateColonyVisuals();
     this.renderUpgrades();
     this.updateStats();
+  }
+
+  activateExpeditionOnlyMode() {
+    this.prepareExpeditionOnlyColony();
+    this.setActiveTab("expedition");
+    this.setPanelCompact(window.innerWidth < 680, false);
+    this.cameraTarget.set(-2, 0, 8);
+    this.targetCameraDistance = window.innerWidth < 680 ? 205 : 188;
+    this.pushLog("遠征確認モード");
+    this.updateStats();
+    this.startExpedition();
+  }
+
+  prepareExpeditionOnlyColony() {
+    if (!this.expeditionOnlyMode || this.expeditionReplay) return;
+    this.colony.food = 1200;
+    this.colony.lifetimeFood = Math.max(this.colony.lifetimeFood, 2000);
+    this.colony.antPopulation = 48;
+    this.colony.woundedAnts = 0;
+    this.colony.soldierAnts = 16;
+    this.colony.nestLevel = Math.max(this.colony.nestLevel, 4);
+    this.colony.territory = Math.max(this.colony.territory, 3);
+    this.colony.enemyThreat = 5.5;
+    this.colony.battleCooldownUntil = 0;
+    this.colony.hatchProgress = 0;
+    for (const ant of this.ants) {
+      ant.expeditionControl = null;
+      ant.health = 1;
+      ant.wounded = false;
+      ant.fatigue = 0;
+      ant.energy = Math.max(ant.energy, 0.82);
+      ant.stamina = ant.energy;
+      ant.fleeTimer = 0;
+      if (ant.state === "expedition" || ant.state === "expedition_wounded" || ant.state === "flee") ant.setState("explore");
+    }
+    this.computeDerived();
+    this.syncAntPopulation();
+    this.updateColonyVisuals();
+    this.renderUpgrades();
+  }
+
+  updateExpeditionOnlyMode() {
+    if (!this.expeditionOnlyMode) return;
+    if (this.expeditionReplay?.objective) {
+      this.cameraTarget.set(this.expeditionReplay.objective.x, 0, this.expeditionReplay.objective.y);
+    }
+    if (!this.expeditionReplay && this.expeditionOnlyNextStartAt > 0 && Date.now() >= this.expeditionOnlyNextStartAt) {
+      this.prepareExpeditionOnlyColony();
+      this.expeditionOnlyNextStartAt = 0;
+      this.startExpedition();
+    }
   }
 
   computeDerived() {
@@ -2604,7 +2665,7 @@ class AntColony3D {
   }
 
   saveColony() {
-    if (!this.colony) return;
+    if (!this.colony || this.expeditionOnlyMode) return;
     this.colony.lastSavedAt = Date.now();
     writeStorage(SAVE_KEY, JSON.stringify(this.colony));
   }
@@ -2973,6 +3034,11 @@ class AntColony3D {
     this.expeditionAgentRenderer?.render([]);
     this.expeditionReplay = null;
     this.syncAntPopulation();
+    if (this.expeditionOnlyMode) {
+      this.colony.battleCooldownUntil = 0;
+      this.expeditionOnlyNextStartAt = Date.now() + 1400;
+      this.updateStats();
+    }
   }
 
   updateColonyVisuals() {
@@ -3123,7 +3189,7 @@ class AntColony3D {
   }
 
   updateGame(dt) {
-    this.updateColony(dt);
+    if (!this.expeditionOnlyMode) this.updateColony(dt);
 
     for (const patch of this.water) {
       patch.age += dt;
@@ -3165,6 +3231,7 @@ class AntColony3D {
     for (const ant of this.ants) ant.update(dt, this);
     for (const rival of this.rivalAnts) rival.update(dt, this);
     this.updateExpeditionReplay(dt);
+    this.updateExpeditionOnlyMode();
     this.lastUiUpdate += dt;
     if (this.lastUiUpdate > 0.15) {
       this.updateStats();
@@ -3704,12 +3771,16 @@ class AntColony3D {
     ui.statThreat.textContent = fmt(this.colony.enemyThreat, 1);
     ui.colonySummary.textContent = `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(this.colony.soldierAnts, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
-    ui.activeToolLabel.textContent = `領土 ${fmt(this.colony.territory, 0)} / 大帝国まで拡張中`;
+    ui.activeToolLabel.textContent = this.expeditionOnlyMode
+      ? "遠征挙動だけ確認中"
+      : `領土 ${fmt(this.colony.territory, 0)} / 大帝国まで拡張中`;
     ui.expeditionSoldiers.textContent = fmt(assigned, 0);
     ui.expeditionChance.textContent = assigned > 0 ? this.expeditionEngine : "待機";
     ui.expeditionReward.textContent = fmt(reward, 0);
     ui.expeditionBtn.disabled = cooldownLeft > 0 || assigned < 1;
-    ui.expeditionBtn.textContent = cooldownLeft > 0 ? `再遠征まで ${cooldownLeft}s` : "近隣の餌場へ遠征";
+    ui.expeditionBtn.textContent = this.expeditionOnlyMode && this.expeditionReplay
+      ? "遠征を観察中"
+      : cooldownLeft > 0 ? `再遠征まで ${cooldownLeft}s` : "近隣の餌場へ遠征";
     ui.battleLog.innerHTML = this.colony.battleLog.map((entry) => `<div>${entry}</div>`).join("");
     this.renderUpgrades();
   }

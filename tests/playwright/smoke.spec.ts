@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-async function waitForSimulation(page) {
-  await page.goto("/");
+async function waitForSimulation(page, path = "/") {
+  await page.goto(path);
   await page.waitForFunction(() => window.__ANT_SIM_READY === true);
 }
 
@@ -394,6 +394,49 @@ test("expedition uses agent battle physics and renders replay agents", async ({ 
   }
   expect(result.logText).toContain("reason:");
   expect(result.cooldownSet).toBe(true);
+});
+
+test("expedition-only mode auto-starts isolated expedition view without saving", async ({ page }) => {
+  await waitForSimulation(page, "/?expeditionOnly=1");
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const growthTab = document.querySelector("#growthTab") as HTMLElement;
+    const statsStrip = document.querySelector(".stats-strip") as HTMLElement;
+    for (let i = 0; i < 20; i += 1) {
+      sim.updateExpeditionReplay(1 / 60);
+      sim.renderExpeditionReplay();
+    }
+    return {
+      mode: sim.expeditionOnlyMode,
+      bodyClass: document.body.classList.contains("is-expedition-only"),
+      activeTab: sim.activeTab,
+      growthDisplay: getComputedStyle(growthTab).display,
+      statsDisplay: getComputedStyle(statsStrip).display,
+      hasBattle: Boolean(sim.lastExpeditionBattle),
+      replayActive: Boolean(sim.expeditionReplay),
+      participants: sim.expeditionReplay?.participants?.size ?? 0,
+      enemies: sim.expeditionReplay?.enemyVisuals?.length ?? 0,
+      engine: sim.expeditionEngine,
+      savedState: localStorage.getItem("ant3d.colonyState"),
+      criticalDiagnostics: (sim.lastExpeditionDiagnostics ?? [])
+        .filter((item: any) => item.severity === "critical" && ["duplicate_identity", "duplicate_visual", "teleport", "invalid_state"].includes(item.code))
+        .map((item: any) => item.code),
+    };
+  });
+
+  expect(result.mode).toBe(true);
+  expect(result.bodyClass).toBe(true);
+  expect(result.activeTab).toBe("expedition");
+  expect(result.growthDisplay).toBe("none");
+  expect(result.statsDisplay).toBe("none");
+  expect(result.hasBattle).toBe(true);
+  expect(result.replayActive).toBe(true);
+  expect(result.participants).toBeGreaterThan(0);
+  expect(result.enemies).toBeGreaterThan(0);
+  expect(result.engine).toBe("agent");
+  expect(result.savedState).toBeNull();
+  expect(result.criticalDiagnostics).toEqual([]);
 });
 
 test("expedition legacy engine flag stays isolated from agent replay", async ({ page }) => {

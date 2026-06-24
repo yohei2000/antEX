@@ -183,6 +183,20 @@ button {
   white-space: pre-wrap;
 }
 
+body.is-expedition-only .stats-strip,
+body.is-expedition-only .panel-tabs [data-tab="growth"],
+body.is-expedition-only #growthTab {
+  display: none;
+}
+
+body.is-expedition-only #expeditionTab {
+  display: block;
+}
+
+body.is-expedition-only .empire-panel {
+  width: min(360px, calc(100vw - 24px));
+}
+
 .topbar {
   position: absolute;
   z-index: 5;

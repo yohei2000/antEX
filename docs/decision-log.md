@@ -213,6 +213,20 @@ Sources:
 - `src/expedition/qa/AntBattleInspector.ts` を追加し、identity/teleport/二重描画/状態異常/perf 兆候を simulation へ副作用なく report する
 - Unit/Playwright/verify で transform continuity、renderIndex 継続、Inspector 診断、legacy flag の分離を検証する
 
+## 2026-06-24: 遠征挙動だけを確認するモードを追加
+
+### Decision
+
+通常プレイや保存データを変えずに遠征挙動だけを確認できるよう、URL パラメータ `?expeditionOnly=1` を確認モードとして扱う。確認モードでは保存データを読まず、localStorage にも書かず、一時的なコロニー状態で遠征タブを開き、自動で agent 遠征を開始する。
+
+### Result
+
+- `?expeditionOnly=1` または `?mode=expedition` で遠征確認モードに入る
+- 成長タブと資源バーを隠し、遠征タブと戦闘ログだけを前面に出す
+- 遠征終了後は短い間隔で次の遠征を再開できるようにし、連続観察しやすくした
+- 確認モードでは `saveColony()` を無効化し、既存セーブデータを汚さない
+- Playwright で自動開始、参加個体、敵visual、critical diagnosticsなし、保存非書き込みを検証する
+
 ## Current Direction
 
 今後の判断では、以下を優先する。
