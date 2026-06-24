@@ -198,6 +198,21 @@ Sources:
 - Unit test で deterministic、停止時 jitter、heading alignment、turn limit、contact、retreat、pheromone/objective、collision、integration、ant-likeness thresholds を検証した
 - Playwright/verify で agent battle の生成、物理ログ、replay agent 表示、診断ログを検証した
 
+## 2026-06-24: 遠征戦闘を既存アリ個体へ接続
+
+### Decision
+
+遠征開始時に別 renderer の戦闘用アリを重ねるのではなく、通常画面にいる既存 `Ant3D` を選抜し、その id、位置、向き、歩行位相、描画slotを agent battle の初期状態へ渡す。戦闘 frame log は同じ `Ant3D` へ適用し、通常 `AntRenderSystem` で描画する。
+
+### Result
+
+- agent battle は `playerSeeds` を受け取り、既存個体の id/position/heading/gaitPhase/renderIndex/spawnReason を初期frameに保持する
+- `AntRenderSystem` は id 由来の stable slot を持ち、戦闘中に不要な render index swap を起こさない
+- 遠征中の参加個体は通常更新を止め、agent frame log で同じインスタンスを制御し、終了時に負傷/撤退/復帰を同じ個体へ反映する
+- 追加の敵個体は通常 renderer に流す軽量 visual とし、別 expedition renderer は生成しない
+- `src/expedition/qa/AntBattleInspector.ts` を追加し、identity/teleport/二重描画/状態異常/perf 兆候を simulation へ副作用なく report する
+- Unit/Playwright/verify で transform continuity、renderIndex 継続、Inspector 診断、legacy flag の分離を検証する
+
 ## Current Direction
 
 今後の判断では、以下を優先する。

@@ -5,6 +5,7 @@ import type {
   AgentBattleResult,
   AgentFrameLog,
   AgentPhysicalParams,
+  AgentSeed,
   AgentSide,
   AgentState,
   AntAgent,
@@ -96,15 +97,30 @@ export function createAgentForTest(partial: Partial<AntAgent> = {}): AntAgent {
     retreatDirection: partial.retreatDirection ? { ...partial.retreatDirection } : { x: -1, y: 0 },
     variation: partial.variation ?? 0,
     params,
+    animationSeed: partial.animationSeed ?? partial.id ?? 1,
+    bodyScale: partial.bodyScale ?? 1,
+    currentTask: partial.currentTask ?? null,
+    renderIndex: partial.renderIndex ?? null,
+    spawnReason: partial.spawnReason ?? "generated",
+    worldLimit: partial.worldLimit ?? WORLD_LIMIT,
   };
 }
 
-function makeAgent(id: number, side: AgentSide, index: number, count: number, params: AgentPhysicalParams, rng: SeededRng): AntAgent {
+function makeAgent(
+  id: number,
+  side: AgentSide,
+  index: number,
+  count: number,
+  params: AgentPhysicalParams,
+  rng: SeededRng,
+  objective: Vec2,
+  worldLimit: number,
+): AntAgent {
   const row = index - (count - 1) * 0.5;
   const lane = row * 1.25;
   const sideSign = side === "player" ? -1 : 1;
-  const x = sideSign * (24 + Math.floor(index / 6) * 1.8);
-  const y = lane + rng.range(-0.18, 0.18);
+  const x = objective.x + sideSign * (24 + Math.floor(index / 6) * 1.8);
+  const y = objective.y + lane + rng.range(-0.18, 0.18);
   const heading = side === "player" ? 0 : Math.PI;
   return createAgentForTest({
     id,
@@ -116,6 +132,41 @@ function makeAgent(id: number, side: AgentSide, index: number, count: number, pa
     retreatDirection: side === "player" ? { x: -1, y: 0 } : { x: 1, y: 0 },
     variation: rng.range(-1, 1),
     params,
+    animationSeed: rng.nextUint(),
+    bodyScale: 1,
+    renderIndex: null,
+    spawnReason: side === "player" ? "reserve_from_nest" : "enemy_from_edge",
+    worldLimit,
+  });
+}
+
+function makeSeededAgent(seed: AgentSeed, params: AgentPhysicalParams, rng: SeededRng, worldLimit: number): AntAgent {
+  const position = { ...seed.position };
+  const fallbackRetreat = seed.side === "player" ? { x: -1, y: 0 } : { x: 1, y: 0 };
+  return createAgentForTest({
+    id: seed.id,
+    side: seed.side,
+    position,
+    previousPosition: position,
+    velocity: seed.velocity ? { ...seed.velocity } : { x: 0, y: 0 },
+    heading: seed.heading,
+    bodyLength: seed.bodyLength ?? 1.55 * (seed.bodyScale ?? 1),
+    radius: seed.radius ?? 0.58 * (seed.bodyScale ?? 1),
+    stamina: seed.stamina ?? 1,
+    morale: seed.morale ?? 1,
+    hp: seed.hp ?? 1,
+    wounded: seed.wounded ?? false,
+    target: seed.target ? { ...seed.target } : null,
+    gaitPhase: seed.gaitPhase ?? 0,
+    retreatDirection: fallbackRetreat,
+    variation: rng.range(-0.35, 0.35),
+    params,
+    animationSeed: seed.animationSeed ?? seed.id,
+    bodyScale: seed.bodyScale ?? 1,
+    currentTask: seed.currentTask ?? null,
+    renderIndex: seed.renderIndex ?? null,
+    spawnReason: seed.spawnReason ?? "existing_instance",
+    worldLimit: seed.worldLimit ?? worldLimit,
   });
 }
 
@@ -169,8 +220,9 @@ export function integrateAgentPhysics(agent: AntAgent, desiredDirection: Vec2, d
   agent.velocity.y *= damping;
   agent.position.x += agent.velocity.x * dt;
   agent.position.y += agent.velocity.y * dt;
-  agent.position.x = clamp(agent.position.x, -WORLD_LIMIT, WORLD_LIMIT);
-  agent.position.y = clamp(agent.position.y, -WORLD_LIMIT, WORLD_LIMIT);
+  const worldLimit = agent.worldLimit ?? WORLD_LIMIT;
+  agent.position.x = clamp(agent.position.x, -worldLimit, worldLimit);
+  agent.position.y = clamp(agent.position.y, -worldLimit, worldLimit);
 
   const traveled = distance(agent.position, agent.previousPosition);
   if (traveled > 0.0001) agent.gaitPhase = (agent.gaitPhase + traveled * 6.2) % (Math.PI * 2);
@@ -272,19 +324,29 @@ export class AgentBattleSimulation {
       objective: config.objective ?? { x: 0, y: 0 },
       player: defaultParams(config.player),
       enemy: defaultParams(config.enemy),
+      playerSeeds: config.playerSeeds ?? [],
+      enemySeeds: config.enemySeeds ?? [],
+      worldLimit: config.worldLimit ?? WORLD_LIMIT,
     };
     this.agents = [];
     for (let i = 0; i < this.config.playerCount; i += 1) {
-      this.agents.push(makeAgent(i + 1, "player", i, this.config.playerCount, this.config.player, rng));
+      const seed = this.config.playerSeeds[i];
+      this.agents.push(seed
+        ? makeSeededAgent({ ...seed, side: "player" }, this.config.player, rng, this.config.worldLimit)
+        : makeAgent(i + 1, "player", i, this.config.playerCount, this.config.player, rng, this.config.objective, this.config.worldLimit));
     }
     for (let i = 0; i < this.config.enemyCount; i += 1) {
-      this.agents.push(makeAgent(1001 + i, "enemy", i, this.config.enemyCount, this.config.enemy, rng));
+      const seed = this.config.enemySeeds[i];
+      this.agents.push(seed
+        ? makeSeededAgent({ ...seed, side: "enemy" }, this.config.enemy, rng, this.config.worldLimit)
+        : makeAgent(1001 + i, "enemy", i, this.config.enemyCount, this.config.enemy, rng, this.config.objective, this.config.worldLimit));
     }
   }
 
   run(): AgentBattleResult {
     const maxSteps = Math.max(1, Math.floor(this.config.maxSeconds / AGENT_FIXED_DT));
     let reason: BattleReason = "timeout_draw";
+    for (const agent of this.agents) if (isAlive(agent)) this.logFrame(agent);
     for (let i = 0; i < maxSteps; i += 1) {
       this.step();
       const resolved = this.resolveReason();
@@ -331,7 +393,7 @@ export class AgentBattleSimulation {
     for (const agent of this.agents) {
       if (!isAlive(agent)) continue;
       this.metrics.sampleAgent(agent, this.config.objective);
-      if (this.stepIndex % 3 === 0) this.logFrame(agent);
+      if ((this.stepIndex + 1) % 3 === 0) this.logFrame(agent);
     }
 
     this.stepIndex += 1;
@@ -519,6 +581,9 @@ export class AgentBattleSimulation {
       morale: round(agent.morale),
       hp: round(agent.hp),
       contactId: agent.lastContactId,
+      renderIndex: agent.renderIndex,
+      bodyScale: round(agent.bodyScale),
+      spawnReason: agent.spawnReason,
     });
   }
 }

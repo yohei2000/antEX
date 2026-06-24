@@ -282,11 +282,33 @@ test("expedition uses agent battle physics and renders replay agents", async ({ 
     sim.colony.territory = 2;
     sim.colony.enemyThreat = 5;
     sim.computeDerived();
+    const before = new Map(sim.ants.map((ant: any) => [ant.id, {
+      x: ant.x,
+      z: ant.z,
+      angle: ant.angle,
+      gaitPhase: ant.gaitPhase,
+      renderIndex: ant.renderInstanceIndex,
+    }]));
     sim.startExpedition();
+    const participantIds = [...sim.expeditionReplay.participants.keys()];
+    const continuity = participantIds.map((id: number) => {
+      const ant = sim.expeditionReplay.participants.get(id);
+      const initial = before.get(id) as any;
+      return {
+        id,
+        sameInstance: sim.ants.includes(ant),
+        dx: Math.hypot(ant.x - initial.x, ant.z - initial.z),
+        headingDelta: Math.abs(Math.atan2(Math.sin(ant.angle - initial.angle), Math.cos(ant.angle - initial.angle))),
+        gaitDelta: Math.abs(ant.gaitPhase - initial.gaitPhase),
+        renderIndexBefore: initial.renderIndex,
+        renderIndexAfter: ant.renderInstanceIndex,
+      };
+    });
     for (let i = 0; i < 20; i += 1) {
       sim.updateExpeditionReplay(1 / 60);
       sim.renderExpeditionReplay();
     }
+    const renderIndexAfterUpdates = participantIds.map((id: number) => sim.expeditionReplay.participants.get(id).renderInstanceIndex);
     return {
       hasBattle: Boolean(sim.lastExpeditionBattle),
       engine: sim.expeditionEngine,
@@ -296,7 +318,11 @@ test("expedition uses agent battle physics and renders replay agents", async ({ 
       forwardMotionRatio: sim.lastExpeditionBattle?.metrics?.forwardMotionRatio ?? 0,
       contactFacingRatio: sim.lastExpeditionBattle?.metrics?.contactFacingRatio ?? 0,
       replayActive: Boolean(sim.expeditionReplay),
-      replayAgents: sim.expeditionReplay?.renderAgents?.length ?? 0,
+      participantCount: sim.expeditionReplay?.participants?.size ?? 0,
+      enemyVisualCount: sim.expeditionReplay?.enemyVisuals?.length ?? 0,
+      continuity,
+      renderIndexAfterUpdates,
+      diagnostics: sim.lastExpeditionDiagnostics ?? [],
       replaySpeedChecks: [0.5, 1, 1.5].map((speed) => {
         sim.expeditionReplay.time = 0;
         sim.expeditionReplay.speed = speed;
@@ -304,12 +330,13 @@ test("expedition uses agent battle physics and renders replay agents", async ({ 
         sim.renderExpeditionReplay();
         return {
           speed,
-          agents: sim.expeditionReplay.renderAgents.length,
-          finite: sim.expeditionReplay.renderAgents.every((agent: any) =>
-            Number.isFinite(agent.position.x) &&
-            Number.isFinite(agent.position.y) &&
-            Number.isFinite(agent.heading) &&
-            Number.isFinite(agent.gaitPhase),
+          agents: sim.expeditionReplay.participants.size + sim.expeditionReplay.enemyVisuals.length,
+          finite: [...sim.expeditionReplay.participants.values(), ...sim.expeditionReplay.enemyVisuals].every((agent: any) =>
+            Number.isFinite(agent.x) &&
+            Number.isFinite(agent.z) &&
+            Number.isFinite(agent.angle) &&
+            Number.isFinite(agent.gaitPhase) &&
+            Number.isFinite(agent.renderInstanceIndex),
           ),
         };
       }),
@@ -318,7 +345,19 @@ test("expedition uses agent battle physics and renders replay agents", async ({ 
         sim.expeditionReplay.speed = 1;
         sim.updateExpeditionReplay(1 / 8);
         sim.renderExpeditionReplay();
-        return sim.expeditionReplay.renderAgents.length;
+        return sim.expeditionReplay.participants.size + sim.expeditionReplay.enemyVisuals.length;
+      })(),
+      returnCheck: (() => {
+        const ids = [...participantIds];
+        const refs = ids.map((id: number) => sim.expeditionReplay.participants.get(id));
+        sim.expeditionReplay.time = sim.expeditionReplay.duration + 4.2;
+        sim.updateExpeditionReplay(0.1);
+        return {
+          ended: sim.expeditionReplay == null,
+          sameInstances: refs.every((ant: any) => sim.ants.includes(ant)),
+          states: refs.map((ant: any) => ant.state),
+          renderIndexes: refs.map((ant: any) => ant.renderInstanceIndex),
+        };
       })(),
       logText: sim.colony.battleLog.join("\n"),
       cooldownSet: sim.colony.battleCooldownUntil > Date.now(),
@@ -333,8 +372,22 @@ test("expedition uses agent battle physics and renders replay agents", async ({ 
   expect(result.forwardMotionRatio).toBeGreaterThan(0.8);
   expect(result.contactFacingRatio).toBeGreaterThan(0.4);
   expect(result.replayActive).toBe(true);
-  expect(result.replayAgents).toBeGreaterThan(0);
+  expect(result.participantCount).toBeGreaterThan(0);
+  expect(result.enemyVisualCount).toBeGreaterThan(0);
+  for (const item of result.continuity) {
+    expect(item.sameInstance).toBe(true);
+    expect(item.dx).toBeLessThan(0.001);
+    expect(item.headingDelta).toBeLessThan(0.001);
+    expect(item.gaitDelta).toBeLessThan(0.001);
+    expect(item.renderIndexAfter).toBe(item.renderIndexBefore);
+  }
+  expect(result.renderIndexAfterUpdates).toEqual(result.continuity.map((item: any) => item.renderIndexBefore));
+  expect(result.diagnostics.some((item: any) => ["duplicate_identity", "duplicate_visual", "teleport", "invalid_state"].includes(item.code) && item.severity === "critical")).toBe(false);
   expect(result.lowFpsAgents).toBeGreaterThan(0);
+  expect(result.returnCheck.ended).toBe(true);
+  expect(result.returnCheck.sameInstances).toBe(true);
+  expect(result.returnCheck.states.every((state: string) => !state.startsWith("expedition"))).toBe(true);
+  expect(result.returnCheck.renderIndexes).toEqual(result.continuity.map((item: any) => item.renderIndexBefore));
   for (const check of result.replaySpeedChecks) {
     expect(check.agents).toBeGreaterThan(0);
     expect(check.finite).toBe(true);

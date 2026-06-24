@@ -1,5 +1,5 @@
 import { runAgentBattle } from "./simulation";
-import type { AgentBattleResult, AgentPhysicalParams, BattleReason } from "./types";
+import type { AgentBattleResult, AgentPhysicalParams, AgentSeed, BattleReason, Vec2 } from "./types";
 
 export interface ExpeditionAgentInput {
   seed: number;
@@ -10,6 +10,10 @@ export interface ExpeditionAgentInput {
   defensePower: number;
   recoveryPerSecond: number;
   threatGrowthMultiplier: number;
+  playerSeeds?: AgentSeed[];
+  enemySeeds?: AgentSeed[];
+  objective?: Vec2;
+  worldLimit?: number;
 }
 
 export interface ExpeditionAgentOutcome {
@@ -51,15 +55,21 @@ function enemyParams(input: ExpeditionAgentInput): AgentPhysicalParams {
 
 export function runExpeditionAgentBattle(input: ExpeditionAgentInput): ExpeditionAgentOutcome {
   const assigned = Math.max(1, Math.floor(input.assignedSoldiers));
-  const enemyCount = Math.floor(clamp(4 + input.territory * 0.45 + input.enemyThreat * 0.28, 3, 34));
+  const enemyCount = Math.max(
+    input.enemySeeds?.length ?? 0,
+    Math.floor(clamp(4 + input.territory * 0.45 + input.enemyThreat * 0.28, 3, 34)),
+  );
   const battle = runAgentBattle({
     seed: input.seed,
-    playerCount: assigned,
+    playerCount: input.playerSeeds?.length ? input.playerSeeds.length : assigned,
     enemyCount,
     maxSeconds: 26,
     player: playerParams(input),
     enemy: enemyParams(input),
-    objective: { x: 0, y: 0 },
+    objective: input.objective ?? { x: 0, y: 0 },
+    playerSeeds: input.playerSeeds,
+    enemySeeds: input.enemySeeds,
+    worldLimit: input.worldLimit,
   });
 
   const baseReward = Math.floor(34 + input.territory * 9 + assigned * 4);
@@ -83,4 +93,3 @@ export function runExpeditionAgentBattle(input: ExpeditionAgentInput): Expeditio
     diagnosis: battle.diagnosis,
   };
 }
-

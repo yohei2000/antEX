@@ -453,7 +453,12 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           battleFrameLogs: battle?.frameLogs?.length ?? 0,
           battleForwardMotionRatio: battle?.metrics?.forwardMotionRatio ?? 0,
           battleContactFacingRatio: battle?.metrics?.contactFacingRatio ?? 0,
-          replayAgents: sim.expeditionReplay?.renderAgents?.length ?? 0,
+          replayAgents: sim.expeditionReplay ? sim.expeditionReplay.participants.size + sim.expeditionReplay.enemyVisuals.length : 0,
+          participantIds: sim.expeditionReplay ? [...sim.expeditionReplay.participants.keys()] : [],
+          criticalInspectorDiagnostics: (sim.lastExpeditionDiagnostics ?? []).filter((item) =>
+            item.severity === "critical" &&
+            ["duplicate_identity", "duplicate_visual", "teleport", "invalid_state"].includes(item.code),
+          ).length,
           battleLog: sim.colony.battleLog.join("\\n"),
           cooldownActive: sim.colony.battleCooldownUntil > Date.now(),
           savedAnts: saved.antPopulation,
@@ -472,6 +477,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       idle.battleForwardMotionRatio <= 0.8 ||
       idle.battleContactFacingRatio <= 0.4 ||
       idle.replayAgents <= 0 ||
+      idle.participantIds.length <= 0 ||
+      idle.criticalInspectorDiagnostics !== 0 ||
       !idle.battleLog.includes("reason:") ||
       !idle.cooldownActive ||
       idle.savedAnts !== 24 ||

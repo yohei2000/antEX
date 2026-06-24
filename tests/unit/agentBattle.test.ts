@@ -184,6 +184,75 @@ describe("agent expedition battle", () => {
     expect(outcome.success ? outcome.rewardFood : outcome.foodLoss).toBeGreaterThanOrEqual(0);
   });
 
+  it("can start from existing ant identities without changing initial transforms", () => {
+    const result = runAgentBattle({
+      seed: 808,
+      playerCount: 2,
+      enemyCount: 2,
+      maxSeconds: 4,
+      objective: { x: 12, y: -3 },
+      worldLimit: 80,
+      player: baseParams,
+      enemy: baseParams,
+      playerSeeds: [
+        {
+          id: 31,
+          side: "player",
+          position: { x: -10.5, y: 2.25 },
+          velocity: { x: 0.4, y: 0.1 },
+          heading: 0.72,
+          gaitPhase: 1.4,
+          bodyScale: 1.05,
+          animationSeed: 3100,
+          currentTask: "explore",
+          renderIndex: 30,
+          spawnReason: "existing_colony_ant",
+        },
+        {
+          id: 12,
+          side: "player",
+          position: { x: -12, y: 1.5 },
+          heading: 0.7,
+          gaitPhase: 0.8,
+          renderIndex: 11,
+          spawnReason: "existing_colony_ant",
+        },
+      ],
+    });
+
+    const first = result.frameLogs.filter((frame) => frame.side === "player" && frame.step === 0);
+    expect(first.map((frame) => frame.id)).toEqual([31, 12]);
+    expect(first[0].x).toBeCloseTo(-10.5, 4);
+    expect(first[0].y).toBeCloseTo(2.25, 4);
+    expect(first[0].heading).toBeCloseTo(0.72, 4);
+    expect(first[0].gaitPhase).toBeCloseTo(1.4, 4);
+    expect(first[0].renderIndex).toBe(30);
+    expect(first[0].spawnReason).toBe("existing_colony_ant");
+  });
+
+  it("is deterministic for existing-ant seeds too", () => {
+    const config = {
+      seed: 909,
+      playerCount: 2,
+      enemyCount: 3,
+      maxSeconds: 5,
+      objective: { x: 8, y: 0 },
+      worldLimit: 80,
+      player: baseParams,
+      enemy: baseParams,
+      playerSeeds: [
+        { id: 5, side: "player" as const, position: { x: -4, y: 0 }, heading: 0.1, gaitPhase: 0.4, renderIndex: 4 },
+        { id: 8, side: "player" as const, position: { x: -6, y: 1 }, heading: 0.2, gaitPhase: 0.7, renderIndex: 7 },
+      ],
+    };
+    const first = runAgentBattle(config);
+    const second = runAgentBattle(config);
+    expect(first.reason).toBe(second.reason);
+    expect(first.summary).toEqual(second.summary);
+    expect(first.frameLogs.slice(0, 36)).toEqual(second.frameLogs.slice(0, 36));
+    expect(first.diagnosis).toEqual(second.diagnosis);
+  });
+
   it("keeps legacy slime battle selectable behind the engine setting", () => {
     const outcome = runLegacyExpeditionBattle({
       seed: 45,

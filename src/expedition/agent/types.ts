@@ -30,6 +30,28 @@ export interface AgentPhysicalParams {
   pheromoneCommand: number;
 }
 
+export interface AgentSeed {
+  id: number;
+  side: AgentSide;
+  position: Vec2;
+  velocity?: Vec2;
+  heading: number;
+  gaitPhase?: number;
+  bodyLength?: number;
+  radius?: number;
+  stamina?: number;
+  morale?: number;
+  hp?: number;
+  wounded?: boolean;
+  target?: Vec2 | null;
+  animationSeed?: number;
+  bodyScale?: number;
+  currentTask?: string | null;
+  renderIndex?: number | null;
+  spawnReason?: string;
+  worldLimit?: number;
+}
+
 export interface AntAgent {
   id: number;
   side: AgentSide;
@@ -54,6 +76,12 @@ export interface AntAgent {
   retreatDirection: Vec2;
   variation: number;
   params: AgentPhysicalParams;
+  animationSeed: number;
+  bodyScale: number;
+  currentTask: string | null;
+  renderIndex: number | null;
+  spawnReason: string;
+  worldLimit: number;
 }
 
 export interface AgentBattleConfig {
@@ -64,6 +92,9 @@ export interface AgentBattleConfig {
   objective?: Vec2;
   player: AgentPhysicalParams;
   enemy: AgentPhysicalParams;
+  playerSeeds?: AgentSeed[];
+  enemySeeds?: AgentSeed[];
+  worldLimit?: number;
 }
 
 export interface AgentFrameLog {
@@ -83,6 +114,9 @@ export interface AgentFrameLog {
   morale: number;
   hp: number;
   contactId: number | null;
+  renderIndex: number | null;
+  bodyScale: number;
+  spawnReason: string;
 }
 
 export interface AgentSummary {

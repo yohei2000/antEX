@@ -1,7 +1,8 @@
 // @ts-nocheck
 import * as THREE from "three";
-import { AntAgentInstancedRenderer, runExpeditionAgentBattle } from "./expedition/agent";
+import { runExpeditionAgentBattle } from "./expedition/agent";
 import { runLegacyExpeditionBattle } from "./expedition/legacyAdapter";
+import { AntBattleInspector } from "./expedition/qa/AntBattleInspector";
 
 const ui = {
   world: document.querySelector("#world3d"),
@@ -141,6 +142,8 @@ const STATE_LABELS = {
   wet: "乾燥",
   stunned: "停止",
   rescue: "救助",
+  expedition: "遠征",
+  expedition_wounded: "負傷帰巣",
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -625,6 +628,18 @@ class Ant3D {
     this.prevX = this.x;
     this.prevZ = this.z;
     this.prevAngle = this.angle;
+    this.vx = 0;
+    this.vz = 0;
+    this.gaitPhase = rand(0, Math.PI * 2);
+    this.animationSeed = id * 2654435761;
+    this.bodyScale = rand(0.94, 1.08);
+    this.health = 1;
+    this.stamina = this.energy;
+    this.fatigue = 0;
+    this.wounded = false;
+    this.currentTask = this.state;
+    this.renderInstanceIndex = id - 1;
+    this.expeditionControl = null;
     this.steering = { x: 0, z: 0 };
     this.sensed = {
       hazard: { x: 0, z: 0 },
@@ -665,6 +680,10 @@ class Ant3D {
     this.prevX = this.x;
     this.prevZ = this.z;
     this.prevAngle = this.angle;
+    if (this.expeditionControl) {
+      this.currentTask = this.state;
+      return;
+    }
     this.stateTime += dt;
     this.homeTimer += dt;
     this.wet = Math.max(0, this.wet - dt * 0.11);
@@ -748,6 +767,62 @@ class Ant3D {
     if (this.state !== nextState) {
       this.state = nextState;
       this.stateTime = 0;
+    }
+    this.currentTask = nextState;
+  }
+
+  beginExpeditionControl(phase, frame) {
+    this.expeditionControl = {
+      phase,
+      startedAtX: this.x,
+      startedAtZ: this.z,
+      startedAtHeading: this.angle,
+      startedAtGait: this.gaitPhase,
+    };
+    this.carrying = 0;
+    this.foodSourceId = null;
+    this.clashRival = null;
+    this.clashTimer = 0;
+    this.fleeTimer = 0;
+    this.stun = 0;
+    this.setState("expedition");
+    if (frame) this.applyExpeditionFrame(frame);
+  }
+
+  applyExpeditionFrame(frame) {
+    this.prevX = this.x;
+    this.prevZ = this.z;
+    this.prevAngle = this.angle;
+    this.x = frame.x;
+    this.z = frame.y;
+    this.vx = frame.vx ?? 0;
+    this.vz = frame.vy ?? 0;
+    this.angle = Math.PI / 2 - frame.heading;
+    this.gaitPhase = frame.gaitPhase ?? this.gaitPhase;
+    this.health = clamp(frame.hp ?? this.health, 0, 1);
+    this.stamina = clamp(frame.stamina ?? this.stamina, 0, 1);
+    this.wounded = this.wounded || this.health < 0.68 || frame.state === "retreat";
+    this.currentTask = frame.state ?? "expedition";
+    if (frame.renderIndex != null) this.renderInstanceIndex = frame.renderIndex;
+    this.setState(this.wounded ? "expedition_wounded" : "expedition");
+  }
+
+  finishExpeditionControl(finalFrame, nest) {
+    if (finalFrame) this.applyExpeditionFrame(finalFrame);
+    this.expeditionControl = null;
+    this.fatigue = clamp(1 - this.stamina, 0, 1);
+    if (this.wounded || this.health < 0.72) {
+      this.wounded = true;
+      this.fleeFromX = this.x;
+      this.fleeFromZ = this.z;
+      this.fleeTimer = 3.2;
+      this.setState("flee");
+    } else {
+      this.setState(this.carrying > 0 ? "return" : "explore");
+    }
+    if (nest && this.wounded) {
+      const d = distance2(this.x, this.z, nest.x, nest.z);
+      if (d < nest.radius * 0.8) this.setState("wet");
     }
   }
 
@@ -1123,6 +1198,11 @@ class Ant3D {
 
     this.x += Math.sin(this.angle) * speed * dt;
     this.z += Math.cos(this.angle) * speed * dt;
+    this.vx = (this.x - this.prevX) / Math.max(dt, 0.000001);
+    this.vz = (this.z - this.prevZ) / Math.max(dt, 0.000001);
+    const traveled = Math.hypot(this.x - this.prevX, this.z - this.prevZ);
+    if (traveled > 0.0001) this.gaitPhase = (this.gaitPhase + traveled * 3.6) % (Math.PI * 2);
+    this.stamina = clamp(this.energy - this.fatigue * 0.25, 0, 1);
     this.keepInWorld(sim);
   }
 
@@ -1169,10 +1249,13 @@ class Ant3D {
       x: this.prevX + (this.x - this.prevX) * alpha,
       z: this.prevZ + (this.z - this.prevZ) * alpha,
       angle: this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha,
-      y: 0.2 + Math.sin(sim.renderTime * 0.006 + this.id) * 0.012,
-      scale: this.state === "stunned" ? 0.82 : this.state === "clash" ? 1.06 : 1,
+      y: 0.2 + Math.sin(this.gaitPhase + this.animationSeed * 0.000001) * 0.012,
+      scale: (this.state === "stunned" ? 0.82 : this.state === "clash" ? 1.06 : 1) * this.bodyScale,
       state: this.state,
       carrying: this.carrying,
+      gaitPhase: this.gaitPhase,
+      renderIndex: this.renderInstanceIndex,
+      id: this.id,
     };
   }
 }
@@ -1551,6 +1634,65 @@ class RivalAnt3D {
   }
 }
 
+class ExpeditionEnemyVisual {
+  constructor(id, renderIndex = null) {
+    this.id = id;
+    this.isRival = true;
+    this.isExpeditionEnemy = true;
+    this.renderInstanceIndex = renderIndex;
+    this.state = "rival";
+    this.prevX = 0;
+    this.prevZ = 0;
+    this.x = 0;
+    this.z = 0;
+    this.prevAngle = Math.PI;
+    this.angle = Math.PI;
+    this.vx = 0;
+    this.vz = 0;
+    this.gaitPhase = 0;
+    this.animationSeed = id * 1103515245;
+    this.scale = 1.18;
+    this.health = 1;
+    this.currentTask = "spawn";
+    this.spawnReason = "enemy_from_edge";
+  }
+
+  update() {
+    // Controlled by expedition frame logs.
+  }
+
+  applyExpeditionFrame(frame) {
+    this.prevX = this.x;
+    this.prevZ = this.z;
+    this.prevAngle = this.angle;
+    this.x = frame.x;
+    this.z = frame.y;
+    this.vx = frame.vx ?? 0;
+    this.vz = frame.vy ?? 0;
+    this.angle = Math.PI / 2 - frame.heading;
+    this.gaitPhase = frame.gaitPhase ?? this.gaitPhase;
+    this.health = clamp(frame.hp ?? this.health, 0, 1);
+    this.currentTask = frame.state ?? "expedition";
+    this.spawnReason = frame.spawnReason ?? this.spawnReason;
+    if (frame.renderIndex != null) this.renderInstanceIndex = frame.renderIndex;
+  }
+
+  renderState(_sim, alpha) {
+    return {
+      x: this.prevX + (this.x - this.prevX) * alpha,
+      z: this.prevZ + (this.z - this.prevZ) * alpha,
+      angle: this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha,
+      y: 0.24 + Math.sin(this.gaitPhase + this.animationSeed * 0.000001) * 0.012,
+      scale: this.scale,
+      state: "rival",
+      carrying: 0,
+      gaitPhase: this.gaitPhase,
+      renderIndex: this.renderInstanceIndex,
+      id: this.id,
+    };
+  }
+}
+
 const ANT_VISUAL_SCALE = 0.46;
 
 const ANT_BODY_PARTS = [
@@ -1593,6 +1735,10 @@ class AntRenderSystem {
     this.segmentDirection = new THREE.Vector3();
     this.up = new THREE.Vector3(0, 1, 0);
     this.segmentQuaternion = new THREE.Quaternion();
+    this.hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+    this.idToRenderIndex = new Map();
+    this.renderIndexToKey = new Map();
+    this.highWaterMark = 0;
 
     for (const [state, material] of Object.entries(sim.materials.antByState)) {
       const partMeshes = new Map();
@@ -1625,33 +1771,89 @@ class AntRenderSystem {
   }
 
   beginFrame() {
-    for (const counts of this.bodyCounts.values()) {
-      for (const key of counts.keys()) counts.set(key, 0);
+    const limit = Math.min(this.capacity, this.highWaterMark);
+    for (const meshes of this.bodyMeshes.values()) {
+      for (const mesh of meshes.values()) {
+        mesh.count = limit;
+        for (let i = 0; i < limit; i += 1) mesh.setMatrixAt(i, this.hiddenMatrix);
+      }
     }
-    this.appendageCount = 0;
-    this.foodCount = 0;
+    for (let i = 0; i < limit * ANT_APPENDAGE_SEGMENTS.length; i += 1) {
+      this.appendageMesh.setMatrixAt(i, this.hiddenMatrix);
+    }
+    for (let i = 0; i < limit; i += 1) this.foodMesh.setMatrixAt(i, this.hiddenMatrix);
+    this.appendageMesh.count = limit * ANT_APPENDAGE_SEGMENTS.length;
+    this.foodMesh.count = limit;
+  }
+
+  keyFor(ant) {
+    if (ant.isExpeditionEnemy) return `expedition-enemy:${ant.id}`;
+    return `${ant.isRival ? "rival" : "colony"}:${ant.id}`;
+  }
+
+  assignRenderIndex(ant) {
+    const key = this.keyFor(ant);
+    if (this.idToRenderIndex.has(key)) {
+      const index = this.idToRenderIndex.get(key);
+      ant.renderInstanceIndex = index;
+      return index;
+    }
+    const requested = Number.isInteger(ant.renderInstanceIndex) ? ant.renderInstanceIndex : null;
+    let index = requested != null && requested >= 0 && requested < this.capacity && !this.renderIndexToKey.has(requested)
+      ? requested
+      : null;
+    if (index == null) {
+      for (let i = 0; i < this.capacity; i += 1) {
+        if (!this.renderIndexToKey.has(i)) {
+          index = i;
+          break;
+        }
+      }
+    }
+    if (index == null) index = Math.min(this.capacity - 1, this.highWaterMark);
+    this.idToRenderIndex.set(key, index);
+    this.renderIndexToKey.set(index, key);
+    this.highWaterMark = Math.max(this.highWaterMark, index + 1);
+    ant.renderInstanceIndex = index;
+    this.clearRenderSlot(index);
+    return index;
+  }
+
+  clearRenderSlot(index) {
+    for (const meshes of this.bodyMeshes.values()) {
+      for (const mesh of meshes.values()) mesh.setMatrixAt(index, this.hiddenMatrix);
+    }
+    const start = index * ANT_APPENDAGE_SEGMENTS.length;
+    for (let i = 0; i < ANT_APPENDAGE_SEGMENTS.length; i += 1) this.appendageMesh.setMatrixAt(start + i, this.hiddenMatrix);
+    this.foodMesh.setMatrixAt(index, this.hiddenMatrix);
+  }
+
+  releaseRenderObject(ant) {
+    const key = this.keyFor(ant);
+    const index = this.idToRenderIndex.get(key);
+    if (index != null) this.renderIndexToKey.delete(index);
+    this.idToRenderIndex.delete(key);
+    if (ant.renderInstanceIndex === index) ant.renderInstanceIndex = null;
   }
 
   renderAnt(ant, renderState) {
+    const index = this.assignRenderIndex(ant);
     const meshes = this.bodyMeshes.get(renderState.state) ?? this.bodyMeshes.get("explore");
-    const counts = this.bodyCounts.get(renderState.state) ?? this.bodyCounts.get("explore");
     for (const part of ANT_BODY_PARTS) {
-      const index = counts.get(part.name);
       this.composeLocalMatrix(renderState, part.x, part.y, part.z, part.sx, part.sy, part.sz);
       meshes.get(part.name).setMatrixAt(index, this.dummy.matrix);
-      counts.set(part.name, index + 1);
     }
 
+    let segmentIndex = index * ANT_APPENDAGE_SEGMENTS.length;
     for (const segment of ANT_APPENDAGE_SEGMENTS) {
       this.composeSegmentMatrix(renderState, segment);
-      this.appendageMesh.setMatrixAt(this.appendageCount, this.dummy.matrix);
-      this.appendageCount += 1;
+      this.appendageMesh.setMatrixAt(segmentIndex, this.dummy.matrix);
+      segmentIndex += 1;
     }
 
     if (renderState.carrying > 0) {
       this.composeLocalMatrix(renderState, 0, 0.14, 1.9, 0.36, 0.36, 0.36);
-      this.foodMesh.setMatrixAt(this.foodCount, this.dummy.matrix);
-      this.foodCount += 1;
+      this.foodMesh.setMatrixAt(index, this.dummy.matrix);
     }
   }
 
@@ -1702,16 +1904,16 @@ class AntRenderSystem {
   }
 
   endFrame() {
-    for (const [state, meshes] of this.bodyMeshes.entries()) {
-      const counts = this.bodyCounts.get(state);
-      for (const [partName, mesh] of meshes.entries()) {
-        mesh.count = counts.get(partName);
+    const limit = Math.min(this.capacity, this.highWaterMark);
+    for (const meshes of this.bodyMeshes.values()) {
+      for (const mesh of meshes.values()) {
+        mesh.count = limit;
         mesh.instanceMatrix.needsUpdate = true;
       }
     }
-    this.appendageMesh.count = this.appendageCount;
+    this.appendageMesh.count = limit * ANT_APPENDAGE_SEGMENTS.length;
     this.appendageMesh.instanceMatrix.needsUpdate = true;
-    this.foodMesh.count = this.foodCount;
+    this.foodMesh.count = limit;
     this.foodMesh.instanceMatrix.needsUpdate = true;
   }
 
@@ -1800,6 +2002,8 @@ class AntColony3D {
     this.renderAntBuffer = [];
     this.expeditionReplay = null;
     this.lastExpeditionBattle = null;
+    this.expeditionInspector = new AntBattleInspector();
+    this.lastExpeditionDiagnostics = [];
     this.lastUiUpdate = 0;
     this.resizeWidth = 0;
     this.resizeHeight = 0;
@@ -1822,9 +2026,7 @@ class AntColony3D {
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RIVAL_ANT_COUNT);
     this.createWorld();
-    this.expeditionAgentRenderer = new AntAgentInstancedRenderer(this.scene, 96);
-    this.expeditionAgentRenderer.setTransform(18, -18, 1.18);
-    this.expeditionAgentRenderer.setVisible(false);
+    this.expeditionAgentRenderer = null;
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
     this.reset(false);
@@ -1933,6 +2135,8 @@ class AntColony3D {
       rescue: new THREE.MeshStandardMaterial({ color: 0x17645a, roughness: 0.7 }),
       flee: new THREE.MeshStandardMaterial({ color: 0x49332a, roughness: 0.78 }),
       clash: new THREE.MeshStandardMaterial({ color: 0x5f2f24, roughness: 0.76 }),
+      expedition: new THREE.MeshStandardMaterial({ color: 0x20170f, roughness: 0.74 }),
+      expedition_wounded: new THREE.MeshStandardMaterial({ color: 0x4f2a22, roughness: 0.82 }),
       rival: this.materials.antRival,
     };
 
@@ -2235,6 +2439,8 @@ class AntColony3D {
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer.length = 0;
     this.expeditionReplay = null;
+    this.expeditionInspector = new AntBattleInspector();
+    this.lastExpeditionDiagnostics = [];
     this.expeditionAgentRenderer?.setVisible(false);
     this.expeditionAgentRenderer?.render([]);
     this.antRenderer?.beginFrame();
@@ -2374,7 +2580,20 @@ class AntColony3D {
   syncAntPopulation() {
     const target = Math.floor(clamp(this.colony.antPopulation - this.colony.woundedAnts, 1, DISPLAY_ANT_CAP));
     while (this.ants.length < target) this.ants.push(new Ant3D(this.ants.length + 1, this));
-    if (this.ants.length > target) this.ants.length = target;
+    if (this.expeditionReplay && this.ants.length > target) return;
+    while (this.ants.length > target) {
+      let removeIndex = -1;
+      for (let i = this.ants.length - 1; i >= 0; i -= 1) {
+        const ant = this.ants[i];
+        if (!ant.expeditionControl && !ant.wounded && ant.state !== "flee" && ant.state !== "expedition" && ant.state !== "expedition_wounded") {
+          removeIndex = i;
+          break;
+        }
+      }
+      if (removeIndex < 0) break;
+      const [removed] = this.ants.splice(removeIndex, 1);
+      this.antRenderer?.releaseRenderObject(removed);
+    }
   }
 
   gainFood(amount, fromAnt = false) {
@@ -2444,6 +2663,7 @@ class AntColony3D {
   startExpedition() {
     const now = Date.now();
     this.expeditionEngine = resolveExpeditionEngine(this.expeditionEngine);
+    if (this.expeditionReplay) return;
     if (now < this.colony.battleCooldownUntil) return;
     const d = this.computeDerived();
     const soldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
@@ -2453,15 +2673,22 @@ class AntColony3D {
       return;
     }
     const assigned = Math.max(1, Math.floor(soldiers * 0.65));
+    const participants = this.selectExpeditionParticipants(assigned);
+    if (participants.length < 1) {
+      this.pushLog("遠征に参加できる既存個体がいない");
+      this.updateStats();
+      return;
+    }
+    const objective = this.expeditionObjectiveFor(participants);
     const seed = (
       (now & 0xffffffff) ^
-      (assigned * 2654435761) ^
+      (participants.length * 2654435761) ^
       (this.colony.territory * 2246822519) ^
       Math.floor(this.colony.enemyThreat * 1000)
     ) >>> 0;
     const battleInput = {
       seed,
-      assignedSoldiers: assigned,
+      assignedSoldiers: participants.length,
       activeAnts: d.activeAnts,
       soldierAnts: soldiers,
       territory: this.colony.territory,
@@ -2470,6 +2697,9 @@ class AntColony3D {
       defensePower: d.defensePower,
       recoveryPerSecond: d.recoveryPerSecond,
       threatGrowthMultiplier: d.threatGrowthMultiplier,
+      playerSeeds: participants.map((ant) => this.antToAgentSeed(ant)),
+      objective,
+      worldLimit: this.worldRadius,
     };
     const outcome = this.expeditionEngine === "legacy"
       ? runLegacyExpeditionBattle(battleInput)
@@ -2489,7 +2719,7 @@ class AntColony3D {
       this.pushLog(`遠征失敗: 負傷${outcome.wounded} / ${outcome.reason}`);
     }
     for (const line of outcome.diagnosis.slice(0, 2).reverse()) this.pushLog(line);
-    if (outcome.battle.frameLogs?.length) this.startExpeditionReplay(outcome.battle);
+    if (outcome.battle.frameLogs?.length) this.startExpeditionReplay(outcome.battle, participants, objective);
     else {
       this.expeditionReplay = null;
       this.expeditionAgentRenderer?.setVisible(false);
@@ -2502,56 +2732,208 @@ class AntColony3D {
     this.saveColony();
   }
 
-  startExpeditionReplay(battle) {
+  selectExpeditionParticipants(assigned) {
+    const available = this.ants.filter((ant) =>
+      !ant.expeditionControl &&
+      ant.state !== "stunned" &&
+      ant.state !== "clash" &&
+      ant.fleeTimer <= 0 &&
+      ant.health > 0.12,
+    );
+    const roleRank = { guard: 0, worker: 1, scout: 2, nurse: 3 };
+    available.sort((a, b) => {
+      const role = (roleRank[a.role] ?? 9) - (roleRank[b.role] ?? 9);
+      if (role) return role;
+      const energy = b.energy - a.energy;
+      if (Math.abs(energy) > 0.0001) return energy;
+      return a.id - b.id;
+    });
+    return available.slice(0, Math.min(assigned, available.length));
+  }
+
+  expeditionObjectiveFor(participants) {
+    const count = Math.max(1, participants.length);
+    const center = participants.reduce((acc, ant) => {
+      acc.x += ant.x;
+      acc.z += ant.z;
+      return acc;
+    }, { x: 0, z: 0 });
+    center.x /= count;
+    center.z /= count;
+    const towardField = { x: center.x + 28, z: center.z - 4 };
+    const d = Math.hypot(towardField.x, towardField.z);
+    if (d > this.worldRadius * 0.78) {
+      const k = (this.worldRadius * 0.78) / d;
+      towardField.x *= k;
+      towardField.z *= k;
+    }
+    return { x: towardField.x, y: towardField.z };
+  }
+
+  antToAgentSeed(ant) {
+    const speed = Math.hypot(ant.vx ?? 0, ant.vz ?? 0);
+    const velocityScale = speed > 4 ? 4 / speed : 1;
+    return {
+      id: ant.id,
+      side: "player",
+      position: { x: ant.x, y: ant.z },
+      velocity: { x: (ant.vx ?? 0) * velocityScale, y: (ant.vz ?? 0) * velocityScale },
+      heading: Math.PI / 2 - ant.angle,
+      gaitPhase: ant.gaitPhase,
+      bodyScale: ant.bodyScale,
+      animationSeed: ant.animationSeed,
+      currentTask: ant.state,
+      renderIndex: ant.renderInstanceIndex,
+      hp: ant.health,
+      stamina: ant.stamina,
+      wounded: ant.wounded,
+      spawnReason: "existing_colony_ant",
+      worldLimit: this.worldRadius,
+    };
+  }
+
+  startExpeditionReplay(battle, participants = [], objective = { x: 0, y: 0 }) {
+    this.expeditionInspector = new AntBattleInspector();
+    this.lastExpeditionDiagnostics = [];
     const framesById = new Map();
     for (const frame of battle.frameLogs) {
       const list = framesById.get(frame.id);
       if (list) list.push(frame);
       else framesById.set(frame.id, [frame]);
     }
+    const participantMap = new Map(participants.map((ant) => [ant.id, ant]));
+    const enemyVisuals = [];
+    for (const ant of participants) this.antRenderer?.assignRenderIndex(ant);
+    for (const id of framesById.keys()) {
+      if (participantMap.has(id)) continue;
+      const first = framesById.get(id)?.[0];
+      const enemy = new ExpeditionEnemyVisual(id, first?.renderIndex ?? null);
+      this.antRenderer?.assignRenderIndex(enemy);
+      if (first) enemy.applyExpeditionFrame(first);
+      enemyVisuals.push(enemy);
+      this.rivalAnts.push(enemy);
+    }
     this.lastExpeditionBattle = battle;
     this.expeditionReplay = {
       battle,
       framesById,
       ids: [...framesById.keys()].sort((a, b) => a - b),
+      participants: participantMap,
+      enemyVisuals,
+      objective,
       time: 0,
       duration: Math.max(1, battle.steps / 60),
       speed: 1,
-      renderAgents: [],
+      phase: "summon",
+      diagnostics: [],
+      inspectorStarted: false,
     };
-    this.expeditionAgentRenderer?.setVisible(true);
-    this.expeditionAgentRenderer?.setTransform(18, -18, 1.18);
+    for (const ant of participants) {
+      const first = this.sampleExpeditionFrame(framesById.get(ant.id) ?? [], 0);
+      ant.beginExpeditionControl("summon", first);
+    }
+    this.expeditionAgentRenderer?.setVisible(false);
+    this.expeditionAgentRenderer?.render([]);
   }
 
   updateExpeditionReplay(dt) {
     const replay = this.expeditionReplay;
     if (!replay) return;
     replay.time += dt * replay.speed;
+    replay.phase = replay.time < 1.2 ? "summon" : replay.time < replay.duration * 0.34 ? "approach" : "engage";
     if (replay.time > replay.duration + 4) {
-      this.expeditionAgentRenderer?.setVisible(false);
-      this.expeditionAgentRenderer?.render([]);
-      this.expeditionReplay = null;
+      this.finishExpeditionReplay();
     }
   }
 
   renderExpeditionReplay() {
     const replay = this.expeditionReplay;
-    if (!replay || !this.expeditionAgentRenderer) return;
+    if (!replay) return;
     const step = Math.min(replay.battle.steps, replay.time * 60);
-    replay.renderAgents.length = 0;
     for (const id of replay.ids) {
       const frames = replay.framesById.get(id);
       if (!frames?.length) continue;
       const current = this.sampleExpeditionFrame(frames, step);
-      if (current && current.hp > 0) replay.renderAgents.push(current);
+      if (!current) continue;
+      const ant = replay.participants.get(id);
+      if (ant) ant.applyExpeditionFrame(current);
+      else {
+        const enemy = replay.enemyVisuals.find((item) => item.id === id);
+        if (enemy) enemy.applyExpeditionFrame(current);
+      }
     }
-    this.expeditionAgentRenderer.render(replay.renderAgents);
+    this.inspectExpeditionReplay(replay);
+  }
+
+  inspectExpeditionReplay(replay) {
+    const events = [];
+    if (!replay.inspectorStarted) {
+      for (const id of replay.participants.keys()) events.push({ type: "spawn", antId: id, reason: "existing_colony_ant" });
+      for (const enemy of replay.enemyVisuals) events.push({ type: "spawn", antId: enemy.id, reason: enemy.spawnReason });
+      replay.inspectorStarted = true;
+    }
+    const ants = [];
+    for (const ant of replay.participants.values()) {
+      ants.push({
+        id: ant.id,
+        position: { x: ant.x, y: ant.z },
+        velocity: { x: ant.vx ?? 0, y: ant.vz ?? 0 },
+        heading: Math.PI / 2 - ant.angle,
+        state: ant.currentTask ?? ant.state,
+        renderIndex: ant.renderInstanceIndex ?? null,
+        health: ant.health,
+        gaitPhase: ant.gaitPhase,
+      });
+    }
+    for (const enemy of replay.enemyVisuals) {
+      ants.push({
+        id: enemy.id,
+        position: { x: enemy.x, y: enemy.z },
+        velocity: { x: enemy.vx ?? 0, y: enemy.vz ?? 0 },
+        heading: Math.PI / 2 - enemy.angle,
+        state: enemy.currentTask ?? enemy.state,
+        renderIndex: enemy.renderInstanceIndex ?? null,
+        health: enemy.health,
+        gaitPhase: enemy.gaitPhase,
+      });
+    }
+    const perf = {
+      frameTimeMs: this.debugPanel?.frameMs ?? 0,
+      simUpdateMs: 0,
+      renderMs: 0,
+      inspectorMs: 0,
+      fixedStepCount: 1,
+      fixedStepBacklogMs: this.frameAccumulator * 1000,
+      antCountTotal: this.ants.length + this.rivalAnts.length,
+      battleAntCount: ants.length,
+      visibleAntCount: this.ants.length + this.rivalAnts.length,
+      collisionPairCount: 0,
+      spatialHashBucketCount: 0,
+      maxBucketSize: 0,
+      stateTransitionCount: 0,
+      drawCallCount: this.renderer?.info?.render?.calls ?? 0,
+      instanceUpdateCount: (this.ants.length + this.rivalAnts.length) * (ANT_BODY_PARTS.length + ANT_APPENDAGE_SEGMENTS.length),
+      heapUsedMB: performance?.memory?.usedJSHeapSize ? performance.memory.usedJSHeapSize / 1024 / 1024 : undefined,
+      longTaskCount: 0,
+    };
+    const start = performance.now();
+    const diagnostics = this.expeditionInspector.inspect({
+      time: replay.time,
+      ants,
+      events,
+      battlePhase: replay.phase,
+      perf,
+    });
+    perf.inspectorMs = performance.now() - start;
+    replay.diagnostics.push(...diagnostics);
+    this.lastExpeditionDiagnostics = replay.diagnostics.slice(-24);
   }
 
   sampleExpeditionFrame(frames, step) {
-    if (step <= frames[0].step) return this.frameToAgent(frames[0]);
+    if (!frames?.length) return null;
+    if (step <= frames[0].step) return frames[0];
     const last = frames[frames.length - 1];
-    if (step >= last.step) return this.frameToAgent(last);
+    if (step >= last.step) return last;
     let lo = 0;
     let hi = frames.length - 1;
     while (lo + 1 < hi) {
@@ -2563,7 +2945,7 @@ class AntColony3D {
     const b = frames[hi];
     const t = clamp((step - a.step) / Math.max(1, b.step - a.step), 0, 1);
     const heading = normAngle(a.heading + normAngle(b.heading - a.heading) * t);
-    return this.frameToAgent({
+    return {
       ...b,
       x: a.x + (b.x - a.x) * t,
       y: a.y + (b.y - a.y) * t,
@@ -2572,42 +2954,25 @@ class AntColony3D {
       heading,
       gaitPhase: a.gaitPhase + (b.gaitPhase - a.gaitPhase) * t,
       hp: a.hp + (b.hp - a.hp) * t,
-    });
+    };
   }
 
-  frameToAgent(frame) {
-    return {
-      id: frame.id,
-      side: frame.side,
-      position: { x: frame.x, y: frame.y },
-      previousPosition: { x: frame.x, y: frame.y },
-      velocity: { x: frame.vx, y: frame.vy },
-      heading: frame.heading,
-      angularVelocity: 0,
-      bodyLength: frame.bodyLength ?? 1.55,
-      radius: frame.radius ?? 0.56,
-      state: frame.state,
-      stamina: frame.stamina,
-      morale: frame.morale,
-      hp: frame.hp,
-      wounded: frame.hp < 0.68,
-      target: null,
-      gaitPhase: frame.gaitPhase ?? 0,
-      lastContactId: frame.contactId,
-      stateTime: 0,
-      biteCooldown: 0,
-      contactTime: 0,
-      retreatDirection: frame.side === "player" ? { x: -1, y: 0 } : { x: 1, y: 0 },
-      variation: 0,
-      params: {
-        mandiblePower: 1,
-        carapace: 1,
-        mobility: 1,
-        stamina: 1,
-        discipline: 1,
-        pheromoneCommand: 1,
-      },
-    };
+  finishExpeditionReplay() {
+    const replay = this.expeditionReplay;
+    if (!replay) return;
+    for (const [id, ant] of replay.participants.entries()) {
+      const frames = replay.framesById.get(id) ?? [];
+      ant.finishExpeditionControl(frames[frames.length - 1], this.nest);
+    }
+    for (const enemy of replay.enemyVisuals) {
+      const index = this.rivalAnts.indexOf(enemy);
+      if (index >= 0) this.rivalAnts.splice(index, 1);
+      this.antRenderer?.releaseRenderObject(enemy);
+    }
+    this.expeditionAgentRenderer?.setVisible(false);
+    this.expeditionAgentRenderer?.render([]);
+    this.expeditionReplay = null;
+    this.syncAntPopulation();
   }
 
   updateColonyVisuals() {
@@ -2828,12 +3193,12 @@ class AntColony3D {
 
   renderGame(alpha) {
     this.updateCamera();
+    this.renderExpeditionReplay();
     const renderAnts = this.renderAntBuffer;
     renderAnts.length = 0;
     for (const ant of this.ants) renderAnts.push(ant);
     for (const rival of this.rivalAnts) renderAnts.push(rival);
     this.antRenderer.render(renderAnts, this, alpha);
-    this.renderExpeditionReplay();
     this.renderer.render(this.scene, this.camera);
     window.__ANT_SIM_READY = true;
   }
