@@ -577,7 +577,13 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
     sim.updateStats();
     const rivals = sim.raidRivals();
     const minNestDistance = Math.min(...rivals.map((rival: any) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z)));
-    const minWorldRadius = Math.min(...rivals.map((rival: any) => Math.hypot(rival.x, rival.z)));
+    const spawnRadii = rivals.map((rival: any) => Math.hypot(rival.x, rival.z));
+    const spawnZ = rivals.map((rival: any) => rival.z);
+    const targetZ = rivals.map((rival: any) => rival.raidTargetZ);
+    const minWorldRadius = Math.min(...spawnRadii);
+    const spawnDepthSpread = Math.max(...spawnRadii) - Math.min(...spawnRadii);
+    const spawnLateralSpread = Math.max(...spawnZ) - Math.min(...spawnZ);
+    const targetLateralSpread = Math.max(...targetZ) - Math.min(...targetZ);
     return {
       warning,
       activePhase,
@@ -586,6 +592,9 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
       rivalCount: rivals.length,
       minNestDistance,
       minWorldRadius,
+      spawnDepthSpread,
+      spawnLateralSpread,
+      targetLateralSpread,
       worldRadius: sim.worldRadius,
       log: sim.colony.battleLog.join("\n"),
     };
@@ -600,6 +609,9 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
   expect(raid.rivalCount).toBe(raid.activeCount);
   expect(raid.minNestDistance).toBeGreaterThan(50);
   expect(raid.minWorldRadius).toBeGreaterThan(raid.worldRadius * 0.88);
+  expect(raid.spawnDepthSpread).toBeGreaterThan(2);
+  expect(raid.spawnLateralSpread).toBeGreaterThan(12);
+  expect(raid.targetLateralSpread).toBeGreaterThan(6);
   expect(raid.log).toContain("敵襲開始");
 });
 
@@ -769,6 +781,7 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
       combatEffects: sim.combatEffects?.length ?? 0,
       lastWinner: rival.lastFightWinner,
       rivalRetreat: rival.retreat,
+      enemyDefeated: rival.defeated,
       enemyMarkedGone: rival.leftRaid,
       stats: sim.rivalFightStats,
     };
@@ -790,7 +803,9 @@ test("rival ant combat grapples before the loser flees home", async ({ page }) =
   expect(fight.guardGaitAdvance).toBeGreaterThan(0.5);
   expect(fight.combatEffects).toBeGreaterThan(fight.workerCombatEffects);
   expect(fight.lastWinner).toBe("colony");
-  expect(fight.enemyMarkedGone).toBe(true);
+  expect(fight.enemyDefeated).toBe(true);
+  expect(fight.rivalRetreat).toBeGreaterThan(0);
+  expect(fight.enemyMarkedGone).toBe(false);
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);
   expect(fight.stats.colonyWins).toBeGreaterThanOrEqual(1);
 });

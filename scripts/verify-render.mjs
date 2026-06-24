@@ -515,6 +515,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const activePhase = sim.colony.raidState.phase;
         sim.updateStats();
         const rivals = sim.raidRivals();
+        const spawnRadii = rivals.map((rival) => Math.hypot(rival.x, rival.z));
+        const spawnZ = rivals.map((rival) => rival.z);
+        const targetZ = rivals.map((rival) => rival.raidTargetZ);
         return {
           warning,
           activePhase,
@@ -522,7 +525,10 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           rivalCount: rivals.length,
           activeCount: sim.colony.raidState.activeCount,
           minNestDistance: Math.min(...rivals.map((rival) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z))),
-          minWorldRadius: Math.min(...rivals.map((rival) => Math.hypot(rival.x, rival.z))),
+          minWorldRadius: Math.min(...spawnRadii),
+          spawnDepthSpread: Math.max(...spawnRadii) - Math.min(...spawnRadii),
+          spawnLateralSpread: Math.max(...spawnZ) - Math.min(...spawnZ),
+          targetLateralSpread: Math.max(...targetZ) - Math.min(...targetZ),
           worldRadius: sim.worldRadius,
           log: sim.colony.battleLog.join("\\n"),
         };
@@ -537,6 +543,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       raid.rivalCount !== raid.activeCount ||
       raid.minNestDistance <= 50 ||
       raid.minWorldRadius <= raid.worldRadius * 0.88 ||
+      raid.spawnDepthSpread <= 2 ||
+      raid.spawnLateralSpread <= 12 ||
+      raid.targetLateralSpread <= 6 ||
       !raid.log.includes("敵襲開始")
     ) {
       throw new Error(`${label}: raid warning and spawn check failed: ${JSON.stringify(raid)}`);
@@ -693,6 +702,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           winner: rival.lastFightWinner,
           antEnergy: ant.energy,
           rivalRetreat: rival.retreat,
+          enemyDefeated: rival.defeated,
           enemyMarkedGone: rival.leftRaid,
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
@@ -717,7 +727,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       fight.guardGaitAdvance <= 0.5 ||
       fight.antEnergy >= 1 ||
       fight.winner !== "colony" ||
-      !fight.enemyMarkedGone ||
+      !fight.enemyDefeated ||
+      fight.rivalRetreat <= 0 ||
+      fight.enemyMarkedGone ||
       fight.fightStats.rivalWins < 1 ||
       fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||

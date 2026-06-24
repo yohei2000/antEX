@@ -1005,7 +1005,7 @@ class Ant3D {
     }
 
     for (const rival of sim.rivalAnts) {
-      if (rival.retreat > 0) continue;
+      if (rival.defeated || rival.leftRaid || rival.retreat > 0) continue;
       const d = distance2(this.x, this.z, rival.x, rival.z);
       const reach = 7 + rival.scale * 2.8 + rival.aggression * 4;
       if (d < reach) {
@@ -1331,6 +1331,7 @@ class RivalAnt3D {
     this.raidTargetX = sim.nest.x;
     this.raidTargetZ = sim.nest.z;
     this.leftRaid = false;
+    this.defeated = false;
     this.scale = rand(1.22, 1.42);
     this.baseSpeed = rand(4.6, 7.2);
     this.aggression = rand(0.42, 1);
@@ -1381,11 +1382,25 @@ class RivalAnt3D {
 
   placeAtRaidSpawn(sim, raid = {}) {
     const count = Math.max(1, raid.count ?? this.raidCount);
-    const offset = (this.raidIndex - (count - 1) * 0.5) * 0.13;
-    const angle = (raid.approachAngle ?? rand(0, Math.PI * 2)) + offset;
-    const radius = sim.worldRadius * rand(0.92, 0.98);
-    this.x = Math.cos(angle) * radius;
-    this.z = Math.sin(angle) * radius;
+    const baseAngle = raid.approachAngle ?? rand(0, Math.PI * 2);
+    const lane = this.raidIndex - (count - 1) * 0.5;
+    const row = Math.floor(this.raidIndex / 3);
+    const fanAngle = baseAngle + lane * 0.055 + rand(-0.035, 0.035);
+    const edgeX = Math.cos(fanAngle);
+    const edgeZ = Math.sin(fanAngle);
+    const sideX = -edgeZ;
+    const sideZ = edgeX;
+    const depth = (this.raidIndex % 4) * 1.7 + row * 1.15 + rand(-0.5, 0.5);
+    const sideOffset = lane * 1.65 + (this.raidIndex % 2 === 0 ? -0.8 : 0.8) + rand(-1.0, 1.0);
+    const radius = sim.worldRadius * 0.965 - depth + rand(-0.45, 0.45);
+    this.x = edgeX * radius + sideX * sideOffset;
+    this.z = edgeZ * radius + sideZ * sideOffset;
+    const spawnDistance = Math.hypot(this.x, this.z);
+    if (spawnDistance > sim.worldRadius * 0.99) {
+      const limit = (sim.worldRadius * 0.99) / spawnDistance;
+      this.x *= limit;
+      this.z *= limit;
+    }
     this.prevX = this.x;
     this.prevZ = this.z;
     this.homeX = this.x;
@@ -1394,12 +1409,15 @@ class RivalAnt3D {
     const towardNestX = sim.nest.x - this.x;
     const towardNestZ = sim.nest.z - this.z;
     const d = Math.hypot(towardNestX, towardNestZ) || 1;
-    const edgeX = towardNestX / d;
-    const edgeZ = towardNestZ / d;
-    const targetDistance = sim.nest.radius + 18 + (this.raidIndex % 2) * 7;
-    this.raidTargetX = sim.nest.x - edgeX * targetDistance;
-    this.raidTargetZ = sim.nest.z - edgeZ * targetDistance;
-    this.angle = Math.atan2(edgeX, edgeZ);
+    const approachX = towardNestX / d;
+    const approachZ = towardNestZ / d;
+    const flankX = -approachZ;
+    const flankZ = approachX;
+    const targetDistance = sim.nest.radius + 15 + (this.raidIndex % 3) * 4.5 + row * 1.8;
+    const targetFlank = -lane * 2.8 + (this.raidIndex % 2 === 0 ? -1.3 : 1.3);
+    this.raidTargetX = sim.nest.x - approachX * targetDistance + flankX * targetFlank;
+    this.raidTargetZ = sim.nest.z - approachZ * targetDistance + flankZ * targetFlank;
+    this.angle = Math.atan2(approachX, approachZ);
     this.prevAngle = this.angle;
   }
 
@@ -1491,7 +1509,7 @@ class RivalAnt3D {
   }
 
   findHarassmentTarget(sim) {
-    if (this.retreat > 0 || this.clash) return null;
+    if (this.defeated || this.leftRaid || this.retreat > 0 || this.clash) return null;
     let best = null;
     let bestScore = 0;
     for (const ant of sim.ants) {
@@ -1569,7 +1587,7 @@ class RivalAnt3D {
 
   startClash(ant, anchorX, anchorZ, sim) {
     const duration = RIVAL_CLASH_DURATION + (this.isRaidRival ? 0.45 : 0);
-    if (this.clash || this.retreat > 0 || !ant.startRivalClash(this, anchorX, anchorZ, duration)) return false;
+    if (this.defeated || this.leftRaid || this.clash || this.retreat > 0 || !ant.startRivalClash(this, anchorX, anchorZ, duration)) return false;
     const dx = ant.x - this.x;
     const dz = ant.z - this.z;
     const length = Math.hypot(dx, dz);
@@ -1769,10 +1787,11 @@ class RivalAnt3D {
         if (ant.state === "clash") ant.setState(ant.carrying > 0 ? "return" : "explore");
       }
       this.lastFightWinner = "colony";
+      let enemyDefeated = false;
       if (this.isRaidRival && colonyPower > rivalPower * 1.24) {
-        sim.defeatRivalAnt(this, primaryAnt);
+        enemyDefeated = sim.defeatRivalAnt(this, primaryAnt);
       }
-      sim.registerRivalFight("colony", primaryAnt, this, { grapplers: ants.length, enemyCasualty: this.leftRaid });
+      sim.registerRivalFight("colony", primaryAnt, this, { grapplers: ants.length, enemyCasualty: enemyDefeated });
     }
 
     sim.addTrail((this.x + primaryAnt.x) * 0.5, (this.z + primaryAnt.z) * 0.5, "alarm", 1.0);
@@ -1809,6 +1828,7 @@ class RivalAnt3D {
 
   resolveAntContacts(sim) {
     if (this.clash) return true;
+    if (this.defeated || this.leftRaid || this.retreat > 0) return false;
     let resolved = false;
     for (const ant of sim.ants) {
       if (ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0 || ant.stun > 0) continue;
@@ -3843,10 +3863,11 @@ class AntColony3D {
   }
 
   defeatRivalAnt(rival, ant = null) {
-    if (!rival || rival.leftRaid) return false;
-    rival.leftRaid = true;
-    rival.retreat = 0;
+    if (!rival || rival.leftRaid || rival.defeated) return false;
+    rival.defeated = true;
     rival.disrupt = Math.max(rival.disrupt, 1.6);
+    rival.startRetreatHome(ant?.x ?? rival.x, ant?.z ?? rival.z, rival.isRaidRival ? RAID_RETREAT_SECONDS : 5.2);
+    rival.fightCooldown = Math.max(rival.fightCooldown, 1.2);
     const raid = this.ensureRaidState();
     if (rival.isRaidRival && (raid.phase === "active" || raid.phase === "retreating")) raid.enemyCasualties += 1;
     this.addTrail(rival.x, rival.z, "alarm", 0.95);
@@ -3856,10 +3877,13 @@ class AntColony3D {
   updateRaidBreachDamage(dt) {
     const raid = this.ensureRaidState();
     if (raid.phase !== "active") return;
-    const pressure = this.raidRivals().filter((rival) =>
-      distance2(rival.x, rival.z, this.nest.x, this.nest.z) < this.nest.radius + 24 ||
-      this.isNearFood(rival.x, rival.z, 7)
-    ).length;
+    const pressure = this.raidRivals().filter((rival) => {
+      if (rival.defeated || rival.leftRaid || rival.retreat > 0) return false;
+      return (
+        distance2(rival.x, rival.z, this.nest.x, this.nest.z) < this.nest.radius + 24 ||
+        this.isNearFood(rival.x, rival.z, 7)
+      );
+    }).length;
     if (pressure <= 0) {
       raid.breachTimer = Math.max(0, raid.breachTimer - dt * 0.6);
       return;
@@ -3901,8 +3925,13 @@ class AntColony3D {
       raid.timer -= dt;
       this.updateRaidBreachDamage(dt);
       this.cleanupRaidRivals();
-      if (this.raidRivals().length === 0 && raid.activeCount > 0) {
+      const remainingRivals = this.raidRivals();
+      if (remainingRivals.length === 0 && raid.activeCount > 0) {
         this.resolveRaid("repelled");
+        return;
+      }
+      if (remainingRivals.length > 0 && remainingRivals.every((rival) => rival.defeated || rival.leftRaid)) {
+        this.orderRaidRetreat("repelled");
         return;
       }
       if (raid.timer <= 0) this.orderRaidRetreat("held");
@@ -3941,7 +3970,7 @@ class AntColony3D {
     let best = null;
     let bestDistance = radius;
     for (const rival of this.rivalAnts) {
-      if (rival.retreat > 0 || rival.clash) continue;
+      if (rival.defeated || rival.leftRaid || rival.retreat > 0 || rival.clash) continue;
       const d = distance2(x, z, rival.x, rival.z);
       if (d < bestDistance) {
         best = rival;
