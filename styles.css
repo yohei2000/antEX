@@ -68,6 +68,7 @@ button {
 .error-panel,
 .debug-panel,
 .title-block,
+.raid-notice,
 .icon-button,
 .stats-strip div,
 .empire-panel {
@@ -244,6 +245,31 @@ button {
 .title-block small {
   margin-top: 4px;
   font-size: 0.72rem;
+}
+
+.raid-notice {
+  position: absolute;
+  z-index: 6;
+  top: max(122px, calc(env(safe-area-inset-top) + 122px));
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  display: block;
+  width: min(520px, calc(100vw - 24px));
+  padding: 10px 12px;
+  color: #fff6e6;
+  font-size: 0.82rem;
+  font-weight: 750;
+  line-height: 1.28;
+  background: rgba(91, 47, 31, 0.9);
+}
+
+.raid-notice[hidden] {
+  display: none;
+}
+
+.raid-notice.is-repelled {
+  color: #ecfff9;
+  background: rgba(28, 91, 77, 0.9);
 }
 
 .quick-actions {

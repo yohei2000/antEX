@@ -24,6 +24,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
       raidPhase: sim.colony.raidState.phase,
       raidTimer: sim.colony.raidState.timer,
       rivalColor: sim.materials.antRival.color.getHexString(),
+      panicColor: sim.materials.antByState.panic.color.getHexString(),
+      clashColor: sim.materials.antByState.clash.color.getHexString(),
+      fleeColor: sim.materials.antByState.flee.color.getHexString(),
       foodSources: sim.food.length,
       worldRadius: sim.worldRadius,
       terrainPatches: sim.terrain.length,
@@ -48,6 +51,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.raidPhase).toBe("calm");
   expect(metrics.raidTimer).toBeGreaterThan(0);
   expect(metrics.rivalColor).toBe("8a4a2f");
+  expect(metrics.panicColor).not.toBe(metrics.rivalColor);
+  expect(metrics.clashColor).not.toBe(metrics.rivalColor);
+  expect(metrics.fleeColor).not.toBe(metrics.rivalColor);
   expect(metrics.foodSources).toBeGreaterThanOrEqual(4);
   expect(metrics.worldRadius).toBeGreaterThanOrEqual(120);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
@@ -78,11 +84,16 @@ test("raidSoon query keeps normal mode but starts a raid quickly without saving"
       sim.updateRaid(1 / 60);
       if (sim.colony.raidState.phase === "active") break;
     }
+    sim.updateStats();
+    const notice = document.querySelector("#raidNotice") as HTMLElement;
     return {
       initial,
       phase: sim.colony.raidState.phase,
       activeCount: sim.colony.raidState.activeCount,
       rivals: sim.raidRivals().length,
+      noticeText: notice?.textContent ?? "",
+      noticeHidden: notice?.hidden ?? true,
+      noticeKind: sim.raidNotice.kind,
       savedState: localStorage.getItem("ant3d.colonyState"),
     };
   });
@@ -96,6 +107,9 @@ test("raidSoon query keeps normal mode but starts a raid quickly without saving"
   expect(result.phase).toBe("active");
   expect(result.activeCount).toBeGreaterThan(0);
   expect(result.rivals).toBeGreaterThan(0);
+  expect(result.noticeHidden).toBe(false);
+  expect(result.noticeText).toContain("敵襲開始");
+  expect(result.noticeKind).toBe("warning");
   expect(result.savedState).toBeNull();
 });
 
@@ -727,16 +741,30 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
     const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
     let guardPreviousGait = guard.gaitPhase;
     let guardGaitAdvance = 0;
+    let guardSlotOffsets: number[] = [];
     for (let i = 0; i < 220; i += 1) {
       guard.update(1 / 60, sim);
       supportA.update(1 / 60, sim);
       supportB.update(1 / 60, sim);
       rival.update(1 / 60, sim);
+      if (i === 24 && rival.clash) {
+        const lineAngle = Math.atan2(rival.clash.lineZ, rival.clash.lineX);
+        guardSlotOffsets = rival.clash.ants.map((grappler: any) => {
+          const angle = Math.atan2(grappler.z - rival.z, grappler.x - rival.x);
+          return Math.atan2(Math.sin(angle - lineAngle), Math.cos(angle - lineAngle));
+        });
+      }
       const gaitDelta = Math.atan2(Math.sin(guard.gaitPhase - guardPreviousGait), Math.cos(guard.gaitPhase - guardPreviousGait));
       guardGaitAdvance += Math.abs(gaitDelta);
       guardPreviousGait = guard.gaitPhase;
     }
     const enemyCorpseCountAfterGuard = sim.rivalCorpses?.length ?? 0;
+    sim.updateRaid(1 / 60);
+    sim.updateStats();
+    const repelNotice = document.querySelector("#raidNotice") as HTMLElement;
+    const hasFrontBite = guardSlotOffsets.some((offset) => Math.abs(offset) < 0.72);
+    const hasSideBite = guardSlotOffsets.some((offset) => Math.abs(Math.abs(offset) - Math.PI / 2) < 0.72);
+    const hasRearBite = guardSlotOffsets.some((offset) => Math.abs(Math.abs(offset) - Math.PI) < 0.78);
     for (let i = 0; i < 620; i += 1) sim.updateCorpses(1 / 60);
 
     return {
@@ -761,6 +789,10 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
       guardStarted,
       guardStateAtStart,
       guardGrapplersAtStart,
+      guardSlotOffsets,
+      hasFrontBite,
+      hasSideBite,
+      hasRearBite,
       guardGaitAdvance,
       combatEffects: sim.combatEffects?.length ?? 0,
       lastWinner: rival.lastFightWinner,
@@ -772,6 +804,9 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
       enemyCorpseCountAfterExpiry: sim.rivalCorpses?.length ?? 0,
       corpseCountBeforeGuard,
       stats: sim.rivalFightStats,
+      repelNoticeText: repelNotice?.textContent ?? "",
+      repelNoticeHidden: repelNotice?.hidden ?? true,
+      repelNoticeKind: sim.raidNotice.kind,
     };
   });
 
@@ -789,7 +824,11 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
   expect(fight.colonyCorpseCountAfterExpiry).toBe(fight.colonyCorpseCountBeforeWorker);
   expect(fight.guardStarted).toBe(true);
   expect(fight.guardStateAtStart).toBe("clash");
-  expect(fight.guardGrapplersAtStart).toBeGreaterThanOrEqual(2);
+  expect(fight.guardGrapplersAtStart).toBe(3);
+  expect(fight.guardSlotOffsets).toHaveLength(3);
+  expect(fight.hasFrontBite).toBe(true);
+  expect(fight.hasSideBite).toBe(true);
+  expect(fight.hasRearBite).toBe(true);
   expect(fight.guardGaitAdvance).toBeGreaterThan(0.5);
   expect(fight.combatEffects).toBeGreaterThan(fight.workerCombatEffects);
   expect(fight.lastWinner).toBe("colony");
@@ -800,6 +839,9 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
   expect(fight.enemyCorpseCountAfterExpiry).toBe(fight.corpseCountBeforeGuard);
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);
   expect(fight.stats.colonyWins).toBeGreaterThanOrEqual(1);
+  expect(fight.repelNoticeHidden).toBe(false);
+  expect(fight.repelNoticeText).toContain("敵アリ撃退");
+  expect(fight.repelNoticeKind).toBe("repelled");
 });
 
 test("rival ants actively harass ants near food instead of only camping", async ({ page }) => {

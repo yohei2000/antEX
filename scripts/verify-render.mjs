@@ -565,6 +565,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const guard = sim.ants[1];
         const supportA = sim.ants[2];
         const supportB = sim.ants[3];
+        for (const extra of sim.raidRivals().slice(1)) sim.removeRivalAnt(extra);
+        sim.colony.raidState.activeCount = 1;
+        sim.raidNotice.timer = 0;
         const rival = sim.raidRivals()[0];
         sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
         const antPopulationBefore = sim.colony.antPopulation;
@@ -681,16 +684,30 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
         let guardPreviousGait = guard.gaitPhase;
         let guardGaitAdvance = 0;
+        let guardSlotOffsets = [];
         for (let i = 0; i < 220; i += 1) {
           guard.update(1 / 60, sim);
           supportA.update(1 / 60, sim);
           supportB.update(1 / 60, sim);
           rival.update(1 / 60, sim);
+          if (i === 24 && rival.clash) {
+            const lineAngle = Math.atan2(rival.clash.lineZ, rival.clash.lineX);
+            guardSlotOffsets = rival.clash.ants.map((grappler) => {
+              const angle = Math.atan2(grappler.z - rival.z, grappler.x - rival.x);
+              return Math.atan2(Math.sin(angle - lineAngle), Math.cos(angle - lineAngle));
+            });
+          }
           const gaitDelta = Math.atan2(Math.sin(guard.gaitPhase - guardPreviousGait), Math.cos(guard.gaitPhase - guardPreviousGait));
           guardGaitAdvance += Math.abs(gaitDelta);
           guardPreviousGait = guard.gaitPhase;
         }
         const enemyCorpseCountAfterGuard = sim.rivalCorpses?.length ?? 0;
+        sim.updateRaid(1 / 60);
+        sim.updateStats();
+        const repelNotice = document.querySelector("#raidNotice");
+        const hasFrontBite = guardSlotOffsets.some((offset) => Math.abs(offset) < 0.72);
+        const hasSideBite = guardSlotOffsets.some((offset) => Math.abs(Math.abs(offset) - Math.PI / 2) < 0.72);
+        const hasRearBite = guardSlotOffsets.some((offset) => Math.abs(Math.abs(offset) - Math.PI) < 0.78);
         for (let i = 0; i < 620; i += 1) sim.updateCorpses(1 / 60);
         return {
           resolved,
@@ -714,6 +731,10 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           nestDistanceBefore,
           guardStateAtStart,
           guardGrapplersAtStart,
+          guardSlotOffsets,
+          hasFrontBite,
+          hasSideBite,
+          hasRearBite,
           guardGaitAdvance,
           winner: rival.lastFightWinner,
           antEnergy: ant.energy,
@@ -726,6 +747,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           corpseCountBeforeGuard,
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
+          repelNoticeText: repelNotice?.textContent ?? "",
+          repelNoticeHidden: repelNotice?.hidden ?? true,
+          repelNoticeKind: sim.raidNotice.kind,
           alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
           combatEffects: sim.combatEffects?.length ?? 0,
         };
@@ -745,7 +769,11 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       fight.colonyCorpseCountAfterWorker <= fight.colonyCorpseCountBeforeWorker ||
       fight.colonyCorpseCountAfterExpiry !== fight.colonyCorpseCountBeforeWorker ||
       fight.guardStateAtStart !== "clash" ||
-      fight.guardGrapplersAtStart < 2 ||
+      fight.guardGrapplersAtStart !== 3 ||
+      fight.guardSlotOffsets.length !== 3 ||
+      !fight.hasFrontBite ||
+      !fight.hasSideBite ||
+      !fight.hasRearBite ||
       fight.guardGaitAdvance <= 0.5 ||
       fight.antEnergy >= 1 ||
       fight.winner !== "colony" ||
@@ -757,6 +785,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       fight.fightStats.rivalWins < 1 ||
       fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||
+      fight.repelNoticeHidden ||
+      !fight.repelNoticeText.includes("敵アリ撃退") ||
+      fight.repelNoticeKind !== "repelled" ||
       fight.alarmTrails < 1 ||
       fight.combatEffects <= fight.workerCombatEffects
     ) {

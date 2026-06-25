@@ -32,6 +32,7 @@ const ui = {
   loadingOverlay: document.querySelector("#loadingOverlay"),
   loadingBar: document.querySelector("#loadingBar"),
   loadingLabel: document.querySelector("#loadingLabel"),
+  raidNotice: document.querySelector("#raidNotice"),
   errorPanel: document.querySelector("#errorPanel"),
   errorMessage: document.querySelector("#errorMessage"),
   debugPanel: document.querySelector("#debugPanel"),
@@ -69,6 +70,7 @@ const RAID_ACTIVE_SECONDS = 92;
 const RAID_RETREAT_SECONDS = 18;
 const RAID_EXIT_PADDING = 24;
 const RAID_RECOVERY_SECONDS = 26;
+const RAID_NOTICE_SECONDS = 6;
 const RAID_SOON_CALM_SECONDS = 2.5;
 const RAID_SOON_WARNING_SECONDS = 5.5;
 const MIN_COLONY_SURVIVORS = 4;
@@ -1635,7 +1637,8 @@ class RivalAnt3D {
   maxGrapplers(sim) {
     const defense = sim.computeDerived().defensePower ?? 1;
     const guardBonus = defense >= 1.45 ? 1 : 0;
-    return Math.min(this.isRaidRival ? 4 : 3, 2 + guardBonus);
+    const raidGroupBonus = this.isRaidRival ? 1 : 0;
+    return Math.min(3, 2 + Math.max(guardBonus, raidGroupBonus));
   }
 
   addGrappler(ant) {
@@ -1673,6 +1676,26 @@ class RivalAnt3D {
     }
   }
 
+  grapplerSlot(lineAngle, index, count, ant) {
+    const layouts =
+      count <= 1 ? [{ angle: 0, radius: 0.95 }] :
+      count === 2 ? [
+        { angle: 0, radius: 0.96 },
+        { angle: Math.PI * 0.58, radius: 1.04 },
+      ] :
+      [
+        { angle: 0, radius: 0.96 },
+        { angle: -Math.PI * 0.52, radius: 1.06 },
+        { angle: Math.PI * 0.86, radius: 1.12 },
+      ];
+    const slot = layouts[Math.min(index, layouts.length - 1)];
+    const lockedJitter = Math.sin(this.clash.elapsed * 6.5 + ant.id * 1.7) * 0.035;
+    return {
+      orbit: lineAngle + slot.angle + lockedJitter,
+      radius: slot.radius,
+    };
+  }
+
   updateClash(dt, sim) {
     const clash = this.clash;
     if (!clash) {
@@ -1701,10 +1724,9 @@ class RivalAnt3D {
     clash.ants.forEach((ant, index) => {
       const beforeX = ant.x;
       const beforeZ = ant.z;
-      const spread = count === 1 ? 0 : (index - (count - 1) * 0.5) * 0.82;
-      const sideBias = index % 2 === 0 ? 0.18 : -0.18;
-      const orbit = lineAngle + spread + sideBias + Math.sin(clash.elapsed * 11 + ant.id) * 0.075;
-      const tug = 0.95 + index * 0.16 + Math.sin(clash.elapsed * 23 + ant.id) * 0.07;
+      const slot = this.grapplerSlot(lineAngle, index, count, ant);
+      const orbit = slot.orbit;
+      const tug = slot.radius + Math.sin(clash.elapsed * 23 + ant.id) * 0.045;
       const scrape = Math.cos(clash.elapsed * 31 + ant.id * 1.7) * (0.045 + count * 0.01);
       const biteX = Math.cos(orbit) * tug;
       const biteZ = Math.sin(orbit) * tug;
@@ -2057,7 +2079,8 @@ class AntRenderSystem {
 
   renderAnt(ant, renderState) {
     const index = this.assignRenderIndex(ant);
-    const meshes = this.bodyMeshes.get(renderState.state) ?? this.bodyMeshes.get("explore");
+    const materialState = ant.isRival ? "rival" : renderState.state;
+    const meshes = this.bodyMeshes.get(materialState) ?? this.bodyMeshes.get("explore");
     for (const part of ANT_BODY_PARTS) {
       this.composeLocalMatrix(renderState, part.x, part.y, part.z, part.sx, part.sy, part.sz);
       meshes.get(part.name).setMatrixAt(index, this.dummy.matrix);
@@ -2244,6 +2267,7 @@ class AntColony3D {
     this.rivalCorpses = [];
     this.colonyCorpses = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+    this.raidNotice = { message: "", kind: "warning", timer: 0 };
     this.renderAntBuffer = [];
     this.soldierSortieCooldown = 0;
     this.sortieRetireQueue = [];
@@ -2899,6 +2923,12 @@ class AntColony3D {
     this.colony.battleLog = this.colony.battleLog.slice(0, 5);
   }
 
+  showRaidNotice(message, kind = "warning", duration = RAID_NOTICE_SECONDS) {
+    this.raidNotice.message = message;
+    this.raidNotice.kind = kind;
+    this.raidNotice.timer = duration;
+  }
+
   missingRequirements(upgrade, cost) {
     const missing = [];
     if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}`);
@@ -3209,6 +3239,7 @@ class AntColony3D {
     this.updateColony(dt);
     this.updateRaid(dt);
     this.updateSoldierSorties(dt);
+    this.raidNotice.timer = Math.max(0, this.raidNotice.timer - dt);
 
     for (const patch of this.water) {
       patch.age += dt;
@@ -3475,6 +3506,7 @@ class AntColony3D {
     raid.lastOutcome = "warning";
     this.emitRaidSignal(raid, 0.88);
     this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹が集団接近`);
+    this.showRaidNotice(`敵アリ接近: 外縁から${raid.activeCount}匹。兵隊を出撃できます`, "warning");
   }
 
   beginRaid() {
@@ -3498,6 +3530,7 @@ class AntColony3D {
     raid.signalTimer = 0;
     raid.lastOutcome = "active";
     this.pushLog(`敵襲開始: ${count}匹が巣と餌場へ侵入`);
+    this.showRaidNotice(`敵襲開始: ${count}匹が巣と餌場へ侵入`, "warning");
   }
 
   orderRaidRetreat(outcome = "held") {
@@ -3623,6 +3656,7 @@ class AntColony3D {
       const relief = 0.75 + count * 0.22 + Math.max(0, this.computeDerived().defensePower - 1) * 0.22;
       this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - relief);
       this.pushLog(`襲撃を防衛: 死亡${raid.casualties} / 脅威-${fmt(relief, 1)}`);
+      this.showRaidNotice(`敵アリ撃退: 味方死亡${raid.casualties} / 敵撃破${raid.enemyCasualties}`, "repelled");
     } else {
       const defense = this.computeDerived().defensePower;
       const loss = Math.min(this.colony.food, Math.max(2, count * 4.8 + this.colony.enemyThreat * 0.32) / defense);
@@ -3632,6 +3666,7 @@ class AntColony3D {
       this.applyRaidCasualties(Math.max(0, Math.ceil(count * 0.16) - raid.casualties), "breach");
       this.colony.enemyThreat += 0.65 + count * 0.12;
       this.pushLog(`襲撃被害: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${raid.casualties}`);
+      this.showRaidNotice(`襲撃被害: 食料-${fmt(loss, 0)} / 死亡${raid.casualties}`, "warning");
     }
     this.clearRaidRivals();
     this.recallSortieSoldiers("raid-clear");
@@ -4262,6 +4297,13 @@ class AntColony3D {
       availableSoldiers > 0 ? "上限待ち" : "兵隊不足";
     ui.soldierSortieBtn.disabled = cooldownLeft > 0 || plannedSortie < 1;
     ui.soldierSortieBtn.textContent = cooldownLeft > 0 ? `再出撃まで ${cooldownLeft}s` : `兵隊を出撃 ${fmt(plannedSortie, 0)}`;
+    if (ui.raidNotice) {
+      const visible = this.raidNotice.timer > 0 && this.raidNotice.message;
+      ui.raidNotice.hidden = !visible;
+      ui.raidNotice.textContent = visible ? this.raidNotice.message : "";
+      ui.raidNotice.classList.toggle("is-repelled", this.raidNotice.kind === "repelled");
+      ui.raidNotice.classList.toggle("is-warning", this.raidNotice.kind !== "repelled");
+    }
     ui.battleLog.innerHTML = this.colony.battleLog.map((entry) => `<div>${entry}</div>`).join("");
     this.renderUpgrades();
   }
