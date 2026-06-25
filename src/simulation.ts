@@ -53,10 +53,13 @@ const RIVAL_CLASH_DURATION = 2.7;
 const COMBAT_EFFECT_CAP = 96;
 const COMBAT_EFFECT_LIFE = 0.78;
 const RIVAL_CORPSE_CAP = 28;
+const COLONY_CORPSE_CAP = 28;
+const CORPSE_LIFE_SECONDS = 10;
 const RAID_HARASSMENT_RANGE = 56;
 const RIVAL_HARASSMENT_RANGE = 22;
 const RAID_GRAPPLER_RECRUIT_RANGE = 11.6;
 const RIVAL_GRAPPLER_RECRUIT_RANGE = 9.4;
+const GUARD_INTERCEPT_RANGE = 62;
 const RAID_INITIAL_DELAY_SECONDS = 78;
 const RAID_BASE_INTERVAL_SECONDS = 132;
 const RAID_WARNING_SECONDS = 18;
@@ -652,7 +655,7 @@ class DebugPanel {
       `textures ${info.memory.textures}`,
       `ants ${this.sim.ants.length}`,
       `rivals ${this.sim.rivalAnts.length}`,
-      `objects ${this.sim.water.length + this.sim.stones.length + this.sim.food.length + this.sim.branches.length + this.sim.combatEffects.length + this.sim.predators.length + this.sim.rivalCorpses.length}`,
+      `objects ${this.sim.water.length + this.sim.stones.length + this.sim.food.length + this.sim.branches.length + this.sim.combatEffects.length + this.sim.predators.length + this.sim.rivalCorpses.length + this.sim.colonyCorpses.length}`,
       `terrain ${this.sim.terrain.length}`,
     ].join("\n");
     this.elapsed = 0;
@@ -1050,6 +1053,8 @@ class Ant3D {
   }
 
   updateExplore(dt, sim, steering, sensed) {
+    if (this.role === "guard" && this.updateGuardIntercept(dt, sim, steering)) return;
+
     if (sensed.closestFood && sensed.foodDistance < sensed.closestFood.radius + 1.5 && this.role !== "guard") {
       this.carrying = Math.min(1, sensed.closestFood.amount);
       this.foodSourceId = sensed.closestFood.id;
@@ -1093,6 +1098,23 @@ class Ant3D {
       steering.x += ((sim.nest.x - this.x) / homeDistance) * 0.9;
       steering.z += ((sim.nest.z - this.z) / homeDistance) * 0.9;
     }
+  }
+
+  updateGuardIntercept(dt, sim, steering) {
+    const raid = sim.ensureRaidState();
+    if (raid.phase !== "active" && raid.phase !== "retreating") return false;
+    const threat = sim.findRivalThreat(this.x, this.z, GUARD_INTERCEPT_RANGE);
+    if (!threat) return false;
+    const d = distance2(this.x, this.z, threat.x, threat.z) || 1;
+    const pressure = d > 7 ? 2.55 + this.traits.persistence * 0.8 : 1.1;
+    steering.x += ((threat.x - this.x) / d) * pressure;
+    steering.z += ((threat.z - this.z) / d) * pressure;
+    this.energy = clamp(this.energy - dt * 0.018, 0, 1);
+    if (this.lastTrail > 0.42) {
+      sim.addTrail(this.x, this.z, "alarm", 0.5);
+      this.lastTrail = 0;
+    }
+    return true;
   }
 
   updateReturn(dt, sim, steering) {
@@ -2306,6 +2328,7 @@ class AntColony3D {
     this.predators = [];
     this.rivalAnts = [];
     this.rivalCorpses = [];
+    this.colonyCorpses = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer = [];
     this.expeditionReplay = null;
@@ -2408,6 +2431,7 @@ class AntColony3D {
       antDefault: new THREE.MeshStandardMaterial({ color: 0x18130f, roughness: 0.72 }),
       antRival: new THREE.MeshStandardMaterial({ color: 0x8a4a2f, emissive: 0x120705, roughness: 0.8 }),
       antCorpse: new THREE.MeshStandardMaterial({ color: 0x6a3325, roughness: 0.94 }),
+      antColonyCorpse: new THREE.MeshStandardMaterial({ color: 0x19110c, roughness: 0.96 }),
       antCorpseAppendage: new THREE.MeshStandardMaterial({ color: 0x2b1711, roughness: 0.96 }),
       antAppendage: new THREE.MeshStandardMaterial({ color: 0x17100b, roughness: 0.82 }),
       food: new THREE.MeshStandardMaterial({ color: 0xd9a63f, roughness: 0.62 }),
@@ -2747,7 +2771,7 @@ class AntColony3D {
   }
 
   reset(newGame = true) {
-    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.combatEffects, this.predators, this.rivalCorpses]) {
+    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
     this.dynamicObjects.clear();
@@ -2760,6 +2784,7 @@ class AntColony3D {
     this.combatEffects = [];
     this.predators = [];
     this.rivalCorpses = [];
+    this.colonyCorpses = [];
     for (const rival of this.rivalAnts) this.antRenderer?.releaseRenderObject(rival);
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
@@ -3542,6 +3567,7 @@ class AntColony3D {
     }
 
     this.updatePredators(dt);
+    this.updateCorpses(dt);
 
     for (const trail of this.trails) {
       this.updateTrailPheromone(trail, dt);
@@ -3616,7 +3642,7 @@ class AntColony3D {
     this.antRenderer?.destroy();
     this.expeditionAgentRenderer?.dispose();
     this.expeditionAgentRenderer = null;
-    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.combatEffects, this.predators, this.rivalCorpses]) {
+    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
     this.assetService.dispose();
@@ -3829,49 +3855,51 @@ class AntColony3D {
   }
 
   corpseLocalPoint(point, segment, endpoint, corpseScale) {
-    const spread = segment.kind === "leg" ? 1.18 + endpoint * 0.16 : segment.kind === "antenna" ? 1.08 : 1.0;
-    const lengthen = segment.kind === "antenna" ? 1.06 : segment.kind === "mandible" ? 0.98 : 1.1;
+    const spread = segment.kind === "leg" ? 1.03 + endpoint * 0.08 : segment.kind === "antenna" ? 1.02 : 1.0;
+    const lengthen = segment.kind === "antenna" ? 1.02 : segment.kind === "mandible" ? 0.96 : 1.02;
     return new THREE.Vector3(
       point[0] * corpseScale * spread,
-      Math.max(0.048, 0.13 + point[1] * corpseScale * 0.24 - (segment.kind === "leg" ? endpoint * 0.014 : 0)),
+      Math.max(0.035, 0.075 + point[1] * corpseScale * 0.24 - (segment.kind === "leg" ? endpoint * 0.01 : 0)),
       point[2] * corpseScale * lengthen,
     );
   }
 
-  addCorpseSegment(group, segment, corpseScale) {
+  addCorpseSegment(group, segment, corpseScale, material = this.materials.antCorpseAppendage) {
     const start = this.corpseLocalPoint(segment.from, segment, 0, corpseScale);
     const end = this.corpseLocalPoint(segment.to, segment, 1, corpseScale);
     const direction = end.clone().sub(start);
     const length = direction.length();
     if (length <= 0.001) return;
     direction.normalize();
-    const mesh = new THREE.Mesh(this.geometries.combatSlash, this.materials.antCorpseAppendage);
+    const mesh = new THREE.Mesh(this.geometries.combatSlash, material);
     mesh.position.copy(start.clone().add(end).multiplyScalar(0.5));
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
-    const radius = segment.radius * corpseScale * (segment.kind === "leg" ? 1.28 : 1.08);
+    const radius = segment.radius * corpseScale * (segment.kind === "leg" ? 1.08 : 0.98);
     mesh.scale.set(radius, length, radius);
     mesh.castShadow = this.quality.shadowQuality !== "off";
     mesh.receiveShadow = this.quality.shadowQuality !== "off";
     group.add(mesh);
   }
 
-  addRivalCorpse(rival) {
-    if (!rival) return null;
+  addAntCorpse(source, options = {}) {
+    if (!source) return null;
+    const side = options.side ?? "rival";
     const group = new THREE.Group();
-    const corpseScale = rival.scale * 0.96;
-    group.position.set(rival.x, 0, rival.z);
-    group.rotation.set(rand(-0.06, 0.06), rival.angle + rand(-0.22, 0.22), rand(-0.11, 0.11));
+    const corpseScale = (options.scale ?? source.scale ?? source.bodyScale ?? 1) * ANT_VISUAL_SCALE;
+    const bodyMaterial = side === "colony" ? this.materials.antColonyCorpse : this.materials.antCorpse;
+    group.position.set(source.x, 0, source.z);
+    group.rotation.set(rand(-0.035, 0.035), source.angle + rand(-0.18, 0.18), rand(-0.08, 0.08));
 
     const stain = new THREE.Mesh(this.geometries.trailCircle, this.materials.corpseMark);
     stain.rotation.x = -Math.PI / 2;
     stain.position.y = 0.025;
-    stain.scale.setScalar(2.65 * corpseScale);
+    stain.scale.setScalar(1.45 * corpseScale);
     group.add(stain);
 
     for (const part of ANT_BODY_PARTS) {
-      const mesh = new THREE.Mesh(this.geometries.antSphere, this.materials.antCorpse);
-      mesh.position.set(part.x * corpseScale, 0.13 + part.y * corpseScale * 0.38, part.z * corpseScale);
-      mesh.scale.set(part.sx * corpseScale * 1.04, part.sy * corpseScale * 0.44, part.sz * corpseScale * 1.08);
+      const mesh = new THREE.Mesh(this.geometries.antSphere, bodyMaterial);
+      mesh.position.set(part.x * corpseScale, 0.075 + part.y * corpseScale * 0.32, part.z * corpseScale);
+      mesh.scale.set(part.sx * corpseScale, part.sy * corpseScale * 0.46, part.sz * corpseScale);
       mesh.castShadow = this.quality.shadowQuality !== "off";
       mesh.receiveShadow = this.quality.shadowQuality !== "off";
       group.add(mesh);
@@ -3881,13 +3909,35 @@ class AntColony3D {
 
     this.scene.add(group);
     this.dynamicObjects.add(group);
-    const corpse = { x: rival.x, z: rival.z, group };
-    this.rivalCorpses.push(corpse);
-    while (this.rivalCorpses.length > RIVAL_CORPSE_CAP) {
-      const old = this.rivalCorpses.shift();
+    const corpse = { x: source.x, z: source.z, group, age: 0, life: CORPSE_LIFE_SECONDS, side, scale: corpseScale };
+    const list = side === "colony" ? this.colonyCorpses : this.rivalCorpses;
+    const cap = side === "colony" ? COLONY_CORPSE_CAP : RIVAL_CORPSE_CAP;
+    list.push(corpse);
+    while (list.length > cap) {
+      const old = list.shift();
       this.disposeDynamicItem(old);
     }
     return corpse;
+  }
+
+  addRivalCorpse(rival) {
+    return this.addAntCorpse(rival, { side: "rival", scale: rival?.scale ?? 1 });
+  }
+
+  addColonyCorpse(ant) {
+    return this.addAntCorpse(ant, { side: "colony", scale: ant?.bodyScale ?? 1 });
+  }
+
+  updateCorpses(dt) {
+    for (const list of [this.rivalCorpses, this.colonyCorpses]) {
+      for (const corpse of list) corpse.age += dt;
+      for (const corpse of [...list]) {
+        if (corpse.age < corpse.life) continue;
+        this.disposeDynamicItem(corpse);
+        const index = list.indexOf(corpse);
+        if (index >= 0) list.splice(index, 1);
+      }
+    }
   }
 
   clearRaidRivals() {
@@ -3941,6 +3991,7 @@ class AntColony3D {
     ant.clashTimer = 0;
     ant.clashDuration = 0;
     ant.fleeTimer = 0;
+    this.addColonyCorpse(ant);
     this.ants.splice(index, 1);
     this.antRenderer?.releaseRenderObject(ant);
     this.colony.antPopulation = Math.max(MIN_COLONY_SURVIVORS, Math.floor(this.colony.antPopulation) - 1);

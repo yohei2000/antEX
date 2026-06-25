@@ -566,6 +566,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const rival = sim.raidRivals()[0];
         sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
         const antPopulationBefore = sim.colony.antPopulation;
+        const colonyCorpseCountBeforeWorker = sim.colonyCorpses?.length ?? 0;
         ant.role = "worker";
         ant.traits.persistence = 0.1;
         ant.traits.caution = 0.1;
@@ -625,6 +626,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const workerCasualties = sim.colony.raidState.casualties;
         const antPopulationAfterWorker = sim.colony.antPopulation;
         const workerCombatEffects = sim.combatEffects?.length ?? 0;
+        const colonyCorpseCountAfterWorker = sim.colonyCorpses?.length ?? 0;
         ant.x = -80;
         ant.z = -80;
         ant.fleeTimer = 0;
@@ -686,6 +688,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           guardGaitAdvance += Math.abs(gaitDelta);
           guardPreviousGait = guard.gaitPhase;
         }
+        const enemyCorpseCountAfterGuard = sim.rivalCorpses?.length ?? 0;
+        for (let i = 0; i < 620; i += 1) sim.updateCorpses(1 / 60);
         return {
           resolved,
           repelled,
@@ -702,6 +706,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           workerCombatEffects,
           antPopulationBefore,
           antPopulationAfterWorker,
+          colonyCorpseCountBeforeWorker,
+          colonyCorpseCountAfterWorker,
+          colonyCorpseCountAfterExpiry: sim.colonyCorpses?.length ?? 0,
           nestDistanceBefore,
           guardStateAtStart,
           guardGrapplersAtStart,
@@ -712,7 +719,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           enemyDefeated: rival.defeated,
           enemyMarkedGone: rival.leftRaid,
           enemyStillLive: sim.rivalAnts.includes(rival),
-          enemyCorpseCount: sim.rivalCorpses?.length ?? 0,
+          enemyCorpseCount: enemyCorpseCountAfterGuard,
+          enemyCorpseCountAfterExpiry: sim.rivalCorpses?.length ?? 0,
           corpseCountBeforeGuard,
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
@@ -732,6 +740,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       fight.workerGaitAdvance <= 0.5 ||
       fight.workerCombatEffects < 3 ||
       fight.antPopulationAfterWorker !== fight.antPopulationBefore - 1 ||
+      fight.colonyCorpseCountAfterWorker <= fight.colonyCorpseCountBeforeWorker ||
+      fight.colonyCorpseCountAfterExpiry !== fight.colonyCorpseCountBeforeWorker ||
       fight.guardStateAtStart !== "clash" ||
       fight.guardGrapplersAtStart < 2 ||
       fight.guardGaitAdvance <= 0.5 ||
@@ -741,6 +751,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       !fight.enemyMarkedGone ||
       fight.enemyStillLive ||
       fight.enemyCorpseCount <= fight.corpseCountBeforeGuard ||
+      fight.enemyCorpseCountAfterExpiry !== fight.corpseCountBeforeGuard ||
       fight.fightStats.rivalWins < 1 ||
       fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||

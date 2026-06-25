@@ -55,7 +55,9 @@ async function verifyCombatScenario(targetUrl, outputDir) {
       sim.paused = true;
       sim.frameAccumulator = 0;
       for (const corpse of [...(sim.rivalCorpses ?? [])]) sim.disposeDynamicItem(corpse);
+      for (const corpse of [...(sim.colonyCorpses ?? [])]) sim.disposeDynamicItem(corpse);
       sim.rivalCorpses = [];
+      sim.colonyCorpses = [];
       sim.clearRaidRivals();
       sim.colony.enemyThreat = 0;
       sim.colony.raidState = {
@@ -151,16 +153,20 @@ async function verifyCombatScenario(targetUrl, outputDir) {
         rival,
         worker,
         initialCorpseCount: sim.rivalCorpses.length,
+        initialColonyCorpseCount: sim.colonyCorpses.length,
         frames: 0,
         runFrame(dt = 1 / 60) {
           if (this.sim.rivalAnts.includes(this.rival)) this.rival.update(dt, this.sim);
           this.sim.updateCombatEffects(dt);
+          this.sim.updateCorpses(dt);
           this.frames += 1;
         },
         snapshot() {
           const latestCorpse = this.sim.rivalCorpses[this.sim.rivalCorpses.length - 1] ?? null;
           return {
             frames: this.frames,
+            initialCorpseCount: this.initialCorpseCount,
+            initialColonyCorpseCount: this.initialColonyCorpseCount,
             targetRole: target?.role ?? null,
             targetId: target?.id ?? null,
             workerId: this.worker.id,
@@ -176,6 +182,9 @@ async function verifyCombatScenario(targetUrl, outputDir) {
             rivalClashAntIds: this.rival.clash?.ants?.map((ant) => ant.id) ?? [],
             corpseCount: this.sim.rivalCorpses.length,
             corpseDistance: latestCorpse ? Math.hypot(latestCorpse.x - this.rival.x, latestCorpse.z - this.rival.z) : null,
+            corpseScale: latestCorpse?.scale ?? null,
+            expectedCorpseScale: this.rival.scale * 0.46,
+            colonyCorpseCount: this.sim.colonyCorpses.length,
             fightStats: { ...this.sim.rivalFightStats },
           };
         },
@@ -224,6 +233,7 @@ async function verifyCombatScenario(targetUrl, outputDir) {
       after.corpseCount <= setup.corpseCount ||
       after.corpseDistance == null ||
       after.corpseDistance > 2.5 ||
+      Math.abs(after.corpseScale - after.expectedCorpseScale) > 0.001 ||
       after.fightStats.colonyWins < 1
     ) {
       throw new Error(`Combat outcome did not leave a corpse at the fight site: ${JSON.stringify(after)}`);
@@ -238,13 +248,124 @@ async function verifyCombatScenario(targetUrl, outputDir) {
     const persistentPath = join(outputDir, "combat-corpse-persistent.png");
     await page.screenshot({ path: persistentPath, fullPage: false });
 
+    const expired = await page.evaluate(`window.__COMBAT_VERIFY.advanceFrames(420)`);
+    if (expired.corpseCount !== setup.initialCorpseCount || expired.colonyCorpseCount !== setup.initialColonyCorpseCount) {
+      throw new Error(`Corpse did not expire after ten seconds: ${JSON.stringify(expired)}`);
+    }
+    const expiredPath = join(outputDir, "combat-corpse-expired.png");
+    await page.screenshot({ path: expiredPath, fullPage: false });
+
+    const friendly = await page.evaluate(`(() => {
+      const sim = window.__ANT_SIM;
+      sim.clearRaidRivals();
+      sim.colony.raidState = {
+        phase: "warning",
+        timer: 0,
+        wave: 9002,
+        activeCount: 1,
+        approachAngle: 0,
+        signalTimer: 0,
+        breachTimer: 0,
+        casualties: 0,
+        enemyCasualties: 0,
+        lastOutcome: "warning",
+      };
+      sim.beginRaid();
+      const rival = sim.raidRivals()[0];
+      const victim = sim.ants[0];
+      for (const ant of sim.ants) {
+        ant.state = "stunned";
+        ant.stun = 30;
+        ant.fleeTimer = 0;
+        ant.clashTimer = 0;
+        ant.clashRival = null;
+        ant.x = sim.nest.x;
+        ant.z = sim.nest.z;
+        ant.prevX = ant.x;
+        ant.prevZ = ant.z;
+      }
+      const baseX = 12;
+      const baseZ = 4;
+      victim.role = "worker";
+      victim.traits.persistence = 0.05;
+      victim.traits.caution = 0.05;
+      victim.state = "explore";
+      victim.stun = 0;
+      victim.energy = 1;
+      victim.carrying = 0;
+      victim.x = baseX;
+      victim.z = baseZ;
+      victim.prevX = baseX;
+      victim.prevZ = baseZ;
+      rival.x = baseX + 0.6;
+      rival.z = baseZ;
+      rival.prevX = rival.x;
+      rival.prevZ = rival.z;
+      rival.aggression = 1;
+      rival.stubbornness = 1;
+      rival.scale = 1.2;
+      rival.retreat = 0;
+      rival.clash = null;
+      rival.fightCooldown = 0;
+      const before = sim.colonyCorpses.length;
+      rival.resolveAntContacts(sim);
+      for (let i = 0; i < 240; i += 1) {
+        if (sim.ants.includes(victim)) victim.update(1 / 60, sim);
+        rival.update(1 / 60, sim);
+        sim.updateCombatEffects(1 / 60);
+        sim.updateCorpses(1 / 60);
+        if (!sim.ants.includes(victim) && sim.colonyCorpses.length > before) break;
+      }
+      sim.cameraTarget.set(baseX - 8, 0, baseZ);
+      sim.cameraRenderTarget.copy(sim.cameraTarget);
+      sim.renderGame(1);
+      const corpse = sim.colonyCorpses[sim.colonyCorpses.length - 1] ?? null;
+      const after = {
+        before,
+        corpseCount: sim.colonyCorpses.length,
+        victimAlive: sim.ants.includes(victim),
+        casualties: sim.colony.raidState.casualties,
+        corpseDistance: corpse ? Math.hypot(corpse.x - victim.x, corpse.z - victim.z) : null,
+        corpseScale: corpse?.scale ?? null,
+        expectedCorpseScale: victim.bodyScale * 0.46,
+      };
+      window.__FRIENDLY_CORPSE_VERIFY = { before };
+      return after;
+    })()`);
+    if (
+      friendly.victimAlive ||
+      friendly.corpseCount <= friendly.before ||
+      friendly.casualties < 1 ||
+      friendly.corpseDistance == null ||
+      friendly.corpseDistance > 2.5 ||
+      Math.abs(friendly.corpseScale - friendly.expectedCorpseScale) > 0.001
+    ) {
+      throw new Error(`Friendly corpse check failed: ${JSON.stringify(friendly)}`);
+    }
+    const friendlyPath = join(outputDir, "combat-friendly-corpse.png");
+    await page.screenshot({ path: friendlyPath, fullPage: false });
+    const friendlyExpired = await page.evaluate(`(() => {
+      const sim = window.__ANT_SIM;
+      for (let i = 0; i < 620; i += 1) sim.updateCorpses(1 / 60);
+      return {
+        before: window.__FRIENDLY_CORPSE_VERIFY.before,
+        corpseCountAfterExpiry: sim.colonyCorpses.length,
+      };
+    })()`);
+    if (friendlyExpired.corpseCountAfterExpiry !== friendlyExpired.before) {
+      throw new Error(`Friendly corpse did not expire after ten seconds: ${JSON.stringify(friendlyExpired)}`);
+    }
+
     await context.close();
     return {
       setup,
       during,
       after,
       persistent,
-      screenshots: [duringPath, afterPath, persistentPath].map(assertScreenshot),
+      expired,
+      friendly,
+      friendlyExpired,
+      screenshots: [duringPath, afterPath, persistentPath, expiredPath, friendlyPath].map(assertScreenshot),
     };
   } finally {
     await browser.close();

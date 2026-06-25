@@ -662,6 +662,85 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
   expect(raid.log).toContain("敵襲開始");
 });
 
+test("guard ants intercept raid rivals in normal raid combat", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    const guard = sim.ants[0];
+
+    for (const ant of sim.ants) {
+      ant.state = "stunned";
+      ant.stun = 30;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.x = sim.nest.x;
+      ant.z = sim.nest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+
+    guard.role = "guard";
+    guard.state = "explore";
+    guard.stun = 0;
+    guard.fleeTimer = 0;
+    guard.clashTimer = 0;
+    guard.traits.persistence = 1;
+    guard.traits.caution = 1;
+    guard.energy = 1;
+    guard.baseSpeed = 12.5;
+    guard.x = 0;
+    guard.z = 0;
+    guard.prevX = 0;
+    guard.prevZ = 0;
+    rival.x = 42;
+    rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.fightCooldown = 0;
+    sim.colony.raidState.phase = "active";
+
+    const before = Math.hypot(guard.x - rival.x, guard.z - rival.z);
+    let minDistance = before;
+    let clashStarted = false;
+    for (let i = 0; i < 180; i += 1) {
+      guard.update(1 / 60, sim);
+      minDistance = Math.min(minDistance, Math.hypot(guard.x - rival.x, guard.z - rival.z));
+      clashStarted = rival.resolveAntContacts(sim) || clashStarted;
+      if (clashStarted) break;
+    }
+
+    return {
+      before,
+      minDistance,
+      after: Math.hypot(guard.x - rival.x, guard.z - rival.z),
+      guardState: guard.state,
+      guardInClash: rival.clash?.ants?.includes(guard) ?? false,
+      clashStarted,
+      alarmTrails: sim.trails.filter((trail: any) => trail.kind === "alarm").length,
+    };
+  });
+
+  expect(result.minDistance).toBeLessThan(result.before - 10);
+  expect(result.after).toBeLessThan(result.before);
+  expect(result.guardState === "explore" || result.guardState === "clash").toBe(true);
+  expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
+});
+
 test("rival ant combat grapples before the loser exits or remains", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -684,6 +763,7 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
     const rival = sim.raidRivals()[0];
     sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     const antPopulationBefore = sim.colony.antPopulation;
+    const colonyCorpseCountBeforeWorker = sim.colonyCorpses?.length ?? 0;
 
     ant.role = "worker";
     ant.traits.persistence = 0.1;
@@ -743,6 +823,7 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
     const workerCasualties = sim.colony.raidState.casualties;
     const antPopulationAfterWorker = sim.colony.antPopulation;
     const workerCombatEffects = sim.combatEffects?.length ?? 0;
+    const colonyCorpseCountAfterWorker = sim.colonyCorpses?.length ?? 0;
 
     ant.x = -80;
     ant.z = -80;
@@ -805,6 +886,8 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
       guardGaitAdvance += Math.abs(gaitDelta);
       guardPreviousGait = guard.gaitPhase;
     }
+    const enemyCorpseCountAfterGuard = sim.rivalCorpses?.length ?? 0;
+    for (let i = 0; i < 620; i += 1) sim.updateCorpses(1 / 60);
 
     return {
       workerStarted,
@@ -817,6 +900,9 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
       workerCombatEffects,
       antPopulationBefore,
       antPopulationAfterWorker,
+      colonyCorpseCountBeforeWorker,
+      colonyCorpseCountAfterWorker,
+      colonyCorpseCountAfterExpiry: sim.colonyCorpses?.length ?? 0,
       workerDistanceBefore,
       workerDistanceAfterStart,
       workerMaxCenterDrift,
@@ -832,7 +918,8 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
       enemyDefeated: rival.defeated,
       enemyMarkedGone: rival.leftRaid,
       enemyStillLive: sim.rivalAnts.includes(rival),
-      enemyCorpseCount: sim.rivalCorpses?.length ?? 0,
+      enemyCorpseCount: enemyCorpseCountAfterGuard,
+      enemyCorpseCountAfterExpiry: sim.rivalCorpses?.length ?? 0,
       corpseCountBeforeGuard,
       stats: sim.rivalFightStats,
     };
@@ -848,6 +935,8 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
   expect(fight.workerGaitAdvance).toBeGreaterThan(0.5);
   expect(fight.workerCombatEffects).toBeGreaterThanOrEqual(3);
   expect(fight.antPopulationAfterWorker).toBe(fight.antPopulationBefore - 1);
+  expect(fight.colonyCorpseCountAfterWorker).toBeGreaterThan(fight.colonyCorpseCountBeforeWorker);
+  expect(fight.colonyCorpseCountAfterExpiry).toBe(fight.colonyCorpseCountBeforeWorker);
   expect(fight.guardStarted).toBe(true);
   expect(fight.guardStateAtStart).toBe("clash");
   expect(fight.guardGrapplersAtStart).toBeGreaterThanOrEqual(2);
@@ -858,6 +947,7 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
   expect(fight.enemyMarkedGone).toBe(true);
   expect(fight.enemyStillLive).toBe(false);
   expect(fight.enemyCorpseCount).toBeGreaterThan(fight.corpseCountBeforeGuard);
+  expect(fight.enemyCorpseCountAfterExpiry).toBe(fight.corpseCountBeforeGuard);
   expect(fight.stats.rivalWins).toBeGreaterThanOrEqual(1);
   expect(fight.stats.colonyWins).toBeGreaterThanOrEqual(1);
 });
