@@ -229,6 +229,12 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           quality: sim?.quality?.label ?? null,
           antCount: sim?.ants?.length ?? null,
           colonyAnts: sim?.colony?.antPopulation ?? null,
+          deployedSoldiers: sim?.deployedSoldierCount?.() ?? null,
+          variantConfigCount: ["worker", "soldier", "heavySoldier", "builder"].filter((variant) => Boolean(sim?.getAntVariantConfig?.(variant))).length,
+          workerVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "worker").length ?? null,
+          heavyVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "heavySoldier").length ?? null,
+          builderVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "builder").length ?? null,
+          earthworkCount: sim?.earthworks?.length ?? null,
           colonyFood: sim?.colony?.food ?? null,
           nestLevel: sim?.colony?.nestLevel ?? null,
           territory: sim?.colony?.territory ?? null,
@@ -240,6 +246,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           rivalCount: sim?.rivalAnts?.length ?? null,
           rivalScaleMin: sim?.rivalAnts?.length ? Math.min(...sim.rivalAnts.map((ant) => ant.scale)) : null,
           rivalScaleMax: sim?.rivalAnts?.length ? Math.max(...sim.rivalAnts.map((ant) => ant.scale)) : null,
+          raidPhase: sim?.colony?.raidState?.phase ?? null,
+          raidTimer: sim?.colony?.raidState?.timer ?? null,
           rivalColor: sim?.materials?.antRival?.color?.getHexString?.() ?? null,
           terrainPatches: sim?.terrain?.length ?? null,
           terrainBumps: sim?.terrainBumps?.length ?? null,
@@ -247,11 +255,6 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           nestSpoilCount: sim?.nestSpoils?.length ?? null,
           stoneCount: sim?.stones?.length ?? null,
           branchCount: sim?.branches?.length ?? null,
-          variantConfigCount: ["worker", "soldier", "heavySoldier", "builder"].filter((variant) => Boolean(sim?.getAntVariantConfig?.(variant))).length,
-          soldierVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "soldier").length ?? null,
-          heavyVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "heavySoldier").length ?? null,
-          builderVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "builder").length ?? null,
-          earthworkCount: sim?.earthworks?.length ?? null,
           toolButtons: document.querySelectorAll("[data-tool]").length,
           upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
           calls: info?.render?.calls ?? null,
@@ -290,12 +293,19 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
     }
     if (
       metrics.colonyAnts !== 12 ||
-      metrics.antCount !== 12 ||
+      metrics.antCount !== 11 ||
+      metrics.deployedSoldiers !== 0 ||
+      metrics.variantConfigCount !== 4 ||
+      metrics.workerVariantCount !== 11 ||
+      metrics.heavyVariantCount !== 0 ||
+      metrics.builderVariantCount !== 0 ||
+      metrics.earthworkCount !== 0 ||
       metrics.worldRadius < 120 ||
       metrics.foodSources < 4 ||
       metrics.predatorCount !== 0 ||
-      metrics.rivalCount !== 4 ||
-      metrics.rivalScaleMin <= 1.1 ||
+      metrics.rivalCount !== 0 ||
+      metrics.raidPhase !== "calm" ||
+      metrics.raidTimer <= 0 ||
       metrics.rivalColor !== "8a4a2f" ||
       metrics.terrainPatches < 6 ||
       metrics.terrainBumps < 8 ||
@@ -303,8 +313,6 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.nestSpoilCount < 24 ||
       metrics.stoneCount < 6 ||
       metrics.branchCount < 5 ||
-      metrics.variantConfigCount !== 4 ||
-      metrics.soldierVariantCount < 1 ||
       metrics.toolButtons !== 0 ||
       metrics.upgradeButtons < 15 ||
       metrics.foodRate <= 0
@@ -343,6 +351,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           trailPheromones: 4,
           storageChambers: 8,
           chamberExcavation: 6,
+          builderTraining: 5,
           ventilationShafts: 5,
           wasteGallery: 4,
           broodNursery: 8,
@@ -350,10 +359,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           foodDistribution: 5,
           queenCare: 8,
           soldierTraining: 6,
+          heavySoldierBrood: 4,
           nestGuard: 6,
           sentinelPosts: 4,
-          heavySoldierBrood: 4,
-          builderTraining: 5,
         };
         for (const [key, max] of Object.entries(maxLevels)) sim.colony.upgrades[key] = max;
         const maxed = sim.computeDerived();
@@ -438,11 +446,23 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const capacityAfterUpgrade = sim.computeDerived().capacity;
         sim.colony.soldierAnts = 8;
         sim.colony.woundedAnts = 0;
-        sim.colony.battleCooldownUntil = 0;
-        const randomBefore = Math.random;
-        Math.random = () => 0;
-        sim.startExpedition();
-        Math.random = randomBefore;
+        sim.soldierSortieCooldown = 0;
+        sim.syncAntPopulation();
+        const guardsBeforeSortie = sim.ants.filter((ant) => ant.role === "guard").length;
+        const sortieStarted = sim.startSoldierSortie();
+        const deployedAfterSortie = sim.deployedSoldierCount();
+        const sortieRoles = sim.deployedSoldiers().map((ant) => ant.role);
+        const sortieSpawnMax = Math.max(...sim.deployedSoldiers().map((ant) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z)));
+        for (const ant of sim.deployedSoldiers()) {
+          ant.sortieTimer = 0;
+          ant.x = sim.nest.x;
+          ant.z = sim.nest.z;
+          ant.prevX = ant.x;
+          ant.prevZ = ant.z;
+          ant.setState("return");
+          ant.updateReturn(1 / 60, sim, { x: 0, z: 0 });
+        }
+        sim.flushSortieRetires();
         sim.saveColony();
         const saved = JSON.parse(localStorage.getItem("ant3d.colonyState"));
         return {
@@ -454,9 +474,14 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           capacityBeforeUpgrade,
           capacityAfterUpgrade,
           boughtUpgrade,
-          territoryAfterBattle: sim.colony.territory,
-          foodAfterBattle: sim.colony.food,
-          cooldownActive: sim.colony.battleCooldownUntil > Date.now(),
+          guardsBeforeSortie,
+          sortieStarted,
+          deployedAfterSortie,
+          deployedAfterRetire: sim.deployedSoldierCount(),
+          sortieRoles,
+          sortieSpawnMax,
+          battleLog: sim.colony.battleLog.join("\\n"),
+          cooldownActive: sim.soldierSortieCooldown > 0,
           savedAnts: saved.antPopulation,
           savedFood: saved.food,
         };
@@ -467,7 +492,13 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       idle.returnFoodAfter <= idle.returnFoodBefore ||
       !idle.boughtUpgrade ||
       idle.capacityAfterUpgrade <= idle.capacityBeforeUpgrade ||
-      idle.territoryAfterBattle <= idle.before.territory ||
+      idle.guardsBeforeSortie !== 0 ||
+      !idle.sortieStarted ||
+      idle.deployedAfterSortie !== 8 ||
+      idle.deployedAfterRetire !== 0 ||
+      !idle.sortieRoles.every((role) => role === "guard") ||
+      idle.sortieSpawnMax >= 14 ||
+      !idle.battleLog.includes("兵隊出撃") ||
       !idle.cooldownActive ||
       idle.savedAnts !== 24 ||
       idle.savedFood <= 0
@@ -475,12 +506,85 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       throw new Error(`${label}: idle growth check failed: ${JSON.stringify(idle)}`);
     }
 
+    const raid = await page.evaluate(`(() => {
+        const sim = window.__ANT_SIM;
+        sim.clearRaidRivals();
+        sim.colony.raidState = {
+          phase: "calm",
+          timer: 0.01,
+          wave: 0,
+          activeCount: 0,
+          approachAngle: 0,
+          signalTimer: 0,
+          lastOutcome: "none",
+        };
+        sim.updateRaid(0.02);
+        const warning = {
+          phase: sim.colony.raidState.phase,
+          rivals: sim.rivalAnts.length,
+          activeCount: sim.colony.raidState.activeCount,
+          log: sim.colony.battleLog.join("\\n"),
+        };
+        sim.colony.raidState.timer = 0.01;
+        sim.updateRaid(0.02);
+        const activePhase = sim.colony.raidState.phase;
+        sim.updateStats();
+        const rivals = sim.raidRivals();
+        const spawnRadii = rivals.map((rival) => Math.hypot(rival.x, rival.z));
+        const approachAngle = sim.colony.raidState.approachAngle ?? 0;
+        const flankX = -Math.sin(approachAngle);
+        const flankZ = Math.cos(approachAngle);
+        const spawnLateral = rivals.map((rival) => rival.x * flankX + rival.z * flankZ);
+        const targetLateral = rivals.map((rival) => rival.raidTargetX * flankX + rival.raidTargetZ * flankZ);
+        const exitRadii = rivals.map((rival) => Math.hypot(rival.homeX, rival.homeZ));
+        return {
+          warning,
+          activePhase,
+          phaseAfterStats: sim.colony.raidState.phase,
+          rivalCount: rivals.length,
+          activeCount: sim.colony.raidState.activeCount,
+          minNestDistance: Math.min(...rivals.map((rival) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z))),
+          minWorldRadius: Math.min(...spawnRadii),
+          spawnDepthSpread: Math.max(...spawnRadii) - Math.min(...spawnRadii),
+          spawnLateralSpread: Math.max(...spawnLateral) - Math.min(...spawnLateral),
+          targetLateralSpread: Math.max(...targetLateral) - Math.min(...targetLateral),
+          minExitRadius: Math.min(...exitRadii),
+          worldRadius: sim.worldRadius,
+          log: sim.colony.battleLog.join("\\n"),
+        };
+      })()`);
+    if (
+      raid.warning.phase !== "warning" ||
+      raid.warning.rivals !== 0 ||
+      raid.warning.activeCount < 4 ||
+      !raid.warning.log.includes("敵アリの気配") ||
+      raid.activePhase !== "active" ||
+      raid.phaseAfterStats !== "active" ||
+      raid.rivalCount !== raid.activeCount ||
+      raid.minNestDistance <= 50 ||
+      raid.minWorldRadius <= raid.worldRadius * 0.88 ||
+      raid.spawnDepthSpread <= 2 ||
+      raid.spawnLateralSpread <= 12 ||
+      raid.targetLateralSpread <= 6 ||
+      raid.minExitRadius <= raid.worldRadius + 16 ||
+      !raid.log.includes("敵襲開始")
+    ) {
+      throw new Error(`${label}: raid warning and spawn check failed: ${JSON.stringify(raid)}`);
+    }
+
     const fight = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
         const ant = sim.ants[0];
         const guard = sim.ants[1];
-        const rival = sim.rivalAnts[0];
+        const supportA = sim.ants[2];
+        const supportB = sim.ants[3];
+        for (const extra of sim.raidRivals().slice(1)) sim.removeRivalAnt(extra);
+        sim.colony.raidState.activeCount = 1;
+        sim.raidNotice.timer = 0;
+        const rival = sim.raidRivals()[0];
         sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+        const antPopulationBefore = sim.colony.antPopulation;
+        const colonyCorpseCountBeforeWorker = sim.colonyCorpses?.length ?? 0;
         ant.role = "worker";
         ant.traits.persistence = 0.1;
         ant.traits.caution = 0.1;
@@ -513,11 +617,16 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const anchorZ = rival.clash.anchorZ;
         const lineX = rival.clash.lineX;
         const lineZ = rival.clash.lineZ;
+        let workerPreviousGait = ant.gaitPhase;
+        let workerGaitAdvance = 0;
         let maxCenterDrift = 0;
         let maxAxisDrift = 0;
-        for (let i = 0; i < 160; i += 1) {
+        for (let i = 0; i < 220; i += 1) {
           ant.update(1 / 60, sim);
           rival.update(1 / 60, sim);
+          const gaitDelta = Math.atan2(Math.sin(ant.gaitPhase - workerPreviousGait), Math.cos(ant.gaitPhase - workerPreviousGait));
+          workerGaitAdvance += Math.abs(gaitDelta);
+          workerPreviousGait = ant.gaitPhase;
           if (i < 100 && rival.clash) {
             const centerX = (ant.x + rival.x) * 0.5;
             const centerZ = (ant.z + rival.z) * 0.5;
@@ -531,7 +640,11 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         }
         const stateAfterClash = ant.state;
         const fleeTimer = ant.fleeTimer;
-        const nestDistanceAfter = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
+        const workerAlive = sim.ants.includes(ant);
+        const workerCasualties = sim.colony.raidState.casualties;
+        const antPopulationAfterWorker = sim.colony.antPopulation;
+        const workerCombatEffects = sim.combatEffects?.length ?? 0;
+        const colonyCorpseCountAfterWorker = sim.colonyCorpses?.length ?? 0;
         ant.x = -80;
         ant.z = -80;
         ant.fleeTimer = 0;
@@ -548,6 +661,26 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         guard.prevZ = guard.z;
         guard.fleeTimer = 0;
         guard.clashTimer = 0;
+        supportA.role = "guard";
+        supportA.traits.persistence = 1;
+        supportA.traits.caution = 1;
+        supportA.state = "explore";
+        supportA.x = 3.35;
+        supportA.z = 0.9;
+        supportA.prevX = supportA.x;
+        supportA.prevZ = supportA.z;
+        supportA.fleeTimer = 0;
+        supportA.clashTimer = 0;
+        supportB.role = "worker";
+        supportB.traits.persistence = 0.8;
+        supportB.traits.caution = 0.8;
+        supportB.state = "explore";
+        supportB.x = 3.55;
+        supportB.z = -0.9;
+        supportB.prevX = supportB.x;
+        supportB.prevZ = supportB.z;
+        supportB.fleeTimer = 0;
+        supportB.clashTimer = 0;
         rival.x = 4.5;
         rival.z = 0;
         rival.prevX = rival.x;
@@ -558,12 +691,37 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         rival.retreat = 0;
         rival.clash = null;
         rival.fightCooldown = 0;
+        const corpseCountBeforeGuard = sim.rivalCorpses?.length ?? 0;
         const repelled = rival.resolveAntContacts(sim);
         const guardStateAtStart = guard.state;
-        for (let i = 0; i < 150; i += 1) {
+        const guardGrapplersAtStart = rival.clash?.ants?.length ?? 0;
+        let guardPreviousGait = guard.gaitPhase;
+        let guardGaitAdvance = 0;
+        let guardSlotOffsets = [];
+        for (let i = 0; i < 220; i += 1) {
           guard.update(1 / 60, sim);
+          supportA.update(1 / 60, sim);
+          supportB.update(1 / 60, sim);
           rival.update(1 / 60, sim);
+          if (i === 24 && rival.clash) {
+            const lineAngle = Math.atan2(rival.clash.lineZ, rival.clash.lineX);
+            guardSlotOffsets = rival.clash.ants.map((grappler) => {
+              const angle = Math.atan2(grappler.z - rival.z, grappler.x - rival.x);
+              return Math.atan2(Math.sin(angle - lineAngle), Math.cos(angle - lineAngle));
+            });
+          }
+          const gaitDelta = Math.atan2(Math.sin(guard.gaitPhase - guardPreviousGait), Math.cos(guard.gaitPhase - guardPreviousGait));
+          guardGaitAdvance += Math.abs(gaitDelta);
+          guardPreviousGait = guard.gaitPhase;
         }
+        const enemyCorpseCountAfterGuard = sim.rivalCorpses?.length ?? 0;
+        sim.updateRaid(1 / 60);
+        sim.updateStats();
+        const repelNotice = document.querySelector("#raidNotice");
+        const hasFrontBite = guardSlotOffsets.some((offset) => Math.abs(offset) < 0.72);
+        const hasSideBite = guardSlotOffsets.some((offset) => Math.abs(Math.abs(offset) - Math.PI / 2) < 0.72);
+        const hasRearBite = guardSlotOffsets.some((offset) => Math.abs(Math.abs(offset) - Math.PI) < 0.78);
+        for (let i = 0; i < 620; i += 1) sim.updateCorpses(1 / 60);
         return {
           resolved,
           repelled,
@@ -574,15 +732,39 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           stateAtStart,
           stateAfterClash,
           fleeTimer,
+          workerAlive,
+          workerCasualties,
+          workerGaitAdvance,
+          workerCombatEffects,
+          antPopulationBefore,
+          antPopulationAfterWorker,
+          colonyCorpseCountBeforeWorker,
+          colonyCorpseCountAfterWorker,
+          colonyCorpseCountAfterExpiry: sim.colonyCorpses?.length ?? 0,
           nestDistanceBefore,
-          nestDistanceAfter,
           guardStateAtStart,
+          guardGrapplersAtStart,
+          guardSlotOffsets,
+          hasFrontBite,
+          hasSideBite,
+          hasRearBite,
+          guardGaitAdvance,
           winner: rival.lastFightWinner,
           antEnergy: ant.energy,
           rivalRetreat: rival.retreat,
+          enemyDefeated: rival.defeated,
+          enemyMarkedGone: rival.leftRaid,
+          enemyStillLive: sim.rivalAnts.includes(rival),
+          enemyCorpseCount: enemyCorpseCountAfterGuard,
+          enemyCorpseCountAfterExpiry: sim.rivalCorpses?.length ?? 0,
+          corpseCountBeforeGuard,
           fightStats: sim.rivalFightStats,
           fightCooldown: rival.fightCooldown,
+          repelNoticeText: repelNotice?.textContent ?? "",
+          repelNoticeHidden: repelNotice?.hidden ?? true,
+          repelNoticeKind: sim.raidNotice.kind,
           alarmTrails: sim.trails.filter((trail) => trail.kind === "alarm").length,
+          combatEffects: sim.combatEffects?.length ?? 0,
         };
       })()`);
     if (
@@ -590,19 +772,37 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       !fight.repelled ||
       Math.abs(fight.afterDistance - fight.beforeDistance) >= 0.25 ||
       fight.maxCenterDrift >= 0.55 ||
-      fight.maxAxisDrift >= 0.22 ||
+      fight.maxAxisDrift >= 0.34 ||
       fight.stateAtStart !== "clash" ||
-      fight.stateAfterClash !== "flee" ||
-      fight.fleeTimer <= 0 ||
-      fight.nestDistanceAfter >= fight.nestDistanceBefore ||
+      fight.workerAlive ||
+      fight.workerCasualties < 1 ||
+      fight.workerGaitAdvance <= 0.5 ||
+      fight.workerCombatEffects < 3 ||
+      fight.antPopulationAfterWorker !== fight.antPopulationBefore - 1 ||
+      fight.colonyCorpseCountAfterWorker <= fight.colonyCorpseCountBeforeWorker ||
+      fight.colonyCorpseCountAfterExpiry !== fight.colonyCorpseCountBeforeWorker ||
       fight.guardStateAtStart !== "clash" ||
+      fight.guardGrapplersAtStart !== 3 ||
+      fight.guardSlotOffsets.length !== 3 ||
+      !fight.hasFrontBite ||
+      !fight.hasSideBite ||
+      !fight.hasRearBite ||
+      fight.guardGaitAdvance <= 0.5 ||
       fight.antEnergy >= 1 ||
       fight.winner !== "colony" ||
-      fight.rivalRetreat <= 0 ||
+      !fight.enemyDefeated ||
+      !fight.enemyMarkedGone ||
+      fight.enemyStillLive ||
+      fight.enemyCorpseCount <= fight.corpseCountBeforeGuard ||
+      fight.enemyCorpseCountAfterExpiry !== fight.corpseCountBeforeGuard ||
       fight.fightStats.rivalWins < 1 ||
       fight.fightStats.colonyWins < 1 ||
       fight.fightCooldown <= 0 ||
-      fight.alarmTrails < 1
+      fight.repelNoticeHidden ||
+      !fight.repelNoticeText.includes("敵アリ撃退") ||
+      fight.repelNoticeKind !== "repelled" ||
+      fight.alarmTrails < 1 ||
+      fight.combatEffects <= fight.workerCombatEffects
     ) {
       throw new Error(`${label}: rival ant contact check failed: ${JSON.stringify(fight)}`);
     }

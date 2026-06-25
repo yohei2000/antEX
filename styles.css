@@ -68,6 +68,7 @@ button {
 .error-panel,
 .debug-panel,
 .title-block,
+.raid-notice,
 .icon-button,
 .stats-strip div,
 .empire-panel {
@@ -105,7 +106,7 @@ button {
 .title-block small,
 .panel-header span,
 .metric-grid span,
-.expedition-grid span,
+.soldier-grid span,
 .battle-log,
 .upgrade-card p,
 .upgrade-meta {
@@ -246,6 +247,31 @@ button {
   font-size: 0.72rem;
 }
 
+.raid-notice {
+  position: absolute;
+  z-index: 6;
+  top: max(122px, calc(env(safe-area-inset-top) + 122px));
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  display: block;
+  width: min(520px, calc(100vw - 24px));
+  padding: 10px 12px;
+  color: #fff6e6;
+  font-size: 0.82rem;
+  font-weight: 750;
+  line-height: 1.28;
+  background: rgba(91, 47, 31, 0.9);
+}
+
+.raid-notice[hidden] {
+  display: none;
+}
+
+.raid-notice.is-repelled {
+  color: #ecfff9;
+  background: rgba(28, 91, 77, 0.9);
+}
+
 .quick-actions {
   display: flex;
   gap: 8px;
@@ -348,7 +374,7 @@ button {
 
 .stats-strip span,
 .metric-grid span,
-.expedition-grid span {
+.soldier-grid span {
   display: block;
   font-size: 0.68rem;
   white-space: nowrap;
@@ -356,7 +382,7 @@ button {
 
 .stats-strip strong,
 .metric-grid strong,
-.expedition-grid strong {
+.soldier-grid strong {
   display: block;
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
@@ -459,14 +485,14 @@ button {
 }
 
 .metric-grid,
-.expedition-grid {
+.soldier-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
 
 .metric-grid div,
-.expedition-grid div {
+.soldier-grid div {
   min-width: 0;
   padding: 7px 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -590,7 +616,7 @@ button {
 
   .stats-strip span,
   .metric-grid span,
-  .expedition-grid span {
+  .soldier-grid span {
     font-size: 0.62rem;
   }
 
@@ -604,7 +630,7 @@ button {
 
   .panel-header,
   .metric-grid,
-  .expedition-grid,
+  .soldier-grid,
   .upgrade-list {
     grid-template-columns: 1fr;
   }
