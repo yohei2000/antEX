@@ -400,7 +400,7 @@ test("sortied soldiers intercept raid rivals after player command", async ({ pag
     };
     sim.updateRaid(0.01);
     const rival = sim.raidRivals()[0];
-    rival.x = sim.nest.x + 42;
+    rival.x = sim.nest.x + 118;
     rival.z = sim.nest.z;
     rival.prevX = rival.x;
     rival.prevZ = rival.z;
@@ -440,6 +440,7 @@ test("sortied soldiers intercept raid rivals after player command", async ({ pag
   expect(result.guardsBefore).toBe(0);
   expect(result.started).toBe(true);
   expect(result.deployed).toBe(6);
+  expect(result.before).toBeGreaterThan(62);
   expect(result.minDistance).toBeLessThan(result.before - 10);
   expect(result.after).toBeLessThan(result.before);
   expect(result.alarmTrails).toBeGreaterThanOrEqual(1);

@@ -61,6 +61,7 @@ const SOLDIER_SORTIE_CAP = 12;
 const SOLDIER_SORTIE_SECONDS = 58;
 const SOLDIER_SORTIE_COOLDOWN_SECONDS = 14;
 const SOLDIER_PATROL_RADIUS = 18;
+const SOLDIER_SORTIE_SEEK_RANGE = 230;
 const RAID_INITIAL_DELAY_SECONDS = 78;
 const RAID_BASE_INTERVAL_SECONDS = 132;
 const RAID_WARNING_SECONDS = 18;
@@ -703,6 +704,8 @@ class Ant3D {
     this.isSortieSoldier = false;
     this.sortieTimer = 0;
     this.sortieIndex = 0;
+    this.sortieTargetX = null;
+    this.sortieTargetZ = null;
     this.steering = { x: 0, z: 0 };
     this.sensed = {
       hazard: { x: 0, z: 0 },
@@ -1039,8 +1042,10 @@ class Ant3D {
   updateGuardIntercept(dt, sim, steering) {
     const raid = sim.ensureRaidState();
     if (raid.phase !== "active" && raid.phase !== "retreating") return false;
-    const threat = sim.findRivalThreat(this.x, this.z, GUARD_INTERCEPT_RANGE);
+    const threat = sim.findRivalThreat(this.x, this.z, this.isSortieSoldier ? SOLDIER_SORTIE_SEEK_RANGE : GUARD_INTERCEPT_RANGE);
     if (!threat) return false;
+    this.sortieTargetX = threat.x;
+    this.sortieTargetZ = threat.z;
     const d = distance2(this.x, this.z, threat.x, threat.z) || 1;
     const pressure = d > 7 ? 2.55 + this.traits.persistence * 0.8 : 1.1;
     steering.x += ((threat.x - this.x) / d) * pressure;
@@ -1056,6 +1061,23 @@ class Ant3D {
   updateSortiePatrol(dt, sim, steering) {
     if (this.sortieTimer <= 0 && this.state !== "return") {
       this.setState("return");
+      return true;
+    }
+    const target = sim.currentSortieTarget(this.x, this.z);
+    if (target) {
+      this.sortieTargetX = target.x;
+      this.sortieTargetZ = target.z;
+    }
+    if (this.sortieTargetX != null && this.sortieTargetZ != null) {
+      const d = distance2(this.x, this.z, this.sortieTargetX, this.sortieTargetZ) || 1;
+      const pressure = d > 18 ? 2.15 + this.traits.persistence * 0.55 : 1.05;
+      steering.x += ((this.sortieTargetX - this.x) / d) * pressure;
+      steering.z += ((this.sortieTargetZ - this.z) / d) * pressure;
+      this.energy = clamp(this.energy - dt * 0.014, 0, 1);
+      if (this.lastTrail > 0.5) {
+        sim.addTrail(this.x, this.z, "alarm", 0.38);
+        this.lastTrail = 0;
+      }
       return true;
     }
     const angle = (this.sortieIndex * 1.74 + this.id * 0.37) % (Math.PI * 2);
@@ -2924,6 +2946,16 @@ class AntColony3D {
     return Math.max(0, Math.floor(Math.min(this.availableSortieSoldiers(), SOLDIER_SORTIE_CAP)));
   }
 
+  currentSortieTarget(x = this.nest.x, z = this.nest.z) {
+    const threat = this.findRivalThreat(x, z, SOLDIER_SORTIE_SEEK_RANGE);
+    if (threat) return { x: threat.x, z: threat.z, kind: "rival" };
+    const raid = this.ensureRaidState();
+    if (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating") {
+      return { ...this.raidSignalPoint(raid, 0.78), kind: "raid-signal" };
+    }
+    return null;
+  }
+
   makeRoomForSortie(count) {
     const desiredMax = Math.max(1, DISPLAY_ANT_CAP - count);
     while (this.ants.length > desiredMax) {
@@ -2951,15 +2983,20 @@ class AntColony3D {
     }
 
     this.makeRoomForSortie(count);
+    const sortieTarget = this.currentSortieTarget();
+    const targetAngle = sortieTarget ? Math.atan2(sortieTarget.z - this.nest.z, sortieTarget.x - this.nest.x) : null;
     for (let i = 0; i < count; i += 1) {
       const ant = new Ant3D(this.nextAntId++, this);
       const entrance = this.nestEntrances?.[i % Math.max(1, this.nestEntrances.length)];
-      const baseAngle = entrance?.userData?.angle ?? ((i / count) * Math.PI * 2);
+      const spread = (i - (count - 1) / 2) * 0.14;
+      const baseAngle = targetAngle == null ? (entrance?.userData?.angle ?? ((i / count) * Math.PI * 2)) : targetAngle + spread;
       const radius = this.nest.radius * 0.58 + (i % 3) * 0.55;
       ant.role = "guard";
       ant.isSortieSoldier = true;
       ant.sortieTimer = SOLDIER_SORTIE_SECONDS;
       ant.sortieIndex = i;
+      ant.sortieTargetX = sortieTarget?.x ?? null;
+      ant.sortieTargetZ = sortieTarget?.z ?? null;
       ant.traits.caution = clamp(Math.max(ant.traits.caution, 0.72) + 0.12, 0, 1);
       ant.traits.persistence = clamp(Math.max(ant.traits.persistence, 0.72) + 0.12, 0, 1);
       ant.energy = 1;
