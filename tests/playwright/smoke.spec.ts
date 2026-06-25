@@ -19,6 +19,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       cssHeight: rect?.height ?? 0,
       antPopulation: sim.colony.antPopulation,
       renderedAnts: sim.ants.length,
+      deployedSoldiers: sim.deployedSoldierCount(),
       rivalAnts: sim.rivalAnts.length,
       raidPhase: sim.colony.raidState.phase,
       raidTimer: sim.colony.raidState.timer,
@@ -41,7 +42,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.cssWidth).toBeGreaterThan(300);
   expect(metrics.cssHeight).toBeGreaterThan(500);
   expect(metrics.antPopulation).toBe(12);
-  expect(metrics.renderedAnts).toBe(12);
+  expect(metrics.renderedAnts).toBe(11);
+  expect(metrics.deployedSoldiers).toBe(0);
   expect(metrics.rivalAnts).toBe(0);
   expect(metrics.raidPhase).toBe("calm");
   expect(metrics.raidTimer).toBeGreaterThan(0);
@@ -65,7 +67,6 @@ test("raidSoon query keeps normal mode but starts a raid quickly without saving"
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     const initial = {
-      expeditionOnlyMode: sim.expeditionOnlyMode,
       raidSoonMode: sim.raidSoonMode,
       bodyClass: document.body.classList.contains("is-raid-soon"),
       activeTab: sim.activeTab,
@@ -86,7 +87,6 @@ test("raidSoon query keeps normal mode but starts a raid quickly without saving"
     };
   });
 
-  expect(result.initial.expeditionOnlyMode).toBe(false);
   expect(result.initial.raidSoonMode).toBe(true);
   expect(result.initial.bodyClass).toBe(true);
   expect(result.initial.activeTab).toBe("growth");
@@ -312,209 +312,137 @@ test("upgrade click increments an available upgrade", async ({ page }) => {
   expect(after).toBe(before + 1);
 });
 
-test("expedition uses agent battle physics and renders replay agents", async ({ page }) => {
+test("soldier tab deploys nest soldiers on player command", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.colony.battleCooldownUntil = 0;
-    sim.colony.food = 800;
-    sim.colony.lifetimeFood = 1200;
-    sim.colony.antPopulation = 48;
+    sim.colony.food = 1000;
+    sim.colony.antPopulation = 36;
     sim.colony.woundedAnts = 0;
-    sim.colony.soldierAnts = 14;
-    sim.colony.territory = 2;
-    sim.colony.enemyThreat = 5;
+    sim.colony.soldierAnts = 7;
+    sim.soldierSortieCooldown = 0;
     sim.computeDerived();
-    const before = new Map(sim.ants.map((ant: any) => [ant.id, {
-      x: ant.x,
-      z: ant.z,
-      angle: ant.angle,
-      gaitPhase: ant.gaitPhase,
-      renderIndex: ant.renderInstanceIndex,
-    }]));
-    sim.startExpedition();
-    const participantIds = [...sim.expeditionReplay.participants.keys()];
-    const continuity = participantIds.map((id: number) => {
-      const ant = sim.expeditionReplay.participants.get(id);
-      const initial = before.get(id) as any;
-      return {
-        id,
-        sameInstance: sim.ants.includes(ant),
-        dx: Math.hypot(ant.x - initial.x, ant.z - initial.z),
-        headingDelta: Math.abs(Math.atan2(Math.sin(ant.angle - initial.angle), Math.cos(ant.angle - initial.angle))),
-        gaitDelta: Math.abs(ant.gaitPhase - initial.gaitPhase),
-        renderIndexBefore: initial.renderIndex,
-        renderIndexAfter: ant.renderInstanceIndex,
-      };
-    });
-    for (let i = 0; i < 20; i += 1) {
-      sim.updateExpeditionReplay(1 / 60);
-      sim.renderExpeditionReplay();
-    }
-    const renderIndexAfterUpdates = participantIds.map((id: number) => sim.expeditionReplay.participants.get(id).renderInstanceIndex);
-    return {
-      hasBattle: Boolean(sim.lastExpeditionBattle),
-      engine: sim.expeditionEngine,
-      reason: sim.lastExpeditionBattle?.reason,
-      winner: sim.lastExpeditionBattle?.winner,
-      frameLogs: sim.lastExpeditionBattle?.frameLogs?.length ?? 0,
-      forwardMotionRatio: sim.lastExpeditionBattle?.metrics?.forwardMotionRatio ?? 0,
-      contactFacingRatio: sim.lastExpeditionBattle?.metrics?.contactFacingRatio ?? 0,
-      replayActive: Boolean(sim.expeditionReplay),
-      participantCount: sim.expeditionReplay?.participants?.size ?? 0,
-      enemyVisualCount: sim.expeditionReplay?.enemyVisuals?.length ?? 0,
-      continuity,
-      renderIndexAfterUpdates,
-      diagnostics: sim.lastExpeditionDiagnostics ?? [],
-      replaySpeedChecks: [0.5, 1, 1.5].map((speed) => {
-        sim.expeditionReplay.time = 0;
-        sim.expeditionReplay.speed = speed;
-        for (let i = 0; i < 30; i += 1) sim.updateExpeditionReplay(1 / 60);
-        sim.renderExpeditionReplay();
-        return {
-          speed,
-          agents: sim.expeditionReplay.participants.size + sim.expeditionReplay.enemyVisuals.length,
-          finite: [...sim.expeditionReplay.participants.values(), ...sim.expeditionReplay.enemyVisuals].every((agent: any) =>
-            Number.isFinite(agent.x) &&
-            Number.isFinite(agent.z) &&
-            Number.isFinite(agent.angle) &&
-            Number.isFinite(agent.gaitPhase) &&
-            Number.isFinite(agent.renderInstanceIndex),
-          ),
-        };
-      }),
-      lowFpsAgents: (() => {
-        sim.expeditionReplay.time = 0;
-        sim.expeditionReplay.speed = 1;
-        sim.updateExpeditionReplay(1 / 8);
-        sim.renderExpeditionReplay();
-        return sim.expeditionReplay.participants.size + sim.expeditionReplay.enemyVisuals.length;
-      })(),
-      returnCheck: (() => {
-        const ids = [...participantIds];
-        const refs = ids.map((id: number) => sim.expeditionReplay.participants.get(id));
-        sim.expeditionReplay.time = sim.expeditionReplay.duration + 4.2;
-        sim.updateExpeditionReplay(0.1);
-        return {
-          ended: sim.expeditionReplay == null,
-          sameInstances: refs.every((ant: any) => sim.ants.includes(ant)),
-          states: refs.map((ant: any) => ant.state),
-          renderIndexes: refs.map((ant: any) => ant.renderInstanceIndex),
-        };
-      })(),
-      logText: sim.colony.battleLog.join("\n"),
-      cooldownSet: sim.colony.battleCooldownUntil > Date.now(),
-    };
-  });
-
-  expect(result.hasBattle).toBe(true);
-  expect(result.engine).toBe("agent");
-  expect(["enemy_all_retreat", "player_all_retreat", "objective_held", "timeout_draw"]).toContain(result.reason);
-  expect(["player", "enemy", "draw"]).toContain(result.winner);
-  expect(result.frameLogs).toBeGreaterThan(0);
-  expect(result.forwardMotionRatio).toBeGreaterThan(0.8);
-  expect(result.contactFacingRatio).toBeGreaterThan(0.4);
-  expect(result.replayActive).toBe(true);
-  expect(result.participantCount).toBeGreaterThan(0);
-  expect(result.enemyVisualCount).toBeGreaterThan(0);
-  for (const item of result.continuity) {
-    expect(item.sameInstance).toBe(true);
-    expect(item.dx).toBeLessThan(0.001);
-    expect(item.headingDelta).toBeLessThan(0.001);
-    expect(item.gaitDelta).toBeLessThan(0.001);
-    expect(item.renderIndexAfter).toBe(item.renderIndexBefore);
-  }
-  expect(result.renderIndexAfterUpdates).toEqual(result.continuity.map((item: any) => item.renderIndexBefore));
-  expect(result.diagnostics.some((item: any) => ["duplicate_identity", "duplicate_visual", "teleport", "invalid_state"].includes(item.code) && item.severity === "critical")).toBe(false);
-  expect(result.lowFpsAgents).toBeGreaterThan(0);
-  expect(result.returnCheck.ended).toBe(true);
-  expect(result.returnCheck.sameInstances).toBe(true);
-  expect(result.returnCheck.states.every((state: string) => !state.startsWith("expedition"))).toBe(true);
-  expect(result.returnCheck.renderIndexes).toEqual(result.continuity.map((item: any) => item.renderIndexBefore));
-  for (const check of result.replaySpeedChecks) {
-    expect(check.agents).toBeGreaterThan(0);
-    expect(check.finite).toBe(true);
-  }
-  expect(result.logText).toContain("reason:");
-  expect(result.cooldownSet).toBe(true);
-});
-
-test("expedition-only mode auto-starts isolated expedition view without saving", async ({ page }) => {
-  await waitForSimulation(page, "/?expeditionOnly=1");
-
-  const result = await page.evaluate(() => {
-    const sim = window.__ANT_SIM as any;
-    const growthTab = document.querySelector("#growthTab") as HTMLElement;
-    const statsStrip = document.querySelector(".stats-strip") as HTMLElement;
-    for (let i = 0; i < 20; i += 1) {
-      sim.updateExpeditionReplay(1 / 60);
-      sim.renderExpeditionReplay();
-    }
-    return {
-      mode: sim.expeditionOnlyMode,
-      bodyClass: document.body.classList.contains("is-expedition-only"),
+    sim.syncAntPopulation();
+    sim.setActiveTab("soldiers");
+    sim.updateStats();
+    const before = {
+      visible: sim.ants.length,
+      guards: sim.ants.filter((ant: any) => ant.role === "guard").length,
+      deployed: sim.deployedSoldierCount(),
       activeTab: sim.activeTab,
-      growthDisplay: getComputedStyle(growthTab).display,
-      statsDisplay: getComputedStyle(statsStrip).display,
-      hasBattle: Boolean(sim.lastExpeditionBattle),
-      replayActive: Boolean(sim.expeditionReplay),
-      participants: sim.expeditionReplay?.participants?.size ?? 0,
-      enemies: sim.expeditionReplay?.enemyVisuals?.length ?? 0,
-      engine: sim.expeditionEngine,
-      savedState: localStorage.getItem("ant3d.colonyState"),
-      criticalDiagnostics: (sim.lastExpeditionDiagnostics ?? [])
-        .filter((item: any) => item.severity === "critical" && ["duplicate_identity", "duplicate_visual", "teleport", "invalid_state"].includes(item.code))
-        .map((item: any) => item.code),
+      button: (document.querySelector("#soldierSortieBtn") as HTMLButtonElement).textContent,
+      tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
+    };
+    const started = sim.startSoldierSortie();
+    const deployed = sim.deployedSoldiers();
+    for (let i = 0; i < 90; i += 1) sim.updateGame(1 / 60);
+    for (const ant of deployed) {
+      ant.sortieTimer = 0;
+      ant.x = sim.nest.x;
+      ant.z = sim.nest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.setState("return");
+      ant.updateReturn(1 / 60, sim, { x: 0, z: 0 });
+    }
+    sim.flushSortieRetires();
+    sim.updateStats();
+    return {
+      before,
+      started,
+      deployedCount: deployed.length,
+      deployedRoles: deployed.map((ant: any) => ant.role),
+      spawnDistances: deployed.map((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z)),
+      afterRetire: sim.deployedSoldierCount(),
+      statusText: (document.querySelector("#soldierStatus") as HTMLElement).textContent,
+      logText: sim.colony.battleLog.join("\n"),
     };
   });
 
-  expect(result.mode).toBe(true);
-  expect(result.bodyClass).toBe(true);
-  expect(result.activeTab).toBe("expedition");
-  expect(result.growthDisplay).toBe("none");
-  expect(result.statsDisplay).toBe("none");
-  expect(result.hasBattle).toBe(true);
-  expect(result.replayActive).toBe(true);
-  expect(result.participants).toBeGreaterThan(0);
-  expect(result.enemies).toBeGreaterThan(0);
-  expect(result.engine).toBe("agent");
-  expect(result.savedState).toBeNull();
-  expect(result.criticalDiagnostics).toEqual([]);
+  expect(result.before.activeTab).toBe("soldiers");
+  expect(result.before.guards).toBe(0);
+  expect(result.before.deployed).toBe(0);
+  expect(result.before.button).toContain("兵隊を出撃");
+  expect(result.before.tabText).not.toContain("遠征");
+  expect(result.started).toBe(true);
+  expect(result.deployedCount).toBe(7);
+  expect(result.deployedRoles.every((role: string) => role === "guard")).toBe(true);
+  expect(Math.max(...result.spawnDistances)).toBeLessThan(14);
+  expect(result.afterRetire).toBe(0);
+  expect(result.statusText).toContain("再準備");
+  expect(result.logText).toContain("兵隊出撃");
 });
 
-test("expedition legacy engine flag stays isolated from agent replay", async ({ page }) => {
+test("sortied soldiers intercept raid rivals after player command", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.expeditionEngine = "legacy";
-    sim.colony.battleCooldownUntil = 0;
-    sim.colony.food = 800;
-    sim.colony.lifetimeFood = 1200;
-    sim.colony.antPopulation = 48;
+    sim.clearRaidRivals();
+    sim.colony.antPopulation = 42;
     sim.colony.woundedAnts = 0;
-    sim.colony.soldierAnts = 14;
-    sim.colony.territory = 2;
-    sim.colony.enemyThreat = 5;
-    sim.computeDerived();
-    sim.startExpedition();
+    sim.colony.soldierAnts = 6;
+    sim.soldierSortieCooldown = 0;
+    sim.syncAntPopulation();
+    const guardsBefore = sim.ants.filter((ant: any) => ant.role === "guard").length;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 7,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    rival.x = sim.nest.x + 42;
+    rival.z = sim.nest.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.fightCooldown = 0;
+    sim.colony.raidState.phase = "active";
+
+    const started = sim.startSoldierSortie();
+    const guard = sim.deployedSoldiers()[0];
+    guard.x = sim.nest.x;
+    guard.z = sim.nest.z;
+    guard.prevX = guard.x;
+    guard.prevZ = guard.z;
+    const before = Math.hypot(guard.x - rival.x, guard.z - rival.z);
+    let minDistance = before;
+    let clashStarted = false;
+    for (let i = 0; i < 210; i += 1) {
+      for (const ant of sim.deployedSoldiers()) ant.update(1 / 60, sim);
+      minDistance = Math.min(minDistance, Math.hypot(guard.x - rival.x, guard.z - rival.z));
+      clashStarted = rival.resolveAntContacts(sim) || clashStarted;
+      if (clashStarted) break;
+    }
     return {
-      engine: sim.expeditionEngine,
-      hasBattle: Boolean(sim.lastExpeditionBattle),
-      frameLogs: sim.lastExpeditionBattle?.frameLogs?.length ?? -1,
-      replayActive: Boolean(sim.expeditionReplay),
-      logText: sim.colony.battleLog.join("\n"),
-      cooldownSet: sim.colony.battleCooldownUntil > Date.now(),
+      guardsBefore,
+      started,
+      deployed: sim.deployedSoldierCount(),
+      before,
+      minDistance,
+      after: Math.hypot(guard.x - rival.x, guard.z - rival.z),
+      guardInClash: rival.clash?.ants?.includes(guard) ?? false,
+      clashStarted,
+      alarmTrails: sim.trails.filter((trail: any) => trail.kind === "alarm").length,
     };
   });
 
-  expect(result.engine).toBe("legacy");
-  expect(result.hasBattle).toBe(true);
-  expect(result.frameLogs).toBe(0);
-  expect(result.replayActive).toBe(false);
-  expect(result.logText).toContain("legacy reason:");
-  expect(result.cooldownSet).toBe(true);
+  expect(result.guardsBefore).toBe(0);
+  expect(result.started).toBe(true);
+  expect(result.deployed).toBe(6);
+  expect(result.minDistance).toBeLessThan(result.before - 10);
+  expect(result.after).toBeLessThan(result.before);
+  expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
 });
 
 test("expanded nest upgrade tree gates deeper branches and stays bounded", async ({ page }) => {
@@ -660,85 +588,6 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
   expect(raid.targetLateralSpread).toBeGreaterThan(6);
   expect(raid.minExitRadius).toBeGreaterThan(raid.worldRadius + 16);
   expect(raid.log).toContain("敵襲開始");
-});
-
-test("guard ants intercept raid rivals in normal raid combat", async ({ page }) => {
-  await waitForSimulation(page);
-
-  const result = await page.evaluate(() => {
-    const sim = window.__ANT_SIM as any;
-    sim.colony.raidState = {
-      phase: "warning",
-      timer: 0,
-      wave: 1,
-      activeCount: 1,
-      approachAngle: 0,
-      signalTimer: 0,
-      lastOutcome: "warning",
-    };
-    sim.updateRaid(0.01);
-    const rival = sim.raidRivals()[0];
-    const guard = sim.ants[0];
-
-    for (const ant of sim.ants) {
-      ant.state = "stunned";
-      ant.stun = 30;
-      ant.fleeTimer = 0;
-      ant.clashTimer = 0;
-      ant.clashRival = null;
-      ant.x = sim.nest.x;
-      ant.z = sim.nest.z;
-      ant.prevX = ant.x;
-      ant.prevZ = ant.z;
-    }
-
-    guard.role = "guard";
-    guard.state = "explore";
-    guard.stun = 0;
-    guard.fleeTimer = 0;
-    guard.clashTimer = 0;
-    guard.traits.persistence = 1;
-    guard.traits.caution = 1;
-    guard.energy = 1;
-    guard.baseSpeed = 12.5;
-    guard.x = 0;
-    guard.z = 0;
-    guard.prevX = 0;
-    guard.prevZ = 0;
-    rival.x = 42;
-    rival.z = 0;
-    rival.prevX = rival.x;
-    rival.prevZ = rival.z;
-    rival.retreat = 0;
-    rival.clash = null;
-    rival.fightCooldown = 0;
-    sim.colony.raidState.phase = "active";
-
-    const before = Math.hypot(guard.x - rival.x, guard.z - rival.z);
-    let minDistance = before;
-    let clashStarted = false;
-    for (let i = 0; i < 180; i += 1) {
-      guard.update(1 / 60, sim);
-      minDistance = Math.min(minDistance, Math.hypot(guard.x - rival.x, guard.z - rival.z));
-      clashStarted = rival.resolveAntContacts(sim) || clashStarted;
-      if (clashStarted) break;
-    }
-
-    return {
-      before,
-      minDistance,
-      after: Math.hypot(guard.x - rival.x, guard.z - rival.z),
-      guardState: guard.state,
-      guardInClash: rival.clash?.ants?.includes(guard) ?? false,
-      clashStarted,
-      alarmTrails: sim.trails.filter((trail: any) => trail.kind === "alarm").length,
-    };
-  });
-
-  expect(result.minDistance).toBeLessThan(result.before - 10);
-  expect(result.after).toBeLessThan(result.before);
-  expect(result.guardState === "explore" || result.guardState === "clash").toBe(true);
-  expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
 });
 
 test("rival ant combat grapples before the loser exits or remains", async ({ page }) => {

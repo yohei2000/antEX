@@ -229,6 +229,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           quality: sim?.quality?.label ?? null,
           antCount: sim?.ants?.length ?? null,
           colonyAnts: sim?.colony?.antPopulation ?? null,
+          deployedSoldiers: sim?.deployedSoldierCount?.() ?? null,
           colonyFood: sim?.colony?.food ?? null,
           nestLevel: sim?.colony?.nestLevel ?? null,
           territory: sim?.colony?.territory ?? null,
@@ -287,7 +288,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
     }
     if (
       metrics.colonyAnts !== 12 ||
-      metrics.antCount !== 12 ||
+      metrics.antCount !== 11 ||
+      metrics.deployedSoldiers !== 0 ||
       metrics.worldRadius < 120 ||
       metrics.foodSources < 4 ||
       metrics.predatorCount !== 0 ||
@@ -432,13 +434,25 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const capacityAfterUpgrade = sim.computeDerived().capacity;
         sim.colony.soldierAnts = 8;
         sim.colony.woundedAnts = 0;
-        sim.colony.battleCooldownUntil = 0;
-        sim.startExpedition();
-        sim.updateExpeditionReplay(1 / 60);
-        sim.renderExpeditionReplay();
+        sim.soldierSortieCooldown = 0;
+        sim.syncAntPopulation();
+        const guardsBeforeSortie = sim.ants.filter((ant) => ant.role === "guard").length;
+        const sortieStarted = sim.startSoldierSortie();
+        const deployedAfterSortie = sim.deployedSoldierCount();
+        const sortieRoles = sim.deployedSoldiers().map((ant) => ant.role);
+        const sortieSpawnMax = Math.max(...sim.deployedSoldiers().map((ant) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z)));
+        for (const ant of sim.deployedSoldiers()) {
+          ant.sortieTimer = 0;
+          ant.x = sim.nest.x;
+          ant.z = sim.nest.z;
+          ant.prevX = ant.x;
+          ant.prevZ = ant.z;
+          ant.setState("return");
+          ant.updateReturn(1 / 60, sim, { x: 0, z: 0 });
+        }
+        sim.flushSortieRetires();
         sim.saveColony();
         const saved = JSON.parse(localStorage.getItem("ant3d.colonyState"));
-        const battle = sim.lastExpeditionBattle;
         return {
           before,
           noDeliveryFoodBefore,
@@ -448,22 +462,14 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           capacityBeforeUpgrade,
           capacityAfterUpgrade,
           boughtUpgrade,
-          territoryAfterBattle: sim.colony.territory,
-          foodAfterBattle: sim.colony.food,
-          battleReason: battle?.reason,
-          battleWinner: battle?.winner,
-          expeditionEngine: sim.expeditionEngine,
-          battleFrameLogs: battle?.frameLogs?.length ?? 0,
-          battleForwardMotionRatio: battle?.metrics?.forwardMotionRatio ?? 0,
-          battleContactFacingRatio: battle?.metrics?.contactFacingRatio ?? 0,
-          replayAgents: sim.expeditionReplay ? sim.expeditionReplay.participants.size + sim.expeditionReplay.enemyVisuals.length : 0,
-          participantIds: sim.expeditionReplay ? [...sim.expeditionReplay.participants.keys()] : [],
-          criticalInspectorDiagnostics: (sim.lastExpeditionDiagnostics ?? []).filter((item) =>
-            item.severity === "critical" &&
-            ["duplicate_identity", "duplicate_visual", "teleport", "invalid_state"].includes(item.code),
-          ).length,
+          guardsBeforeSortie,
+          sortieStarted,
+          deployedAfterSortie,
+          deployedAfterRetire: sim.deployedSoldierCount(),
+          sortieRoles,
+          sortieSpawnMax,
           battleLog: sim.colony.battleLog.join("\\n"),
-          cooldownActive: sim.colony.battleCooldownUntil > Date.now(),
+          cooldownActive: sim.soldierSortieCooldown > 0,
           savedAnts: saved.antPopulation,
           savedFood: saved.food,
         };
@@ -473,16 +479,13 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       idle.returnFoodAfter <= idle.returnFoodBefore ||
       !idle.boughtUpgrade ||
       idle.capacityAfterUpgrade <= idle.capacityBeforeUpgrade ||
-      idle.expeditionEngine !== "agent" ||
-      !["enemy_all_retreat", "player_all_retreat", "objective_held", "timeout_draw"].includes(idle.battleReason) ||
-      !["player", "enemy", "draw"].includes(idle.battleWinner) ||
-      idle.battleFrameLogs <= 0 ||
-      idle.battleForwardMotionRatio <= 0.8 ||
-      idle.battleContactFacingRatio <= 0.4 ||
-      idle.replayAgents <= 0 ||
-      idle.participantIds.length <= 0 ||
-      idle.criticalInspectorDiagnostics !== 0 ||
-      !idle.battleLog.includes("reason:") ||
+      idle.guardsBeforeSortie !== 0 ||
+      !idle.sortieStarted ||
+      idle.deployedAfterSortie !== 8 ||
+      idle.deployedAfterRetire !== 0 ||
+      !idle.sortieRoles.every((role) => role === "guard") ||
+      idle.sortieSpawnMax >= 14 ||
+      !idle.battleLog.includes("兵隊出撃") ||
       !idle.cooldownActive ||
       idle.savedAnts !== 24 ||
       idle.savedFood <= 0
@@ -492,7 +495,6 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
 
     const raid = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
-        if (sim.expeditionReplay) sim.finishExpeditionReplay();
         sim.clearRaidRivals();
         sim.colony.raidState = {
           phase: "calm",

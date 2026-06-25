@@ -1,8 +1,5 @@
 // @ts-nocheck
 import * as THREE from "three";
-import { runExpeditionAgentBattle } from "./expedition/agent";
-import { runLegacyExpeditionBattle } from "./expedition/legacyAdapter";
-import { AntBattleInspector } from "./expedition/qa/AntBattleInspector";
 
 const ui = {
   world: document.querySelector("#world3d"),
@@ -24,11 +21,11 @@ const ui = {
   growthFill: document.querySelector("#growthFill"),
   upgradeList: document.querySelector("#upgradeList"),
   growthTab: document.querySelector("#growthTab"),
-  expeditionTab: document.querySelector("#expeditionTab"),
-  expeditionSoldiers: document.querySelector("#expeditionSoldiers"),
-  expeditionChance: document.querySelector("#expeditionChance"),
-  expeditionReward: document.querySelector("#expeditionReward"),
-  expeditionBtn: document.querySelector("#expeditionBtn"),
+  soldierTab: document.querySelector("#soldierTab"),
+  soldierNest: document.querySelector("#soldierNest"),
+  soldierDeployed: document.querySelector("#soldierDeployed"),
+  soldierStatus: document.querySelector("#soldierStatus"),
+  soldierSortieBtn: document.querySelector("#soldierSortieBtn"),
   battleLog: document.querySelector("#battleLog"),
   empirePanel: document.querySelector("#empirePanel"),
   panelGrip: document.querySelector("#panelGrip"),
@@ -60,6 +57,10 @@ const RIVAL_HARASSMENT_RANGE = 22;
 const RAID_GRAPPLER_RECRUIT_RANGE = 11.6;
 const RIVAL_GRAPPLER_RECRUIT_RANGE = 9.4;
 const GUARD_INTERCEPT_RANGE = 62;
+const SOLDIER_SORTIE_CAP = 12;
+const SOLDIER_SORTIE_SECONDS = 58;
+const SOLDIER_SORTIE_COOLDOWN_SECONDS = 14;
+const SOLDIER_PATROL_RADIUS = 18;
 const RAID_INITIAL_DELAY_SECONDS = 78;
 const RAID_BASE_INTERVAL_SECONDS = 132;
 const RAID_WARNING_SECONDS = 18;
@@ -77,14 +78,7 @@ const CAMERA_DISTANCE_DESKTOP = 238;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
-const IS_EXPEDITION_ONLY = DEBUG_QUERY.get("expeditionOnly") === "1" || DEBUG_QUERY.get("mode") === "expedition";
-const IS_RAID_SOON = !IS_EXPEDITION_ONLY && ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
-const EXPEDITION_ENGINE_KEY = "ant3d.expeditionEngine";
-const SUPPORTED_EXPEDITION_ENGINES = new Set(["agent", "legacy"]);
-
-function resolveExpeditionEngine(value) {
-  return SUPPORTED_EXPEDITION_ENGINES.has(value) ? value : "agent";
-}
+const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
 
 const QUALITY_PRESETS = {
   low: {
@@ -164,8 +158,6 @@ const STATE_LABELS = {
   wet: "乾燥",
   stunned: "停止",
   rescue: "救助",
-  expedition: "遠征",
-  expedition_wounded: "負傷帰巣",
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -297,7 +289,7 @@ const UPGRADE_DEFS = [
     id: "soldierTraining",
     branch: "defense",
     name: "兵隊訓練",
-    desc: "大きめの働き蟻を防衛と遠征に回す",
+    desc: "大きめの働き蟻を巣内兵隊として育てる",
     effect: "兵隊比率と攻撃力を上げる",
     max: 6,
     baseCost: 180,
@@ -708,7 +700,9 @@ class Ant3D {
     this.wounded = false;
     this.currentTask = this.state;
     this.renderInstanceIndex = id - 1;
-    this.expeditionControl = null;
+    this.isSortieSoldier = false;
+    this.sortieTimer = 0;
+    this.sortieIndex = 0;
     this.steering = { x: 0, z: 0 };
     this.sensed = {
       hazard: { x: 0, z: 0 },
@@ -740,24 +734,20 @@ class Ant3D {
   pickRole() {
     const roll = Math.random();
     if (roll < 0.22) return "scout";
-    if (roll < 0.72) return "worker";
-    if (roll < 0.9) return "nurse";
-    return "guard";
+    if (roll < 0.82) return "worker";
+    return "nurse";
   }
 
   update(dt, sim) {
     this.prevX = this.x;
     this.prevZ = this.z;
     this.prevAngle = this.angle;
-    if (this.expeditionControl) {
-      this.currentTask = this.state;
-      return;
-    }
     this.stateTime += dt;
     this.homeTimer += dt;
     this.wet = Math.max(0, this.wet - dt * 0.11);
     this.energy = clamp(this.energy + dt * 0.012, 0, 1);
     this.lastTrail += dt;
+    if (this.isSortieSoldier) this.sortieTimer = Math.max(0, this.sortieTimer - dt);
 
     if (this.clashTimer > 0 || this.state === "clash") {
       this.updateClash(dt, sim);
@@ -838,61 +828,6 @@ class Ant3D {
       this.stateTime = 0;
     }
     this.currentTask = nextState;
-  }
-
-  beginExpeditionControl(phase, frame) {
-    this.expeditionControl = {
-      phase,
-      startedAtX: this.x,
-      startedAtZ: this.z,
-      startedAtHeading: this.angle,
-      startedAtGait: this.gaitPhase,
-    };
-    this.carrying = 0;
-    this.foodSourceId = null;
-    this.clashRival = null;
-    this.clashTimer = 0;
-    this.fleeTimer = 0;
-    this.stun = 0;
-    this.setState("expedition");
-    if (frame) this.applyExpeditionFrame(frame);
-  }
-
-  applyExpeditionFrame(frame) {
-    this.prevX = this.x;
-    this.prevZ = this.z;
-    this.prevAngle = this.angle;
-    this.x = frame.x;
-    this.z = frame.y;
-    this.vx = frame.vx ?? 0;
-    this.vz = frame.vy ?? 0;
-    this.angle = Math.PI / 2 - frame.heading;
-    this.gaitPhase = frame.gaitPhase ?? this.gaitPhase;
-    this.health = clamp(frame.hp ?? this.health, 0, 1);
-    this.stamina = clamp(frame.stamina ?? this.stamina, 0, 1);
-    this.wounded = this.wounded || this.health < 0.68 || frame.state === "retreat";
-    this.currentTask = frame.state ?? "expedition";
-    if (frame.renderIndex != null) this.renderInstanceIndex = frame.renderIndex;
-    this.setState(this.wounded ? "expedition_wounded" : "expedition");
-  }
-
-  finishExpeditionControl(finalFrame, nest) {
-    if (finalFrame) this.applyExpeditionFrame(finalFrame);
-    this.expeditionControl = null;
-    this.fatigue = clamp(1 - this.stamina, 0, 1);
-    if (this.wounded || this.health < 0.72) {
-      this.wounded = true;
-      this.fleeFromX = this.x;
-      this.fleeFromZ = this.z;
-      this.fleeTimer = 3.2;
-      this.setState("flee");
-    } else {
-      this.setState(this.carrying > 0 ? "return" : "explore");
-    }
-    if (nest && this.wounded) {
-      const d = distance2(this.x, this.z, nest.x, nest.z);
-      if (d < nest.radius * 0.8) this.setState("wet");
-    }
   }
 
   startRivalClash(rival, anchorX, anchorZ, duration = RIVAL_CLASH_DURATION) {
@@ -1053,7 +988,8 @@ class Ant3D {
   }
 
   updateExplore(dt, sim, steering, sensed) {
-    if (this.role === "guard" && this.updateGuardIntercept(dt, sim, steering)) return;
+    if (this.role === "guard" && this.isSortieSoldier && this.updateGuardIntercept(dt, sim, steering)) return;
+    if (this.role === "guard" && this.isSortieSoldier && this.updateSortiePatrol(dt, sim, steering)) return;
 
     if (sensed.closestFood && sensed.foodDistance < sensed.closestFood.radius + 1.5 && this.role !== "guard") {
       this.carrying = Math.min(1, sensed.closestFood.amount);
@@ -1117,6 +1053,23 @@ class Ant3D {
     return true;
   }
 
+  updateSortiePatrol(dt, sim, steering) {
+    if (this.sortieTimer <= 0 && this.state !== "return") {
+      this.setState("return");
+      return true;
+    }
+    const angle = (this.sortieIndex * 1.74 + this.id * 0.37) % (Math.PI * 2);
+    const radius = sim.nest.radius + SOLDIER_PATROL_RADIUS + (this.sortieIndex % 3) * 2.6;
+    const targetX = sim.nest.x + Math.cos(angle) * radius;
+    const targetZ = sim.nest.z + Math.sin(angle) * radius;
+    const d = distance2(this.x, this.z, targetX, targetZ) || 1;
+    steering.x += ((targetX - this.x) / d) * 1.45;
+    steering.z += ((targetZ - this.z) / d) * 1.45;
+    if (d < 3.8) this.wander += dt * 1.8;
+    this.energy = clamp(this.energy - dt * 0.01, 0, 1);
+    return true;
+  }
+
   updateReturn(dt, sim, steering) {
     const d = distance2(this.x, this.z, sim.nest.x, sim.nest.z) || 1;
     steering.x += ((sim.nest.x - this.x) / d) * (1.55 + this.traits.persistence);
@@ -1128,6 +1081,10 @@ class Ant3D {
       this.foodSourceId = null;
       this.energy = 1;
       this.homeTimer = 0;
+      if (this.isSortieSoldier) {
+        sim.queueSortieRetire(this);
+        return;
+      }
       this.setState("explore");
     }
   }
@@ -1243,11 +1200,11 @@ class Ant3D {
       }
     }
 
-    if (this.role === "guard" || this.traits.persistence > 0.72) {
+    if ((this.role === "guard" && this.isSortieSoldier) || this.traits.persistence > 0.72) {
       const rival = sim.findRivalThreat(this.x, this.z, 18);
       if (rival) {
         const d = distance2(this.x, this.z, rival.x, rival.z) || 1;
-        const pressure = this.role === "guard" ? 1.35 : 0.68;
+        const pressure = this.role === "guard" && this.isSortieSoldier ? 1.35 : 0.68;
         steering.x += ((rival.x - this.x) / d) * pressure;
         steering.z += ((rival.z - this.z) / d) * pressure;
       }
@@ -1548,7 +1505,7 @@ class RivalAnt3D {
     const range = this.isRaidRival ? RAID_HARASSMENT_RANGE : RIVAL_HARASSMENT_RANGE;
     const baseScore = this.isRaidRival ? 42 : 30;
     for (const ant of sim.ants) {
-      if (ant.expeditionControl || ant.state === "stunned" || ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0) continue;
+      if (ant.state === "stunned" || ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0) continue;
       const d = distance2(this.x, this.z, ant.x, ant.z);
       if (d > range) continue;
       const nestDistance = distance2(ant.x, ant.z, sim.nest.x, sim.nest.z);
@@ -1677,7 +1634,6 @@ class RivalAnt3D {
     const candidates = sim.ants
       .filter((ant) =>
         !clash.ants.includes(ant) &&
-        !ant.expeditionControl &&
         ant.state !== "stunned" &&
         ant.state !== "flee" &&
         ant.fleeTimer <= 0 &&
@@ -1934,65 +1890,6 @@ class RivalAnt3D {
   }
 }
 
-class ExpeditionEnemyVisual {
-  constructor(id, renderIndex = null) {
-    this.id = id;
-    this.isRival = true;
-    this.isExpeditionEnemy = true;
-    this.renderInstanceIndex = renderIndex;
-    this.state = "rival";
-    this.prevX = 0;
-    this.prevZ = 0;
-    this.x = 0;
-    this.z = 0;
-    this.prevAngle = Math.PI;
-    this.angle = Math.PI;
-    this.vx = 0;
-    this.vz = 0;
-    this.gaitPhase = 0;
-    this.animationSeed = id * 1103515245;
-    this.scale = 1.18;
-    this.health = 1;
-    this.currentTask = "spawn";
-    this.spawnReason = "enemy_from_edge";
-  }
-
-  update() {
-    // Controlled by expedition frame logs.
-  }
-
-  applyExpeditionFrame(frame) {
-    this.prevX = this.x;
-    this.prevZ = this.z;
-    this.prevAngle = this.angle;
-    this.x = frame.x;
-    this.z = frame.y;
-    this.vx = frame.vx ?? 0;
-    this.vz = frame.vy ?? 0;
-    this.angle = Math.PI / 2 - frame.heading;
-    this.gaitPhase = frame.gaitPhase ?? this.gaitPhase;
-    this.health = clamp(frame.hp ?? this.health, 0, 1);
-    this.currentTask = frame.state ?? "expedition";
-    this.spawnReason = frame.spawnReason ?? this.spawnReason;
-    if (frame.renderIndex != null) this.renderInstanceIndex = frame.renderIndex;
-  }
-
-  renderState(_sim, alpha) {
-    return {
-      x: this.prevX + (this.x - this.prevX) * alpha,
-      z: this.prevZ + (this.z - this.prevZ) * alpha,
-      angle: this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha,
-      y: 0.24 + Math.sin(this.gaitPhase + this.animationSeed * 0.000001) * 0.012,
-      scale: this.scale,
-      state: "rival",
-      carrying: 0,
-      gaitPhase: this.gaitPhase,
-      renderIndex: this.renderInstanceIndex,
-      id: this.id,
-    };
-  }
-}
-
 const ANT_VISUAL_SCALE = 0.46;
 
 const ANT_BODY_PARTS = [
@@ -2088,7 +1985,6 @@ class AntRenderSystem {
   }
 
   keyFor(ant) {
-    if (ant.isExpeditionEnemy) return `expedition-enemy:${ant.id}`;
     return `${ant.isRival ? "rival" : "colony"}:${ant.id}`;
   }
 
@@ -2293,16 +2189,12 @@ class AntColony3D {
     this.tool = "inspect";
     this.paused = false;
     this.timeScale = 1;
-    this.expeditionOnlyMode = IS_EXPEDITION_ONLY;
     this.raidSoonMode = IS_RAID_SOON;
-    this.expeditionOnlyNextStartAt = 0;
-    document.body.classList.toggle("is-expedition-only", this.expeditionOnlyMode);
     document.body.classList.toggle("is-raid-soon", this.raidSoonMode);
     this.worldRadius = 132;
     this.nest = { x: -42, z: 12, radius: 8 };
-    this.colony = this.expeditionOnlyMode ? createDefaultColony() : readColonyState();
+    this.colony = readColonyState();
     this.derived = {};
-    this.expeditionEngine = resolveExpeditionEngine(DEBUG_QUERY.get("expeditionEngine") ?? readStorage(EXPEDITION_ENGINE_KEY));
     this.saveTimer = 0;
     this.activeTab = "growth";
     {
@@ -2331,10 +2223,8 @@ class AntColony3D {
     this.colonyCorpses = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer = [];
-    this.expeditionReplay = null;
-    this.lastExpeditionBattle = null;
-    this.expeditionInspector = new AntBattleInspector();
-    this.lastExpeditionDiagnostics = [];
+    this.soldierSortieCooldown = 0;
+    this.sortieRetireQueue = [];
     this.lastUiUpdate = 0;
     this.resizeWidth = 0;
     this.resizeHeight = 0;
@@ -2353,16 +2243,14 @@ class AntColony3D {
     this.dynamicObjects = new Set();
 
     this.assetService.preloadProceduralAssets();
-    if (!this.expeditionOnlyMode) this.applyOfflineProgress(Date.now());
+    this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP);
     this.createWorld();
-    this.expeditionAgentRenderer = null;
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
     this.reset(false);
     if (this.raidSoonMode) this.activateRaidSoonMode();
-    if (this.expeditionOnlyMode) this.activateExpeditionOnlyMode();
     this.resize();
     window.__ANT_SIM = this;
     this.prewarmAndStart();
@@ -2477,8 +2365,6 @@ class AntColony3D {
       rescue: new THREE.MeshStandardMaterial({ color: 0x17645a, roughness: 0.7 }),
       flee: new THREE.MeshStandardMaterial({ color: 0x49332a, roughness: 0.78 }),
       clash: new THREE.MeshStandardMaterial({ color: 0x5f2f24, roughness: 0.76 }),
-      expedition: new THREE.MeshStandardMaterial({ color: 0x20170f, roughness: 0.74 }),
-      expedition_wounded: new THREE.MeshStandardMaterial({ color: 0x4f2a22, roughness: 0.82 }),
       rival: this.materials.antRival,
     };
 
@@ -2712,18 +2598,17 @@ class AntColony3D {
       event.preventDefault();
       this.buyUpgrade(button.dataset.upgrade);
     });
-    ui.expeditionBtn.addEventListener("click", () => this.startExpedition());
+    ui.soldierSortieBtn.addEventListener("click", () => this.startSoldierSortie());
 
     const canvas = this.renderer.domElement;
     this.input = new InputManager(this, canvas);
   }
 
   setActiveTab(tab) {
-    this.activeTab = tab === "expedition" ? "expedition" : "growth";
-    if (this.expeditionOnlyMode) this.activeTab = "expedition";
+    this.activeTab = tab === "soldiers" ? "soldiers" : "growth";
     ui.buttons.forEach((item) => item.classList.toggle("active", item.dataset.tab === this.activeTab));
     ui.growthTab.classList.toggle("active", this.activeTab === "growth");
-    ui.expeditionTab.classList.toggle("active", this.activeTab === "expedition");
+    ui.soldierTab.classList.toggle("active", this.activeTab === "soldiers");
   }
 
   bindPanelGestures() {
@@ -2789,11 +2674,8 @@ class AntColony3D {
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.renderAntBuffer.length = 0;
-    this.expeditionReplay = null;
-    this.expeditionInspector = new AntBattleInspector();
-    this.lastExpeditionDiagnostics = [];
-    this.expeditionAgentRenderer?.setVisible(false);
-    this.expeditionAgentRenderer?.render([]);
+    this.soldierSortieCooldown = 0;
+    this.sortieRetireQueue = [];
     this.antRenderer?.beginFrame();
     this.antRenderer?.endFrame();
     this.collectedFood = 0;
@@ -2812,64 +2694,12 @@ class AntColony3D {
     this.updateStats();
   }
 
-  activateExpeditionOnlyMode() {
-    this.prepareExpeditionOnlyColony();
-    this.setActiveTab("expedition");
-    this.setPanelCompact(window.innerWidth < 680, false);
-    this.cameraTarget.set(-2, 0, 8);
-    this.targetCameraDistance = window.innerWidth < 680 ? 205 : 188;
-    this.pushLog("遠征確認モード");
-    this.updateStats();
-    this.startExpedition();
-  }
-
   activateRaidSoonMode() {
-    if (this.expeditionOnlyMode) return;
     const raid = this.ensureRaidState();
     if (raid.phase === "calm") raid.timer = Math.min(Math.max(0.2, raid.timer), RAID_SOON_CALM_SECONDS);
     else if (raid.phase === "warning") raid.timer = Math.min(Math.max(0.2, raid.timer), RAID_SOON_WARNING_SECONDS);
     else if (raid.phase === "recovering") raid.timer = Math.min(Math.max(0.2, raid.timer), RAID_SOON_CALM_SECONDS);
     this.updateStats();
-  }
-
-  prepareExpeditionOnlyColony() {
-    if (!this.expeditionOnlyMode || this.expeditionReplay) return;
-    this.colony.food = 1200;
-    this.colony.lifetimeFood = Math.max(this.colony.lifetimeFood, 2000);
-    this.colony.antPopulation = 48;
-    this.colony.woundedAnts = 0;
-    this.colony.soldierAnts = 16;
-    this.colony.nestLevel = Math.max(this.colony.nestLevel, 4);
-    this.colony.territory = Math.max(this.colony.territory, 3);
-    this.colony.enemyThreat = 5.5;
-    this.colony.battleCooldownUntil = 0;
-    this.colony.hatchProgress = 0;
-    for (const ant of this.ants) {
-      ant.expeditionControl = null;
-      ant.health = 1;
-      ant.wounded = false;
-      ant.fatigue = 0;
-      ant.energy = Math.max(ant.energy, 0.82);
-      ant.stamina = ant.energy;
-      ant.fleeTimer = 0;
-      if (ant.state === "expedition" || ant.state === "expedition_wounded" || ant.state === "flee") ant.setState("explore");
-    }
-    this.computeDerived();
-    this.syncAntPopulation();
-    this.updateColonyVisuals();
-    this.renderUpgrades();
-  }
-
-  updateExpeditionOnlyMode() {
-    if (!this.expeditionOnlyMode) return;
-    if (this.expeditionReplay?.objective) {
-      this.cameraTarget.set(this.expeditionReplay.objective.x, 0, this.expeditionReplay.objective.y);
-    }
-    if (!this.expeditionReplay && this.expeditionOnlyNextStartAt > 0 && Date.now() >= this.expeditionOnlyNextStartAt) {
-      this.prepareExpeditionOnlyColony();
-      this.expeditionOnlyNextStartAt = 0;
-      this.startExpedition();
-    }
   }
 
   computeDerived() {
@@ -2990,14 +2820,19 @@ class AntColony3D {
   }
 
   syncAntPopulation() {
-    const target = Math.floor(clamp(this.colony.antPopulation - this.colony.woundedAnts, 1, DISPLAY_ANT_CAP));
+    const d = this.computeDerived();
+    const deployed = this.deployedSoldierCount();
+    const workerTarget = Math.floor(clamp(d.workers, 1, Math.max(1, DISPLAY_ANT_CAP - deployed)));
+    const target = Math.floor(clamp(workerTarget + deployed, 1, DISPLAY_ANT_CAP));
+    for (const ant of this.ants) {
+      if (ant.role === "guard" && !ant.isSortieSoldier) ant.role = "worker";
+    }
     while (this.ants.length < target) this.ants.push(new Ant3D(this.nextAntId++, this));
-    if (this.expeditionReplay && this.ants.length > target) return;
     while (this.ants.length > target) {
       let removeIndex = -1;
       for (let i = this.ants.length - 1; i >= 0; i -= 1) {
         const ant = this.ants[i];
-        if (!ant.expeditionControl && !ant.wounded && ant.state !== "flee" && ant.state !== "expedition" && ant.state !== "expedition_wounded") {
+        if (!ant.isSortieSoldier && !ant.wounded && ant.state !== "flee") {
           removeIndex = i;
           break;
         }
@@ -3016,7 +2851,7 @@ class AntColony3D {
   }
 
   saveColony() {
-    if (!this.colony || this.expeditionOnlyMode || this.raidSoonMode) return;
+    if (!this.colony || this.raidSoonMode) return;
     this.colony.lastSavedAt = Date.now();
     writeStorage(SAVE_KEY, JSON.stringify(this.colony));
   }
@@ -3072,323 +2907,117 @@ class AntColony3D {
     return true;
   }
 
-  startExpedition() {
-    const now = Date.now();
-    this.expeditionEngine = resolveExpeditionEngine(this.expeditionEngine);
-    if (this.expeditionReplay) return;
-    if (now < this.colony.battleCooldownUntil) return;
+  deployedSoldiers() {
+    return this.ants.filter((ant) => ant.isSortieSoldier);
+  }
+
+  deployedSoldierCount() {
+    return this.deployedSoldiers().length;
+  }
+
+  availableSortieSoldiers() {
     const d = this.computeDerived();
-    const soldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
-    if (soldiers < 1) {
-      this.pushLog("遠征には兵隊が1匹以上必要");
+    return Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)) - this.deployedSoldierCount());
+  }
+
+  plannedSortieCount() {
+    return Math.max(0, Math.floor(Math.min(this.availableSortieSoldiers(), SOLDIER_SORTIE_CAP)));
+  }
+
+  makeRoomForSortie(count) {
+    const desiredMax = Math.max(1, DISPLAY_ANT_CAP - count);
+    while (this.ants.length > desiredMax) {
+      let removeIndex = -1;
+      for (let i = this.ants.length - 1; i >= 0; i -= 1) {
+        const ant = this.ants[i];
+        if (!ant.isSortieSoldier && !ant.wounded && ant.state !== "clash" && ant.state !== "flee") {
+          removeIndex = i;
+          break;
+        }
+      }
+      if (removeIndex < 0) break;
+      const [removed] = this.ants.splice(removeIndex, 1);
+      this.antRenderer?.releaseRenderObject(removed);
+    }
+  }
+
+  startSoldierSortie() {
+    if (this.soldierSortieCooldown > 0) return false;
+    const count = this.plannedSortieCount();
+    if (count < 1) {
+      this.pushLog("出撃できる兵隊がいない");
       this.updateStats();
-      return;
+      return false;
     }
-    const assigned = Math.max(1, Math.floor(soldiers * 0.65));
-    const participants = this.selectExpeditionParticipants(assigned);
-    if (participants.length < 1) {
-      this.pushLog("遠征に参加できる既存個体がいない");
-      this.updateStats();
-      return;
+
+    this.makeRoomForSortie(count);
+    for (let i = 0; i < count; i += 1) {
+      const ant = new Ant3D(this.nextAntId++, this);
+      const entrance = this.nestEntrances?.[i % Math.max(1, this.nestEntrances.length)];
+      const baseAngle = entrance?.userData?.angle ?? ((i / count) * Math.PI * 2);
+      const radius = this.nest.radius * 0.58 + (i % 3) * 0.55;
+      ant.role = "guard";
+      ant.isSortieSoldier = true;
+      ant.sortieTimer = SOLDIER_SORTIE_SECONDS;
+      ant.sortieIndex = i;
+      ant.traits.caution = clamp(Math.max(ant.traits.caution, 0.72) + 0.12, 0, 1);
+      ant.traits.persistence = clamp(Math.max(ant.traits.persistence, 0.72) + 0.12, 0, 1);
+      ant.energy = 1;
+      ant.stamina = 1;
+      ant.carrying = 0;
+      ant.foodSourceId = null;
+      ant.state = "explore";
+      ant.currentTask = "sortie";
+      ant.x = this.nest.x + Math.cos(baseAngle) * radius;
+      ant.z = this.nest.z + Math.sin(baseAngle) * radius;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.angle = baseAngle;
+      this.ants.push(ant);
+      this.antRenderer?.assignRenderIndex(ant);
     }
-    const objective = this.expeditionObjectiveFor(participants);
-    const seed = (
-      (now & 0xffffffff) ^
-      (participants.length * 2654435761) ^
-      (this.colony.territory * 2246822519) ^
-      Math.floor(this.colony.enemyThreat * 1000)
-    ) >>> 0;
-    const battleInput = {
-      seed,
-      assignedSoldiers: participants.length,
-      activeAnts: d.activeAnts,
-      soldierAnts: soldiers,
-      territory: this.colony.territory,
-      enemyThreat: this.colony.enemyThreat,
-      attackPower: d.attackPower,
-      defensePower: d.defensePower,
-      recoveryPerSecond: d.recoveryPerSecond,
-      threatGrowthMultiplier: d.threatGrowthMultiplier,
-      playerSeeds: participants.map((ant) => this.antToAgentSeed(ant)),
-      objective,
-      worldLimit: this.worldRadius,
-    };
-    const outcome = this.expeditionEngine === "legacy"
-      ? runLegacyExpeditionBattle(battleInput)
-      : runExpeditionAgentBattle(battleInput);
-    this.lastExpeditionBattle = outcome.battle;
-    if (outcome.success) {
-      this.colony.food += outcome.rewardFood;
-      this.colony.lifetimeFood += outcome.rewardFood;
-      this.colony.territory += outcome.territoryDelta;
-      this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat + outcome.threatDelta);
-      this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + outcome.wounded);
-      this.pushLog(`遠征成功: 食料+${outcome.rewardFood} / 領土+${outcome.territoryDelta}`);
-    } else {
-      this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + outcome.wounded);
-      this.colony.food = Math.max(0, this.colony.food - outcome.foodLoss);
-      this.colony.enemyThreat += outcome.threatDelta;
-      this.pushLog(`遠征失敗: 負傷${outcome.wounded} / ${outcome.reason}`);
-    }
-    for (const line of outcome.diagnosis.slice(0, 2).reverse()) this.pushLog(line);
-    if (outcome.battle.frameLogs?.length) this.startExpeditionReplay(outcome.battle, participants, objective);
-    else {
-      this.expeditionReplay = null;
-      this.expeditionAgentRenderer?.setVisible(false);
-      this.expeditionAgentRenderer?.render([]);
-    }
-    this.colony.battleCooldownUntil = now + 45000;
-    this.syncAntPopulation();
-    this.renderUpgrades();
+
+    this.soldierSortieCooldown = SOLDIER_SORTIE_COOLDOWN_SECONDS;
+    this.pushLog(`兵隊出撃: ${count}匹が巣口から防衛へ`);
     this.updateStats();
     this.saveColony();
+    return true;
   }
 
-  selectExpeditionParticipants(assigned) {
-    const available = this.ants.filter((ant) =>
-      !ant.expeditionControl &&
-      ant.state !== "stunned" &&
-      ant.state !== "clash" &&
-      ant.fleeTimer <= 0 &&
-      ant.health > 0.12,
-    );
-    const roleRank = { guard: 0, worker: 1, scout: 2, nurse: 3 };
-    available.sort((a, b) => {
-      const role = (roleRank[a.role] ?? 9) - (roleRank[b.role] ?? 9);
-      if (role) return role;
-      const energy = b.energy - a.energy;
-      if (Math.abs(energy) > 0.0001) return energy;
-      return a.id - b.id;
-    });
-    return available.slice(0, Math.min(assigned, available.length));
+  recallSortieSoldiers(reason = "timeout") {
+    for (const ant of this.deployedSoldiers()) {
+      if (ant.state === "clash") continue;
+      ant.sortieTimer = 0;
+      ant.carrying = 0;
+      ant.foodSourceId = null;
+      ant.setState("return");
+    }
+    if (reason === "raid-clear" && this.deployedSoldierCount() > 0) this.pushLog("兵隊帰還: 敵襲終了で巣へ戻る");
   }
 
-  expeditionObjectiveFor(participants) {
-    const count = Math.max(1, participants.length);
-    const center = participants.reduce((acc, ant) => {
-      acc.x += ant.x;
-      acc.z += ant.z;
-      return acc;
-    }, { x: 0, z: 0 });
-    center.x /= count;
-    center.z /= count;
-    const towardField = { x: center.x + 28, z: center.z - 4 };
-    const d = Math.hypot(towardField.x, towardField.z);
-    if (d > this.worldRadius * 0.78) {
-      const k = (this.worldRadius * 0.78) / d;
-      towardField.x *= k;
-      towardField.z *= k;
-    }
-    return { x: towardField.x, y: towardField.z };
+  queueSortieRetire(ant) {
+    if (!ant?.isSortieSoldier || this.sortieRetireQueue.includes(ant)) return;
+    this.sortieRetireQueue.push(ant);
   }
 
-  antToAgentSeed(ant) {
-    const speed = Math.hypot(ant.vx ?? 0, ant.vz ?? 0);
-    const velocityScale = speed > 4 ? 4 / speed : 1;
-    return {
-      id: ant.id,
-      side: "player",
-      position: { x: ant.x, y: ant.z },
-      velocity: { x: (ant.vx ?? 0) * velocityScale, y: (ant.vz ?? 0) * velocityScale },
-      heading: Math.PI / 2 - ant.angle,
-      gaitPhase: ant.gaitPhase,
-      bodyScale: ant.bodyScale,
-      animationSeed: ant.animationSeed,
-      currentTask: ant.state,
-      renderIndex: ant.renderInstanceIndex,
-      hp: ant.health,
-      stamina: ant.stamina,
-      wounded: ant.wounded,
-      spawnReason: "existing_colony_ant",
-      worldLimit: this.worldRadius,
-    };
+  flushSortieRetires() {
+    if (!this.sortieRetireQueue.length) return;
+    for (const ant of this.sortieRetireQueue.splice(0)) {
+      const index = this.ants.indexOf(ant);
+      if (index < 0) continue;
+      this.ants.splice(index, 1);
+      this.antRenderer?.releaseRenderObject(ant);
+    }
+    this.updateStats();
   }
 
-  startExpeditionReplay(battle, participants = [], objective = { x: 0, y: 0 }) {
-    this.expeditionInspector = new AntBattleInspector();
-    this.lastExpeditionDiagnostics = [];
-    const framesById = new Map();
-    for (const frame of battle.frameLogs) {
-      const list = framesById.get(frame.id);
-      if (list) list.push(frame);
-      else framesById.set(frame.id, [frame]);
-    }
-    const participantMap = new Map(participants.map((ant) => [ant.id, ant]));
-    const enemyVisuals = [];
-    for (const ant of participants) this.antRenderer?.assignRenderIndex(ant);
-    for (const id of framesById.keys()) {
-      if (participantMap.has(id)) continue;
-      const first = framesById.get(id)?.[0];
-      const enemy = new ExpeditionEnemyVisual(id, first?.renderIndex ?? null);
-      this.antRenderer?.assignRenderIndex(enemy);
-      if (first) enemy.applyExpeditionFrame(first);
-      enemyVisuals.push(enemy);
-      this.rivalAnts.push(enemy);
-    }
-    this.lastExpeditionBattle = battle;
-    this.expeditionReplay = {
-      battle,
-      framesById,
-      ids: [...framesById.keys()].sort((a, b) => a - b),
-      participants: participantMap,
-      enemyVisuals,
-      objective,
-      time: 0,
-      duration: Math.max(1, battle.steps / 60),
-      speed: 1,
-      phase: "summon",
-      diagnostics: [],
-      inspectorStarted: false,
-    };
-    for (const ant of participants) {
-      const first = this.sampleExpeditionFrame(framesById.get(ant.id) ?? [], 0);
-      ant.beginExpeditionControl("summon", first);
-    }
-    this.expeditionAgentRenderer?.setVisible(false);
-    this.expeditionAgentRenderer?.render([]);
-  }
-
-  updateExpeditionReplay(dt) {
-    const replay = this.expeditionReplay;
-    if (!replay) return;
-    replay.time += dt * replay.speed;
-    replay.phase = replay.time < 1.2 ? "summon" : replay.time < replay.duration * 0.34 ? "approach" : "engage";
-    if (replay.time > replay.duration + 4) {
-      this.finishExpeditionReplay();
-    }
-  }
-
-  renderExpeditionReplay() {
-    const replay = this.expeditionReplay;
-    if (!replay) return;
-    const step = Math.min(replay.battle.steps, replay.time * 60);
-    for (const id of replay.ids) {
-      const frames = replay.framesById.get(id);
-      if (!frames?.length) continue;
-      const current = this.sampleExpeditionFrame(frames, step);
-      if (!current) continue;
-      const ant = replay.participants.get(id);
-      if (ant) ant.applyExpeditionFrame(current);
-      else {
-        const enemy = replay.enemyVisuals.find((item) => item.id === id);
-        if (enemy) enemy.applyExpeditionFrame(current);
-      }
-    }
-    this.inspectExpeditionReplay(replay);
-  }
-
-  inspectExpeditionReplay(replay) {
-    const events = [];
-    if (!replay.inspectorStarted) {
-      for (const id of replay.participants.keys()) events.push({ type: "spawn", antId: id, reason: "existing_colony_ant" });
-      for (const enemy of replay.enemyVisuals) events.push({ type: "spawn", antId: enemy.id, reason: enemy.spawnReason });
-      replay.inspectorStarted = true;
-    }
-    const ants = [];
-    for (const ant of replay.participants.values()) {
-      ants.push({
-        id: ant.id,
-        position: { x: ant.x, y: ant.z },
-        velocity: { x: ant.vx ?? 0, y: ant.vz ?? 0 },
-        heading: Math.PI / 2 - ant.angle,
-        state: ant.currentTask ?? ant.state,
-        renderIndex: ant.renderInstanceIndex ?? null,
-        health: ant.health,
-        gaitPhase: ant.gaitPhase,
-      });
-    }
-    for (const enemy of replay.enemyVisuals) {
-      ants.push({
-        id: enemy.id,
-        position: { x: enemy.x, y: enemy.z },
-        velocity: { x: enemy.vx ?? 0, y: enemy.vz ?? 0 },
-        heading: Math.PI / 2 - enemy.angle,
-        state: enemy.currentTask ?? enemy.state,
-        renderIndex: enemy.renderInstanceIndex ?? null,
-        health: enemy.health,
-        gaitPhase: enemy.gaitPhase,
-      });
-    }
-    const perf = {
-      frameTimeMs: this.debugPanel?.frameMs ?? 0,
-      simUpdateMs: 0,
-      renderMs: 0,
-      inspectorMs: 0,
-      fixedStepCount: 1,
-      fixedStepBacklogMs: this.frameAccumulator * 1000,
-      antCountTotal: this.ants.length + this.rivalAnts.length,
-      battleAntCount: ants.length,
-      visibleAntCount: this.ants.length + this.rivalAnts.length,
-      collisionPairCount: 0,
-      spatialHashBucketCount: 0,
-      maxBucketSize: 0,
-      stateTransitionCount: 0,
-      drawCallCount: this.renderer?.info?.render?.calls ?? 0,
-      instanceUpdateCount: (this.ants.length + this.rivalAnts.length) * (ANT_BODY_PARTS.length + ANT_APPENDAGE_SEGMENTS.length),
-      heapUsedMB: performance?.memory?.usedJSHeapSize ? performance.memory.usedJSHeapSize / 1024 / 1024 : undefined,
-      longTaskCount: 0,
-    };
-    const start = performance.now();
-    const diagnostics = this.expeditionInspector.inspect({
-      time: replay.time,
-      ants,
-      events,
-      battlePhase: replay.phase,
-      perf,
-    });
-    perf.inspectorMs = performance.now() - start;
-    replay.diagnostics.push(...diagnostics);
-    this.lastExpeditionDiagnostics = replay.diagnostics.slice(-24);
-  }
-
-  sampleExpeditionFrame(frames, step) {
-    if (!frames?.length) return null;
-    if (step <= frames[0].step) return frames[0];
-    const last = frames[frames.length - 1];
-    if (step >= last.step) return last;
-    let lo = 0;
-    let hi = frames.length - 1;
-    while (lo + 1 < hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      if (frames[mid].step <= step) lo = mid;
-      else hi = mid;
-    }
-    const a = frames[lo];
-    const b = frames[hi];
-    const t = clamp((step - a.step) / Math.max(1, b.step - a.step), 0, 1);
-    const heading = normAngle(a.heading + normAngle(b.heading - a.heading) * t);
-    return {
-      ...b,
-      x: a.x + (b.x - a.x) * t,
-      y: a.y + (b.y - a.y) * t,
-      vx: a.vx + (b.vx - a.vx) * t,
-      vy: a.vy + (b.vy - a.vy) * t,
-      heading,
-      gaitPhase: a.gaitPhase + (b.gaitPhase - a.gaitPhase) * t,
-      hp: a.hp + (b.hp - a.hp) * t,
-    };
-  }
-
-  finishExpeditionReplay() {
-    const replay = this.expeditionReplay;
-    if (!replay) return;
-    for (const [id, ant] of replay.participants.entries()) {
-      const frames = replay.framesById.get(id) ?? [];
-      ant.finishExpeditionControl(frames[frames.length - 1], this.nest);
-    }
-    for (const enemy of replay.enemyVisuals) {
-      const index = this.rivalAnts.indexOf(enemy);
-      if (index >= 0) this.rivalAnts.splice(index, 1);
-      this.antRenderer?.releaseRenderObject(enemy);
-    }
-    this.expeditionAgentRenderer?.setVisible(false);
-    this.expeditionAgentRenderer?.render([]);
-    this.expeditionReplay = null;
-    this.syncAntPopulation();
-    if (this.expeditionOnlyMode) {
-      this.colony.battleCooldownUntil = 0;
-      this.expeditionOnlyNextStartAt = Date.now() + 1400;
-      this.updateStats();
+  updateSoldierSorties(dt) {
+    this.soldierSortieCooldown = Math.max(0, this.soldierSortieCooldown - dt);
+    const raid = this.ensureRaidState();
+    const raidLive = raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating";
+    if (!raidLive && this.deployedSoldierCount() > 0) {
+      const allExpired = this.deployedSoldiers().every((ant) => ant.sortieTimer <= 0 || ant.state === "return");
+      if (allExpired) this.recallSortieSoldiers("timeout");
     }
   }
 
@@ -3540,8 +3169,9 @@ class AntColony3D {
   }
 
   updateGame(dt) {
-    if (!this.expeditionOnlyMode) this.updateColony(dt);
-    if (!this.expeditionOnlyMode) this.updateRaid(dt);
+    this.updateColony(dt);
+    this.updateRaid(dt);
+    this.updateSoldierSorties(dt);
 
     for (const patch of this.water) {
       patch.age += dt;
@@ -3584,9 +3214,8 @@ class AntColony3D {
     this.updateCombatEffects(dt);
 
     for (const ant of this.ants) ant.update(dt, this);
+    this.flushSortieRetires();
     for (const rival of this.rivalAnts) rival.update(dt, this);
-    this.updateExpeditionReplay(dt);
-    this.updateExpeditionOnlyMode();
     this.lastUiUpdate += dt;
     if (this.lastUiUpdate > 0.15) {
       this.updateStats();
@@ -3615,7 +3244,6 @@ class AntColony3D {
 
   renderGame(alpha) {
     this.updateCamera();
-    this.renderExpeditionReplay();
     const renderAnts = this.renderAntBuffer;
     renderAnts.length = 0;
     for (const ant of this.ants) renderAnts.push(ant);
@@ -3640,8 +3268,6 @@ class AntColony3D {
     window.removeEventListener("pagehide", this.boundPageHide);
     this.clearBranchPreview();
     this.antRenderer?.destroy();
-    this.expeditionAgentRenderer?.dispose();
-    this.expeditionAgentRenderer = null;
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
@@ -3764,7 +3390,7 @@ class AntColony3D {
   }
 
   raidRivals() {
-    return this.rivalAnts.filter((rival) => rival.isRaidRival && !rival.isExpeditionEnemy);
+    return this.rivalAnts.filter((rival) => rival.isRaidRival);
   }
 
   raidNextInterval() {
@@ -3971,6 +3597,7 @@ class AntColony3D {
       this.pushLog(`襲撃被害: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${raid.casualties}`);
     }
     this.clearRaidRivals();
+    this.recallSortieSoldiers("raid-clear");
     raid.phase = "recovering";
     raid.timer = RAID_RECOVERY_SECONDS;
     raid.activeCount = 0;
@@ -3994,6 +3621,7 @@ class AntColony3D {
     this.addColonyCorpse(ant);
     this.ants.splice(index, 1);
     this.antRenderer?.releaseRenderObject(ant);
+    if (ant.isSortieSoldier) this.colony.soldierAnts = Math.max(0, Math.floor(this.colony.soldierAnts) - 1);
     this.colony.antPopulation = Math.max(MIN_COLONY_SURVIVORS, Math.floor(this.colony.antPopulation) - 1);
     this.colony.woundedAnts = Math.min(this.colony.woundedAnts, Math.max(0, this.colony.antPopulation - 1));
     this.colony.fallenAnts = Math.floor((this.colony.fallenAnts ?? 0) + 1);
@@ -4010,7 +3638,7 @@ class AntColony3D {
     for (let i = 0; i < count; i += 1) {
       if (!this.canLoseAnt()) break;
       const candidates = this.ants
-        .filter((ant) => !ant.expeditionControl && ant.state !== "expedition" && ant.state !== "expedition_wounded")
+        .filter((ant) => ant)
         .sort((a, b) => {
           const roleRank = (a.role === "guard" ? 2 : a.role === "worker" ? 0 : 1) - (b.role === "guard" ? 2 : b.role === "worker" ? 0 : 1);
           if (roleRank) return roleRank;
@@ -4063,7 +3691,6 @@ class AntColony3D {
   }
 
   updateRaid(dt) {
-    if (this.expeditionReplay) return;
     const raid = this.ensureRaidState();
 
     if (raid.phase === "calm") {
@@ -4563,10 +4190,10 @@ class AntColony3D {
 
   updateStats() {
     const d = this.computeDerived();
-    const cooldownLeft = Math.max(0, Math.ceil((this.colony.battleCooldownUntil - Date.now()) / 1000));
-    const availableSoldiers = Math.max(0, Math.floor(Math.min(this.colony.soldierAnts, d.activeAnts - 1)));
-    const assigned = Math.max(0, Math.floor(availableSoldiers * 0.65));
-    const reward = Math.floor(34 + this.colony.territory * 9 + assigned * 4);
+    const deployedSoldiers = this.deployedSoldierCount();
+    const availableSoldiers = this.availableSortieSoldiers();
+    const plannedSortie = this.plannedSortieCount();
+    const cooldownLeft = Math.ceil(this.soldierSortieCooldown);
     const raid = this.ensureRaidState();
     const raidTime = Math.max(0, Math.ceil(raid.timer));
     const raidLabel =
@@ -4588,16 +4215,16 @@ class AntColony3D {
     ui.statThreat.textContent = fmt(this.colony.enemyThreat, 1);
     ui.colonySummary.textContent = `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(this.colony.soldierAnts, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
-    ui.activeToolLabel.textContent = this.expeditionOnlyMode
-      ? "遠征挙動だけ確認中"
-      : raidLabel;
-    ui.expeditionSoldiers.textContent = fmt(assigned, 0);
-    ui.expeditionChance.textContent = assigned > 0 ? this.expeditionEngine : "待機";
-    ui.expeditionReward.textContent = fmt(reward, 0);
-    ui.expeditionBtn.disabled = cooldownLeft > 0 || assigned < 1;
-    ui.expeditionBtn.textContent = this.expeditionOnlyMode && this.expeditionReplay
-      ? "遠征を観察中"
-      : cooldownLeft > 0 ? `再遠征まで ${cooldownLeft}s` : "近隣の餌場へ遠征";
+    ui.activeToolLabel.textContent = this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel;
+    ui.soldierNest.textContent = fmt(Math.max(0, this.colony.soldierAnts - deployedSoldiers), 0);
+    ui.soldierDeployed.textContent = fmt(deployedSoldiers, 0);
+    ui.soldierStatus.textContent =
+      deployedSoldiers > 0 ? "出撃中" :
+      cooldownLeft > 0 ? `再準備 ${cooldownLeft}s` :
+      plannedSortie > 0 ? `出撃可 ${plannedSortie}` :
+      availableSoldiers > 0 ? "上限待ち" : "兵隊不足";
+    ui.soldierSortieBtn.disabled = cooldownLeft > 0 || plannedSortie < 1;
+    ui.soldierSortieBtn.textContent = cooldownLeft > 0 ? `再出撃まで ${cooldownLeft}s` : `兵隊を出撃 ${fmt(plannedSortie, 0)}`;
     ui.battleLog.innerHTML = this.colony.battleLog.map((entry) => `<div>${entry}</div>`).join("");
     this.renderUpgrades();
   }

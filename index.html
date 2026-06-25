@@ -117,29 +117,29 @@
 
         <div class="panel-tabs" role="tablist" aria-label="管理タブ">
           <button class="tab-button active" type="button" data-tab="growth">成長</button>
-          <button class="tab-button" type="button" data-tab="expedition">遠征</button>
+          <button class="tab-button" type="button" data-tab="soldiers">兵隊</button>
         </div>
 
         <div id="growthTab" class="tab-panel active">
           <div id="upgradeList" class="upgrade-list"></div>
         </div>
 
-        <div id="expeditionTab" class="tab-panel">
-          <div class="expedition-grid">
+        <div id="soldierTab" class="tab-panel">
+          <div class="soldier-grid">
             <div>
-              <span>出撃数</span>
-              <strong id="expeditionSoldiers">0</strong>
+              <span>巣内兵隊</span>
+              <strong id="soldierNest">0</strong>
             </div>
             <div>
-              <span>勝率</span>
-              <strong id="expeditionChance">0%</strong>
+              <span>出撃中</span>
+              <strong id="soldierDeployed">0</strong>
             </div>
             <div>
-              <span>報酬</span>
-              <strong id="expeditionReward">0</strong>
+              <span>状態</span>
+              <strong id="soldierStatus">待機</strong>
             </div>
           </div>
-          <button id="expeditionBtn" class="primary-button" type="button">近隣の餌場へ遠征</button>
+          <button id="soldierSortieBtn" class="primary-button" type="button">兵隊を出撃</button>
           <div id="battleLog" class="battle-log"></div>
         </div>
       </section>
