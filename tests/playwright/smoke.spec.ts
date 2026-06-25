@@ -59,6 +59,46 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.triangles).toBeGreaterThan(0);
 });
 
+test("raidSoon query keeps normal mode but starts a raid quickly without saving", async ({ page }) => {
+  await waitForSimulation(page, "/?raidSoon=1");
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const initial = {
+      expeditionOnlyMode: sim.expeditionOnlyMode,
+      raidSoonMode: sim.raidSoonMode,
+      bodyClass: document.body.classList.contains("is-raid-soon"),
+      activeTab: sim.activeTab,
+      phase: sim.colony.raidState.phase,
+      timer: sim.colony.raidState.timer,
+      savedState: localStorage.getItem("ant3d.colonyState"),
+    };
+    for (let i = 0; i < 600; i += 1) {
+      sim.updateRaid(1 / 60);
+      if (sim.colony.raidState.phase === "active") break;
+    }
+    return {
+      initial,
+      phase: sim.colony.raidState.phase,
+      activeCount: sim.colony.raidState.activeCount,
+      rivals: sim.raidRivals().length,
+      savedState: localStorage.getItem("ant3d.colonyState"),
+    };
+  });
+
+  expect(result.initial.expeditionOnlyMode).toBe(false);
+  expect(result.initial.raidSoonMode).toBe(true);
+  expect(result.initial.bodyClass).toBe(true);
+  expect(result.initial.activeTab).toBe("growth");
+  expect(result.initial.phase).toBe("calm");
+  expect(result.initial.timer).toBeLessThanOrEqual(2.6);
+  expect(result.initial.savedState).toBeNull();
+  expect(result.phase).toBe("active");
+  expect(result.activeCount).toBeGreaterThan(0);
+  expect(result.rivals).toBeGreaterThan(0);
+  expect(result.savedState).toBeNull();
+});
+
 test("hover alone does not rotate the camera", async ({ page }) => {
   await waitForSimulation(page);
 

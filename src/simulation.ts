@@ -64,6 +64,8 @@ const RAID_ACTIVE_SECONDS = 92;
 const RAID_RETREAT_SECONDS = 18;
 const RAID_EXIT_PADDING = 24;
 const RAID_RECOVERY_SECONDS = 26;
+const RAID_SOON_CALM_SECONDS = 2.5;
+const RAID_SOON_WARNING_SECONDS = 5.5;
 const MIN_COLONY_SURVIVORS = 4;
 const CAMERA_DISTANCE_MIN = 138;
 const CAMERA_DISTANCE_MAX = 340;
@@ -73,6 +75,7 @@ const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_EXPEDITION_ONLY = DEBUG_QUERY.get("expeditionOnly") === "1" || DEBUG_QUERY.get("mode") === "expedition";
+const IS_RAID_SOON = !IS_EXPEDITION_ONLY && ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
 const EXPEDITION_ENGINE_KEY = "ant3d.expeditionEngine";
 const SUPPORTED_EXPEDITION_ENGINES = new Set(["agent", "legacy"]);
 
@@ -2269,8 +2272,10 @@ class AntColony3D {
     this.paused = false;
     this.timeScale = 1;
     this.expeditionOnlyMode = IS_EXPEDITION_ONLY;
+    this.raidSoonMode = IS_RAID_SOON;
     this.expeditionOnlyNextStartAt = 0;
     document.body.classList.toggle("is-expedition-only", this.expeditionOnlyMode);
+    document.body.classList.toggle("is-raid-soon", this.raidSoonMode);
     this.worldRadius = 132;
     this.nest = { x: -42, z: 12, radius: 8 };
     this.colony = this.expeditionOnlyMode ? createDefaultColony() : readColonyState();
@@ -2333,6 +2338,7 @@ class AntColony3D {
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
     this.reset(false);
+    if (this.raidSoonMode) this.activateRaidSoonMode();
     if (this.expeditionOnlyMode) this.activateExpeditionOnlyMode();
     this.resize();
     window.__ANT_SIM = this;
@@ -2792,6 +2798,15 @@ class AntColony3D {
     this.startExpedition();
   }
 
+  activateRaidSoonMode() {
+    if (this.expeditionOnlyMode) return;
+    const raid = this.ensureRaidState();
+    if (raid.phase === "calm") raid.timer = Math.min(Math.max(0.2, raid.timer), RAID_SOON_CALM_SECONDS);
+    else if (raid.phase === "warning") raid.timer = Math.min(Math.max(0.2, raid.timer), RAID_SOON_WARNING_SECONDS);
+    else if (raid.phase === "recovering") raid.timer = Math.min(Math.max(0.2, raid.timer), RAID_SOON_CALM_SECONDS);
+    this.updateStats();
+  }
+
   prepareExpeditionOnlyColony() {
     if (!this.expeditionOnlyMode || this.expeditionReplay) return;
     this.colony.food = 1200;
@@ -2976,7 +2991,7 @@ class AntColony3D {
   }
 
   saveColony() {
-    if (!this.colony || this.expeditionOnlyMode) return;
+    if (!this.colony || this.expeditionOnlyMode || this.raidSoonMode) return;
     this.colony.lastSavedAt = Date.now();
     writeStorage(SAVE_KEY, JSON.stringify(this.colony));
   }
@@ -3732,6 +3747,14 @@ class AntColony3D {
     return Math.floor(clamp(RAID_BASE_INTERVAL_SECONDS - pressure, 64, 170));
   }
 
+  raidCalmSeconds() {
+    return this.raidSoonMode ? RAID_SOON_CALM_SECONDS : this.raidNextInterval();
+  }
+
+  raidWarningSeconds() {
+    return this.raidSoonMode ? RAID_SOON_WARNING_SECONDS : RAID_WARNING_SECONDS;
+  }
+
   raidEnemyCount() {
     const d = this.computeDerived();
     const pressure = this.colony.enemyThreat * 0.42 + this.colony.territory * 0.26 - (d.defensePower - 1) * 0.55;
@@ -3752,7 +3775,7 @@ class AntColony3D {
   enterRaidWarning() {
     const raid = this.ensureRaidState();
     raid.phase = "warning";
-    raid.timer = RAID_WARNING_SECONDS;
+    raid.timer = this.raidWarningSeconds();
     raid.wave += 1;
     raid.activeCount = this.raidEnemyCount();
     raid.approachAngle = rand(0, Math.PI * 2);
@@ -4040,7 +4063,7 @@ class AntColony3D {
       raid.timer -= dt;
       if (raid.timer <= 0) {
         raid.phase = "calm";
-        raid.timer = this.raidNextInterval();
+        raid.timer = this.raidCalmSeconds();
         raid.lastOutcome = "none";
       }
     }

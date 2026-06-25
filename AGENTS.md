@@ -31,6 +31,7 @@
 - Smoke eval: `npm run eval:smoke`
 - Save/load eval: `npm run eval:save`
 - Combat visual eval: `npm run verify:combat`
+- Raid quick check URL: `/?raidSoon=1`
 
 ## Maintenance
 - 作業中に恒久的な注意点、禁止事項、検証手順、リポジトリ運用ルールが増えた場合は、必要に応じてAGENTS.mdを更新する。
