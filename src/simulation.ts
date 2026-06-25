@@ -55,6 +55,8 @@ const COMBAT_EFFECT_LIFE = 0.78;
 const RIVAL_CORPSE_CAP = 28;
 const RAID_HARASSMENT_RANGE = 56;
 const RIVAL_HARASSMENT_RANGE = 22;
+const RAID_GRAPPLER_RECRUIT_RANGE = 11.6;
+const RIVAL_GRAPPLER_RECRUIT_RANGE = 9.4;
 const RAID_INITIAL_DELAY_SECONDS = 78;
 const RAID_BASE_INTERVAL_SECONDS = 132;
 const RAID_WARNING_SECONDS = 18;
@@ -1646,6 +1648,7 @@ class RivalAnt3D {
     if (!clash) return;
     const limit = this.maxGrapplers(sim);
     if (clash.ants.length >= limit) return;
+    const recruitRange = this.isRaidRival ? RAID_GRAPPLER_RECRUIT_RANGE : RIVAL_GRAPPLER_RECRUIT_RANGE;
     const candidates = sim.ants
       .filter((ant) =>
         !clash.ants.includes(ant) &&
@@ -1654,7 +1657,7 @@ class RivalAnt3D {
         ant.state !== "flee" &&
         ant.fleeTimer <= 0 &&
         ant.stun <= 0 &&
-        distance2(ant.x, ant.z, this.x, this.z) < 9.4,
+        distance2(ant.x, ant.z, this.x, this.z) < recruitRange,
       )
       .sort((a, b) => {
         const roleRank = (a.role === "guard" ? 0 : a.role === "worker" ? 1 : 2) - (b.role === "guard" ? 0 : b.role === "worker" ? 1 : 2);

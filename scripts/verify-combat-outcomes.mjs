@@ -114,8 +114,8 @@ async function verifyCombatScenario(targetUrl, outputDir) {
       }
 
       configureAnt(worker, "worker", baseX, baseZ, 0.6, 0.45);
-      configureAnt(guardA, "guard", baseX + 5.1, baseZ + 7.0, 1, 1);
-      configureAnt(guardB, "guard", baseX + 5.1, baseZ - 7.0, 1, 1);
+      configureAnt(guardA, "guard", baseX + 3.2, baseZ + 6.0, 1, 1);
+      configureAnt(guardB, "guard", baseX + 3.2, baseZ - 6.0, 1, 1);
       configureAnt(support, "guard", baseX + 8.2, baseZ, 0.9, 0.8);
 
       rival.x = baseX - 50;
