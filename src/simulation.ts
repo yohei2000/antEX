@@ -53,6 +53,8 @@ const RIVAL_CLASH_DURATION = 2.7;
 const COMBAT_EFFECT_CAP = 96;
 const COMBAT_EFFECT_LIFE = 0.78;
 const RIVAL_CORPSE_CAP = 28;
+const RAID_HARASSMENT_RANGE = 56;
+const RIVAL_HARASSMENT_RANGE = 22;
 const RAID_INITIAL_DELAY_SECONDS = 78;
 const RAID_BASE_INTERVAL_SECONDS = 132;
 const RAID_WARNING_SECONDS = 18;
@@ -1516,18 +1518,21 @@ class RivalAnt3D {
     if (this.defeated || this.leftRaid || this.retreat > 0 || this.clash) return null;
     let best = null;
     let bestScore = 0;
-    const range = this.isRaidRival ? 30 : 22;
+    const range = this.isRaidRival ? RAID_HARASSMENT_RANGE : RIVAL_HARASSMENT_RANGE;
+    const baseScore = this.isRaidRival ? 42 : 30;
     for (const ant of sim.ants) {
-      if (ant.state === "stunned" || ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0) continue;
+      if (ant.expeditionControl || ant.state === "stunned" || ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0) continue;
       const d = distance2(this.x, this.z, ant.x, ant.z);
       if (d > range) continue;
-      const carryingBonus = ant.carrying > 0 ? 14 : 0;
-      const workerBonus = ant.role === "worker" ? 8 : ant.role === "nurse" ? 3 : ant.role === "scout" ? 2 : -2;
-      const returnBonus = ant.state === "return" ? 5 : 0;
-      const foodBonus = sim.isNearFood(ant.x, ant.z, 18) ? 7 : 0;
       const nestDistance = distance2(ant.x, ant.z, sim.nest.x, sim.nest.z);
-      const exposedBonus = ant.role === "worker" && nestDistance > sim.nest.radius + 18 ? 4 : 0;
-      const score = 30 - d + carryingBonus + workerBonus + returnBonus + foodBonus + exposedBonus;
+      const workerBonus = this.isRaidRival
+        ? ant.role === "worker" ? 18 : ant.role === "nurse" ? 4 : ant.role === "scout" ? 3 : -4
+        : ant.role === "worker" ? 8 : ant.role === "nurse" ? 3 : ant.role === "scout" ? 2 : -2;
+      const carryingBonus = ant.carrying > 0 ? (this.isRaidRival ? 20 : 14) : 0;
+      const returnBonus = ant.state === "return" ? (this.isRaidRival ? 8 : 5) : 0;
+      const foodBonus = sim.isNearFood(ant.x, ant.z, 18) ? (this.isRaidRival ? 10 : 7) : 0;
+      const exposedBonus = ant.role === "worker" && nestDistance > sim.nest.radius + 18 ? (this.isRaidRival ? 12 : 4) : 0;
+      const score = baseScore - d + carryingBonus + workerBonus + returnBonus + foodBonus + exposedBonus;
       if (score > bestScore) {
         best = ant;
         bestScore = score;
@@ -2393,7 +2398,8 @@ class AntColony3D {
       nestDark: new THREE.MeshBasicMaterial({ color: 0x1d140e, side: THREE.DoubleSide }),
       antDefault: new THREE.MeshStandardMaterial({ color: 0x18130f, roughness: 0.72 }),
       antRival: new THREE.MeshStandardMaterial({ color: 0x8a4a2f, emissive: 0x120705, roughness: 0.8 }),
-      antCorpse: new THREE.MeshStandardMaterial({ color: 0x543226, roughness: 0.92 }),
+      antCorpse: new THREE.MeshStandardMaterial({ color: 0x6a3325, roughness: 0.94 }),
+      antCorpseAppendage: new THREE.MeshStandardMaterial({ color: 0x2b1711, roughness: 0.96 }),
       antAppendage: new THREE.MeshStandardMaterial({ color: 0x17100b, roughness: 0.82 }),
       food: new THREE.MeshStandardMaterial({ color: 0xd9a63f, roughness: 0.62 }),
       foodFruit: new THREE.MeshStandardMaterial({ color: 0xc45b33, roughness: 0.7 }),
@@ -2424,7 +2430,7 @@ class AntColony3D {
       combatRing: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.34, depthWrite: false }),
       trailFood: new THREE.MeshBasicMaterial({ color: 0xd9a63f, transparent: true, opacity: 0.2, depthWrite: false }),
       trailAlarm: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.24, depthWrite: false }),
-      corpseMark: new THREE.MeshBasicMaterial({ color: 0x5b271f, transparent: true, opacity: 0.22, depthWrite: false }),
+      corpseMark: new THREE.MeshBasicMaterial({ color: 0x5b271f, transparent: true, opacity: 0.34, depthWrite: false }),
       trailRescue: new THREE.MeshBasicMaterial({ color: 0x51b7a6, transparent: true, opacity: 0.22, depthWrite: false }),
       trailWater: new THREE.MeshBasicMaterial({ color: 0x55aee0, transparent: true, opacity: 0.18, depthWrite: false }),
     };
@@ -3796,27 +3802,56 @@ class AntColony3D {
     this.antRenderer?.releaseRenderObject(rival);
   }
 
+  corpseLocalPoint(point, segment, endpoint, corpseScale) {
+    const spread = segment.kind === "leg" ? 1.18 + endpoint * 0.16 : segment.kind === "antenna" ? 1.08 : 1.0;
+    const lengthen = segment.kind === "antenna" ? 1.06 : segment.kind === "mandible" ? 0.98 : 1.1;
+    return new THREE.Vector3(
+      point[0] * corpseScale * spread,
+      Math.max(0.048, 0.13 + point[1] * corpseScale * 0.24 - (segment.kind === "leg" ? endpoint * 0.014 : 0)),
+      point[2] * corpseScale * lengthen,
+    );
+  }
+
+  addCorpseSegment(group, segment, corpseScale) {
+    const start = this.corpseLocalPoint(segment.from, segment, 0, corpseScale);
+    const end = this.corpseLocalPoint(segment.to, segment, 1, corpseScale);
+    const direction = end.clone().sub(start);
+    const length = direction.length();
+    if (length <= 0.001) return;
+    direction.normalize();
+    const mesh = new THREE.Mesh(this.geometries.combatSlash, this.materials.antCorpseAppendage);
+    mesh.position.copy(start.clone().add(end).multiplyScalar(0.5));
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+    const radius = segment.radius * corpseScale * (segment.kind === "leg" ? 1.28 : 1.08);
+    mesh.scale.set(radius, length, radius);
+    mesh.castShadow = this.quality.shadowQuality !== "off";
+    mesh.receiveShadow = this.quality.shadowQuality !== "off";
+    group.add(mesh);
+  }
+
   addRivalCorpse(rival) {
     if (!rival) return null;
     const group = new THREE.Group();
-    const corpseScale = rival.scale * 0.88;
+    const corpseScale = rival.scale * 0.96;
     group.position.set(rival.x, 0, rival.z);
-    group.rotation.set(rand(-0.12, 0.12), rival.angle + rand(-0.32, 0.32), rand(-0.18, 0.18));
+    group.rotation.set(rand(-0.06, 0.06), rival.angle + rand(-0.22, 0.22), rand(-0.11, 0.11));
 
     const stain = new THREE.Mesh(this.geometries.trailCircle, this.materials.corpseMark);
     stain.rotation.x = -Math.PI / 2;
     stain.position.y = 0.025;
-    stain.scale.setScalar(2.0 * corpseScale);
+    stain.scale.setScalar(2.65 * corpseScale);
     group.add(stain);
 
     for (const part of ANT_BODY_PARTS) {
       const mesh = new THREE.Mesh(this.geometries.antSphere, this.materials.antCorpse);
-      mesh.position.set(part.x * corpseScale, 0.11 + part.y * corpseScale * 0.35, part.z * corpseScale);
-      mesh.scale.set(part.sx * corpseScale, part.sy * corpseScale * 0.34, part.sz * corpseScale);
+      mesh.position.set(part.x * corpseScale, 0.13 + part.y * corpseScale * 0.38, part.z * corpseScale);
+      mesh.scale.set(part.sx * corpseScale * 1.04, part.sy * corpseScale * 0.44, part.sz * corpseScale * 1.08);
       mesh.castShadow = this.quality.shadowQuality !== "off";
       mesh.receiveShadow = this.quality.shadowQuality !== "off";
       group.add(mesh);
     }
+
+    for (const segment of ANT_APPENDAGE_SEGMENTS) this.addCorpseSegment(group, segment, corpseScale);
 
     this.scene.add(group);
     this.dynamicObjects.add(group);

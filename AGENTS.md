@@ -30,6 +30,7 @@
 - Unit test: `npm run test`
 - Smoke eval: `npm run eval:smoke`
 - Save/load eval: `npm run eval:save`
+- Combat visual eval: `npm run verify:combat`
 
 ## Maintenance
 - 作業中に恒久的な注意点、禁止事項、検証手順、リポジトリ運用ルールが増えた場合は、必要に応じてAGENTS.mdを更新する。
@@ -39,6 +40,7 @@
 - `npm run test` が通る。
 - `npm run eval:smoke` が通る。
 - セーブ機能がある場合は `npm run eval:save` が通る。
+- 戦闘描画や敵襲AIを変更した場合は `npm run verify:combat` を実行し、出力スクリーンショットを確認する。
 - 失敗時はPlaywright report、screenshot、console error、原因候補を報告する。
 - 最終報告に変更点、検証結果、残リスク、未対応事項を含める。
 

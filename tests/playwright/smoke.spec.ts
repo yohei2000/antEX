@@ -842,6 +842,18 @@ test("rival ants actively harass ants near food instead of only camping", async 
     const rival = sim.raidRivals()[0];
     sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
 
+    for (const other of sim.ants) {
+      other.state = "stunned";
+      other.stun = 30;
+      other.fleeTimer = 0;
+      other.clashTimer = 0;
+      other.clashRival = null;
+      other.x = sim.nest.x;
+      other.z = sim.nest.z;
+      other.prevX = other.x;
+      other.prevZ = other.z;
+    }
+
     ant.role = "worker";
     ant.traits.persistence = 0.1;
     ant.traits.caution = 0.1;
@@ -850,22 +862,25 @@ test("rival ants actively harass ants near food instead of only camping", async 
     ant.fleeTimer = 0;
     ant.clashTimer = 0;
     ant.carrying = 0;
-    ant.x = food.x + 4.4;
-    ant.z = food.z;
-    rival.x = food.x;
+    ant.x = food.x + 42;
+    ant.z = food.z + 8;
+    rival.x = food.x - 10;
     rival.z = food.z;
     rival.prevX = rival.x;
     rival.prevZ = rival.z;
     rival.aggression = 1;
     rival.stubbornness = 1;
     rival.scale = 1.35;
+    rival.baseSpeed = 16;
     rival.retreat = 0;
     rival.clash = null;
     rival.fightCooldown = 0;
+    rival.defeated = false;
+    rival.leftRaid = false;
     const targetBeforeMove = rival.findHarassmentTarget(sim);
     const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
     let minDistance = beforeDistance;
-    for (let i = 0; i < 140; i += 1) {
+    for (let i = 0; i < 260; i += 1) {
       rival.update(1 / 30, sim);
       minDistance = Math.min(minDistance, Math.hypot(ant.x - rival.x, ant.z - rival.z));
       if (sim.rivalFightStats.clashes > 0) break;
