@@ -24,9 +24,10 @@ test("renders the initial ant empire scene", async ({ page }) => {
       raidPhase: sim.colony.raidState.phase,
       raidTimer: sim.colony.raidState.timer,
       rivalColor: sim.materials.antRival.color.getHexString(),
-      panicColor: sim.materials.antByState.panic.color.getHexString(),
-      clashColor: sim.materials.antByState.clash.color.getHexString(),
-      fleeColor: sim.materials.antByState.flee.color.getHexString(),
+      colonyMaterialStates: ["explore", "panic", "flee", "clash", "wet", "stunned", "rescue", "return"].map((state) =>
+        sim.antRenderer.materialStateFor({ isRival: false }, { state }),
+      ),
+      rivalMaterialState: sim.antRenderer.materialStateFor({ isRival: true }, { state: "clash" }),
       foodSources: sim.food.length,
       worldRadius: sim.worldRadius,
       terrainPatches: sim.terrain.length,
@@ -51,9 +52,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.raidPhase).toBe("calm");
   expect(metrics.raidTimer).toBeGreaterThan(0);
   expect(metrics.rivalColor).toBe("8a4a2f");
-  expect(metrics.panicColor).not.toBe(metrics.rivalColor);
-  expect(metrics.clashColor).not.toBe(metrics.rivalColor);
-  expect(metrics.fleeColor).not.toBe(metrics.rivalColor);
+  expect(metrics.colonyMaterialStates.every((state) => state === "explore")).toBe(true);
+  expect(metrics.rivalMaterialState).toBe("rival");
   expect(metrics.foodSources).toBeGreaterThanOrEqual(4);
   expect(metrics.worldRadius).toBeGreaterThanOrEqual(120);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
@@ -111,6 +111,43 @@ test("raidSoon query keeps normal mode but starts a raid quickly without saving"
   expect(result.noticeText).toContain("敵襲開始");
   expect(result.noticeKind).toBe("warning");
   expect(result.savedState).toBeNull();
+});
+
+test("raid completion notice reports actual fallen delta", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.fallenAnts = 4;
+    sim.colony.raidState = {
+      phase: "active",
+      timer: 10,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 7,
+      enemyCasualties: 1,
+      startFallenAnts: 4,
+      lastOutcome: "active",
+    };
+    sim.resolveRaid("repelled");
+    sim.updateStats();
+    const notice = document.querySelector("#raidNotice") as HTMLElement;
+    return {
+      casualties: sim.colony.raidState.casualties,
+      noticeText: notice?.textContent ?? "",
+      log: sim.colony.battleLog.join("\n"),
+    };
+  });
+
+  expect(result.casualties).toBe(0);
+  expect(result.noticeText).toContain("味方死亡0");
+  expect(result.noticeText).not.toContain("味方死亡7");
+  expect(result.log).toContain("死亡0");
+  expect(result.log).not.toContain("死亡7");
 });
 
 test("hover alone does not rotate the camera", async ({ page }) => {

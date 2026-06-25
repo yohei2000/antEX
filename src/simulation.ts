@@ -358,6 +358,7 @@ function createDefaultRaidState() {
     breachTimer: 0,
     casualties: 0,
     enemyCasualties: 0,
+    startFallenAnts: null,
     lastOutcome: "none",
   };
 }
@@ -378,6 +379,9 @@ function normalizeRaidState(raw, options = {}) {
     breachTimer: clamp(Number(raw.breachTimer) || 0, 0, 30),
     casualties: Math.floor(clamp(Number(raw.casualties) || 0, 0, 999999)),
     enemyCasualties: Math.floor(clamp(Number(raw.enemyCasualties) || 0, 0, 999999)),
+    startFallenAnts: Number.isFinite(Number(raw.startFallenAnts))
+      ? Math.floor(clamp(Number(raw.startFallenAnts), 0, 999999))
+      : null,
     lastOutcome: typeof raw.lastOutcome === "string" ? raw.lastOutcome : base.lastOutcome,
   };
   if (options.resetActiveOnLoad && (next.phase === "active" || next.phase === "retreating")) {
@@ -2077,9 +2081,13 @@ class AntRenderSystem {
     if (ant.renderInstanceIndex === index) ant.renderInstanceIndex = null;
   }
 
+  materialStateFor(ant, renderState) {
+    return ant.isRival ? "rival" : "explore";
+  }
+
   renderAnt(ant, renderState) {
     const index = this.assignRenderIndex(ant);
-    const materialState = ant.isRival ? "rival" : renderState.state;
+    const materialState = this.materialStateFor(ant, renderState);
     const meshes = this.bodyMeshes.get(materialState) ?? this.bodyMeshes.get("explore");
     for (const part of ANT_BODY_PARTS) {
       this.composeLocalMatrix(renderState, part.x, part.y, part.z, part.sx, part.sy, part.sz);
@@ -3503,6 +3511,7 @@ class AntColony3D {
     raid.breachTimer = 0;
     raid.casualties = 0;
     raid.enemyCasualties = 0;
+    raid.startFallenAnts = Math.floor(this.colony.fallenAnts ?? 0);
     raid.lastOutcome = "warning";
     this.emitRaidSignal(raid, 0.88);
     this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹が集団接近`);
@@ -3649,14 +3658,22 @@ class AntColony3D {
     }
   }
 
+  raidDeathCount(raid = this.ensureRaidState()) {
+    const baseline = Number.isFinite(Number(raid.startFallenAnts)) ? Number(raid.startFallenAnts) : null;
+    if (baseline == null) return Math.floor(clamp(Number(raid.casualties) || 0, 0, 999999));
+    return Math.floor(clamp((this.colony.fallenAnts ?? 0) - baseline, 0, 999999));
+  }
+
   resolveRaid(outcome = "repelled") {
     const raid = this.ensureRaidState();
     const count = Math.max(1, raid.activeCount || this.raidEnemyCount());
     if (outcome === "repelled") {
       const relief = 0.75 + count * 0.22 + Math.max(0, this.computeDerived().defensePower - 1) * 0.22;
       this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - relief);
-      this.pushLog(`襲撃を防衛: 死亡${raid.casualties} / 脅威-${fmt(relief, 1)}`);
-      this.showRaidNotice(`敵アリ撃退: 味方死亡${raid.casualties} / 敵撃破${raid.enemyCasualties}`, "repelled");
+      const deaths = this.raidDeathCount(raid);
+      raid.casualties = deaths;
+      this.pushLog(`襲撃を防衛: 死亡${deaths} / 脅威-${fmt(relief, 1)}`);
+      this.showRaidNotice(`敵アリ撃退: 味方死亡${deaths} / 敵撃破${raid.enemyCasualties}`, "repelled");
     } else {
       const defense = this.computeDerived().defensePower;
       const loss = Math.min(this.colony.food, Math.max(2, count * 4.8 + this.colony.enemyThreat * 0.32) / defense);
@@ -3664,9 +3681,11 @@ class AntColony3D {
       this.colony.food = Math.max(0, this.colony.food - loss);
       this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + wounded);
       this.applyRaidCasualties(Math.max(0, Math.ceil(count * 0.16) - raid.casualties), "breach");
+      const deaths = this.raidDeathCount(raid);
+      raid.casualties = deaths;
       this.colony.enemyThreat += 0.65 + count * 0.12;
-      this.pushLog(`襲撃被害: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${raid.casualties}`);
-      this.showRaidNotice(`襲撃被害: 食料-${fmt(loss, 0)} / 死亡${raid.casualties}`, "warning");
+      this.pushLog(`襲撃被害: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${deaths}`);
+      this.showRaidNotice(`襲撃被害: 食料-${fmt(loss, 0)} / 死亡${deaths}`, "warning");
     }
     this.clearRaidRivals();
     this.recallSortieSoldiers("raid-clear");
