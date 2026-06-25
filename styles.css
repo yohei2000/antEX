@@ -511,6 +511,14 @@ button {
   gap: 8px;
 }
 
+.upgrade-branch {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .upgrade-card {
   display: grid;
   gap: 6px;
@@ -531,10 +539,15 @@ button {
 }
 
 .upgrade-card p,
+.upgrade-effect,
 .upgrade-meta,
 .battle-log {
   font-size: 0.72rem;
   line-height: 1.35;
+}
+
+.upgrade-effect {
+  color: rgba(244, 241, 232, 0.74);
 }
 
 .upgrade-card button:disabled,

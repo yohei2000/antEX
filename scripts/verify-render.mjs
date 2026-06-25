@@ -164,7 +164,58 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       throw new Error(`${label}: camera yaw changed on hover without pointerdown: ${JSON.stringify(hoverProbe)}`);
     }
 
-    const canvasProbe = await page.evaluate((hoverYawDelta) => {
+    const wheelProbe = { skipped: width < 600, before: null, zoomIn: null, zoomOut: null };
+    if (width >= 600) {
+      wheelProbe.before = await page.evaluate(`(() => {
+          const sim = window.__ANT_SIM;
+          sim.targetCameraDistance = 240;
+          sim.cameraDistance = 240;
+          return sim.targetCameraDistance;
+        })()`);
+      await page.mouse.move(width * 0.5, height * 0.5);
+      await page.mouse.wheel(0, -360);
+      wheelProbe.zoomIn = await page.evaluate(`window.__ANT_SIM.targetCameraDistance`);
+      await page.mouse.wheel(0, 720);
+      wheelProbe.zoomOut = await page.evaluate(`window.__ANT_SIM.targetCameraDistance`);
+    }
+
+    const pinchProbe = await page.evaluate(`(() => {
+        const sim = window.__ANT_SIM;
+        const canvas = document.querySelector("#world3d canvas");
+        const dispatchPointer = (type, pointerId, clientX, clientY) => {
+          canvas.dispatchEvent(new PointerEvent(type, {
+            pointerId,
+            pointerType: "touch",
+            clientX,
+            clientY,
+            bubbles: true,
+            cancelable: true,
+          }));
+        };
+        sim.pointerMap.clear();
+        sim.pinchStart = null;
+        sim.targetCameraDistance = 240;
+        sim.cameraDistance = 240;
+        const pinchBefore = sim.targetCameraDistance;
+        dispatchPointer("pointerdown", 5101, 120, 180);
+        dispatchPointer("pointerdown", 5102, 200, 180);
+        dispatchPointer("pointermove", 5102, 280, 180);
+        const pinchSpread = sim.targetCameraDistance;
+        dispatchPointer("pointermove", 5102, 132, 180);
+        const pinchClose = sim.targetCameraDistance;
+        dispatchPointer("pointerup", 5101, 120, 180);
+        dispatchPointer("pointerup", 5102, 132, 180);
+        return { before: pinchBefore, spread: pinchSpread, close: pinchClose };
+      })()`);
+    if (
+      (!wheelProbe.skipped && (wheelProbe.zoomIn >= wheelProbe.before || wheelProbe.zoomOut <= wheelProbe.zoomIn)) ||
+      pinchProbe.spread >= pinchProbe.before ||
+      pinchProbe.close <= pinchProbe.before
+    ) {
+      throw new Error(`${label}: camera zoom check failed: ${JSON.stringify({ wheelProbe, pinchProbe })}`);
+    }
+
+    const canvasProbe = await page.evaluate(({ hoverYawDelta, wheelProbe, pinchProbe }) => {
         const canvas = document.querySelector("#world3d canvas");
         const rect = canvas.getBoundingClientRect();
         const sim = window.__ANT_SIM;
@@ -191,7 +242,16 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           rivalScaleMax: sim?.rivalAnts?.length ? Math.max(...sim.rivalAnts.map((ant) => ant.scale)) : null,
           rivalColor: sim?.materials?.antRival?.color?.getHexString?.() ?? null,
           terrainPatches: sim?.terrain?.length ?? null,
+          terrainBumps: sim?.terrainBumps?.length ?? null,
+          nestEntranceCount: sim?.nestEntrances?.length ?? sim?.nestHoles?.length ?? null,
+          nestSpoilCount: sim?.nestSpoils?.length ?? null,
+          stoneCount: sim?.stones?.length ?? null,
           branchCount: sim?.branches?.length ?? null,
+          variantConfigCount: ["worker", "soldier", "heavySoldier", "builder"].filter((variant) => Boolean(sim?.getAntVariantConfig?.(variant))).length,
+          soldierVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "soldier").length ?? null,
+          heavyVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "heavySoldier").length ?? null,
+          builderVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "builder").length ?? null,
+          earthworkCount: sim?.earthworks?.length ?? null,
           toolButtons: document.querySelectorAll("[data-tool]").length,
           upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
           calls: info?.render?.calls ?? null,
@@ -199,8 +259,10 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           geometries: info?.memory?.geometries ?? null,
           textures: info?.memory?.textures ?? null,
           hoverYawDelta,
+          wheelZoomIn: wheelProbe.zoomIn,
+          pinchSpread: pinchProbe.spread,
         };
-      }, hoverProbe.delta);
+      }, { hoverYawDelta: hoverProbe.delta, wheelProbe, pinchProbe });
 
     const screenshotPath = join(outputDir, `${label}.png`);
     const screenshotBuffer = await page.screenshot({ fullPage: false });
@@ -236,12 +298,97 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.rivalScaleMin <= 1.1 ||
       metrics.rivalColor !== "8a4a2f" ||
       metrics.terrainPatches < 6 ||
-      metrics.branchCount !== 0 ||
+      metrics.terrainBumps < 8 ||
+      metrics.nestEntranceCount < 4 ||
+      metrics.nestSpoilCount < 24 ||
+      metrics.stoneCount < 6 ||
+      metrics.branchCount < 5 ||
+      metrics.variantConfigCount !== 4 ||
+      metrics.soldierVariantCount < 1 ||
       metrics.toolButtons !== 0 ||
-      metrics.upgradeButtons < 6 ||
+      metrics.upgradeButtons < 15 ||
       metrics.foodRate <= 0
     ) {
       throw new Error(`${label}: idle colony state check failed: ${JSON.stringify(metrics)}`);
+    }
+
+    const upgradeTree = await page.evaluate(`(() => {
+        const sim = window.__ANT_SIM;
+        const restore = {
+          food: sim.colony.food,
+          lifetimeFood: sim.colony.lifetimeFood,
+          antPopulation: sim.colony.antPopulation,
+          soldierAnts: sim.colony.soldierAnts,
+          woundedAnts: sim.colony.woundedAnts,
+          nestLevel: sim.colony.nestLevel,
+          territory: sim.colony.territory,
+          upgrades: { ...sim.colony.upgrades },
+        };
+        sim.colony.food = 1000000;
+        sim.colony.lifetimeFood = 1000000;
+        sim.colony.antPopulation = 60;
+        sim.colony.soldierAnts = 5;
+        sim.colony.woundedAnts = 0;
+        sim.colony.nestLevel = 4;
+        sim.colony.territory = 5;
+        for (const key of Object.keys(sim.colony.upgrades)) sim.colony.upgrades[key] = 0;
+        sim.renderUpgrades();
+        const lockedBefore = document.querySelector('[data-upgrade="broodClimate"]').disabled;
+        const base = sim.computeDerived();
+        sim.colony.upgrades.broodNursery = 2;
+        sim.renderUpgrades();
+        const unlockedAfterPrereq = !document.querySelector('[data-upgrade="broodClimate"]').disabled;
+        const maxLevels = {
+          foragerTrails: 8,
+          trailPheromones: 4,
+          storageChambers: 8,
+          chamberExcavation: 6,
+          ventilationShafts: 5,
+          wasteGallery: 4,
+          broodNursery: 8,
+          broodClimate: 5,
+          foodDistribution: 5,
+          queenCare: 8,
+          soldierTraining: 6,
+          nestGuard: 6,
+          sentinelPosts: 4,
+          heavySoldierBrood: 4,
+          builderTraining: 5,
+        };
+        for (const [key, max] of Object.entries(maxLevels)) sim.colony.upgrades[key] = max;
+        const maxed = sim.computeDerived();
+        const result = {
+          branches: [...document.querySelectorAll(".upgrade-branch")].map((node) => node.textContent),
+          lockedBefore,
+          unlockedAfterPrereq,
+          foodRateRatio: maxed.foodRate / base.foodRate,
+          growthRatio: maxed.growthPerSecond / base.growthPerSecond,
+          capacityRatio: maxed.capacity / base.capacity,
+          attackPower: maxed.attackPower,
+          defensePower: maxed.defensePower,
+          threatGrowthMultiplier: maxed.threatGrowthMultiplier,
+        };
+        Object.assign(sim.colony, restore);
+        sim.colony.upgrades = restore.upgrades;
+        sim.computeDerived();
+        sim.renderUpgrades();
+        return result;
+      })()`);
+    if (
+      upgradeTree.branches.join("|") !== "採餌網|育房|巣構造|防衛" ||
+      !upgradeTree.lockedBefore ||
+      !upgradeTree.unlockedAfterPrereq ||
+      upgradeTree.foodRateRatio <= 3 ||
+      upgradeTree.foodRateRatio >= 4.6 ||
+      upgradeTree.growthRatio <= 5 ||
+      upgradeTree.growthRatio >= 7.6 ||
+      upgradeTree.capacityRatio <= 2.6 ||
+      upgradeTree.capacityRatio >= 3.7 ||
+      upgradeTree.attackPower >= 2.2 ||
+      upgradeTree.defensePower >= 2.8 ||
+      upgradeTree.threatGrowthMultiplier < 0.55
+    ) {
+      throw new Error(`${label}: upgrade tree balance check failed: ${JSON.stringify(upgradeTree)}`);
     }
 
     const idle = await page.evaluate(`(() => {
@@ -315,7 +462,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         };
       })()`);
     if (
-      Math.abs(idle.noDeliveryFoodAfter - idle.noDeliveryFoodBefore) > 0.0001 ||
+      idle.noDeliveryFoodAfter > idle.noDeliveryFoodBefore + 0.0001 ||
+      idle.noDeliveryFoodAfter < idle.noDeliveryFoodBefore - 0.2 ||
       idle.returnFoodAfter <= idle.returnFoodBefore ||
       !idle.boughtUpgrade ||
       idle.capacityAfterUpgrade <= idle.capacityBeforeUpgrade ||
@@ -361,9 +509,25 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         const afterDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
         const stateAtStart = ant.state;
         const nestDistanceBefore = Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z);
+        const anchorX = rival.clash.anchorX;
+        const anchorZ = rival.clash.anchorZ;
+        const lineX = rival.clash.lineX;
+        const lineZ = rival.clash.lineZ;
+        let maxCenterDrift = 0;
+        let maxAxisDrift = 0;
         for (let i = 0; i < 160; i += 1) {
           ant.update(1 / 60, sim);
           rival.update(1 / 60, sim);
+          if (i < 100 && rival.clash) {
+            const centerX = (ant.x + rival.x) * 0.5;
+            const centerZ = (ant.z + rival.z) * 0.5;
+            maxCenterDrift = Math.max(maxCenterDrift, Math.hypot(centerX - anchorX, centerZ - anchorZ));
+            const pairX = ant.x - rival.x;
+            const pairZ = ant.z - rival.z;
+            const pairLength = Math.hypot(pairX, pairZ) || 1;
+            const axisDrift = Math.abs((pairX * lineZ - pairZ * lineX) / pairLength);
+            maxAxisDrift = Math.max(maxAxisDrift, axisDrift);
+          }
         }
         const stateAfterClash = ant.state;
         const fleeTimer = ant.fleeTimer;
@@ -405,6 +569,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           repelled,
           beforeDistance,
           afterDistance,
+          maxCenterDrift,
+          maxAxisDrift,
           stateAtStart,
           stateAfterClash,
           fleeTimer,
@@ -423,6 +589,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       !fight.resolved ||
       !fight.repelled ||
       Math.abs(fight.afterDistance - fight.beforeDistance) >= 0.25 ||
+      fight.maxCenterDrift >= 0.55 ||
+      fight.maxAxisDrift >= 0.22 ||
       fight.stateAtStart !== "clash" ||
       fight.stateAfterClash !== "flee" ||
       fight.fleeTimer <= 0 ||
