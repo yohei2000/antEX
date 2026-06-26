@@ -119,11 +119,34 @@
 
         <div class="panel-tabs" role="tablist" aria-label="管理タブ">
           <button class="tab-button active" type="button" data-tab="growth">成長</button>
+          <button class="tab-button" type="button" data-tab="construction">土木</button>
           <button class="tab-button" type="button" data-tab="soldiers">兵隊</button>
         </div>
 
         <div id="growthTab" class="tab-panel active">
           <div id="upgradeList" class="upgrade-list"></div>
+        </div>
+
+        <div id="constructionTab" class="tab-panel">
+          <div class="construction-grid">
+            <div>
+              <span>土木アリ</span>
+              <strong id="constructionBuilders">0</strong>
+            </div>
+            <div>
+              <span>作業中</span>
+              <strong id="constructionActive">0</strong>
+            </div>
+            <div>
+              <span>完成</span>
+              <strong id="constructionComplete">0</strong>
+            </div>
+          </div>
+          <div class="construction-actions">
+            <button id="constructionTrailBtn" class="primary-button" type="button">採餌道を整える</button>
+            <button id="constructionBarricadeBtn" class="primary-button" type="button">低い土塁を築く</button>
+          </div>
+          <div id="constructionStatus" class="construction-status">待機</div>
         </div>
 
         <div id="soldierTab" class="tab-panel">

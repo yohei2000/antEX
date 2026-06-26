@@ -496,6 +496,65 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
   expect(result.finitePositions).toBe(true);
 });
 
+test("construction tab issues earthwork commands separately from growth", async ({ page }) => {
+  await waitForSimulation(page);
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 42;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 6;
+    sim.colony.heavySoldierAnts = 1;
+    sim.colony.builderAnts = 1;
+    sim.colony.nestLevel = 3;
+    sim.colony.territory = 4;
+    sim.colony.upgrades.soldierTraining = 1;
+    sim.colony.upgrades.heavySoldierBrood = 1;
+    sim.colony.upgrades.chamberExcavation = 1;
+    sim.colony.upgrades.builderTraining = 1;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.setPanelCompact(false, false);
+    sim.setActiveTab("construction");
+    sim.updateStats();
+  });
+
+  await page.locator("#constructionTrailBtn").click();
+  await page.locator("#constructionBarricadeBtn").click();
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.updateStats();
+    return {
+      activeTab: sim.activeTab,
+      tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
+      growthActive: document.querySelector("#growthTab")?.classList.contains("active") ?? false,
+      constructionActive: document.querySelector("#constructionTab")?.classList.contains("active") ?? false,
+      taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
+      earthworkKinds: sim.earthworks.map((earthwork: any) => earthwork.kind).sort(),
+      builderCountText: (document.querySelector("#constructionBuilders") as HTMLElement).textContent,
+      activeCountText: (document.querySelector("#constructionActive") as HTMLElement).textContent,
+      statusText: (document.querySelector("#constructionStatus") as HTMLElement).textContent,
+      trailDisabledAfterCommand: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).disabled,
+      savedEarthworks: sim.colony.earthworks.length,
+    };
+  });
+
+  expect(result.activeTab).toBe("construction");
+  expect(result.tabText).toContain("土木");
+  expect(result.growthActive).toBe(false);
+  expect(result.constructionActive).toBe(true);
+  expect(result.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
+  expect(result.earthworkKinds).toEqual(["lowBarricade", "trailReinforce"]);
+  expect(result.builderCountText).toBe("1");
+  expect(result.activeCountText).toBe("2");
+  expect(result.statusText).toContain("作業中");
+  expect(result.trailDisabledAfterCommand).toBe(true);
+  expect(result.savedEarthworks).toBe(2);
+});
+
 test("heavy soldiers brace while builders complete earthworks and retreat", async ({ page }) => {
   await waitForSimulation(page);
 

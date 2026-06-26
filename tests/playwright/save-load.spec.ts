@@ -28,6 +28,17 @@ test("persists colony state through localStorage", async ({ page }) => {
       builderTraining: 2,
       nestGuard: 0,
     };
+    sim.addEarthwork({
+      id: sim.colony.nextEarthworkId++,
+      kind: "trailReinforce",
+      x: sim.nest.x + 12,
+      z: sim.nest.z + 5,
+      radius: 13,
+      progress: 2.8,
+      maxProgress: 2.8,
+      rotation: 0.2,
+      owner: "colony",
+    });
     sim.saveColony();
   });
 
@@ -54,6 +65,10 @@ test("persists colony state through localStorage", async ({ page }) => {
       raidTimer: sim.colony.raidState.timer,
       raidCasualties: sim.colony.raidState.casualties,
       raidEnemyCasualties: sim.colony.raidState.enemyCasualties,
+      earthworks: sim.colony.earthworks.length,
+      liveEarthworks: sim.earthworks.length,
+      earthworkKind: sim.earthworks[0]?.kind,
+      earthworkStrength: sim.earthworks[0]?.strength,
     };
   });
 
@@ -74,6 +89,10 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.raidTimer).toBeGreaterThan(0);
   expect(restored.raidCasualties).toBe(0);
   expect(restored.raidEnemyCasualties).toBe(0);
+  expect(restored.earthworks).toBe(1);
+  expect(restored.liveEarthworks).toBe(1);
+  expect(restored.earthworkKind).toBe("trailReinforce");
+  expect(restored.earthworkStrength).toBeGreaterThan(0.95);
 });
 
 test("migrates old colony saves without variant fields", async ({ page }) => {
@@ -122,7 +141,7 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
     };
   });
 
-  expect(migrated.version).toBe(5);
+  expect(migrated.version).toBe(6);
   expect(migrated.heavySoldierAnts).toBe(0);
   expect(migrated.builderAnts).toBe(0);
   expect(migrated.nextEarthworkId).toBe(1);

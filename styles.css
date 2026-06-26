@@ -485,14 +485,16 @@ button {
 }
 
 .metric-grid,
-.soldier-grid {
+.soldier-grid,
+.construction-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
 
 .metric-grid div,
-.soldier-grid div {
+.soldier-grid div,
+.construction-grid div {
   min-width: 0;
   padding: 7px 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -502,7 +504,7 @@ button {
 
 .panel-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -567,9 +569,24 @@ button {
 .upgrade-card p,
 .upgrade-effect,
 .upgrade-meta,
-.battle-log {
+.battle-log,
+.construction-status {
   font-size: 0.72rem;
   line-height: 1.35;
+}
+
+.construction-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.construction-status {
+  min-height: 32px;
+  padding: 8px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(244, 241, 232, 0.78);
 }
 
 .upgrade-effect {
@@ -616,7 +633,8 @@ button {
 
   .stats-strip span,
   .metric-grid span,
-  .soldier-grid span {
+  .soldier-grid span,
+  .construction-grid span {
     font-size: 0.62rem;
   }
 
@@ -631,6 +649,8 @@ button {
   .panel-header,
   .metric-grid,
   .soldier-grid,
+  .construction-grid,
+  .construction-actions,
   .upgrade-list {
     grid-template-columns: 1fr;
   }

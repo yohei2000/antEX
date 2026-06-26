@@ -21,6 +21,13 @@ const ui = {
   growthFill: document.querySelector("#growthFill"),
   upgradeList: document.querySelector("#upgradeList"),
   growthTab: document.querySelector("#growthTab"),
+  constructionTab: document.querySelector("#constructionTab"),
+  constructionBuilders: document.querySelector("#constructionBuilders"),
+  constructionActive: document.querySelector("#constructionActive"),
+  constructionComplete: document.querySelector("#constructionComplete"),
+  constructionTrailBtn: document.querySelector("#constructionTrailBtn"),
+  constructionBarricadeBtn: document.querySelector("#constructionBarricadeBtn"),
+  constructionStatus: document.querySelector("#constructionStatus"),
   soldierTab: document.querySelector("#soldierTab"),
   soldierNest: document.querySelector("#soldierNest"),
   soldierDeployed: document.querySelector("#soldierDeployed"),
@@ -432,7 +439,7 @@ const UPGRADE_DEFS = [
 
 function createDefaultColony() {
   return {
-    version: 5,
+    version: 6,
     food: 36,
     lifetimeFood: 36,
     antPopulation: 12,
@@ -450,6 +457,7 @@ function createDefaultColony() {
     battleCooldownUntil: 0,
     raidState: createDefaultRaidState(),
     nextEarthworkId: 1,
+    earthworks: [],
     unlockedEnemyColonies: ["near-food"],
     upgrades: Object.fromEntries(UPGRADE_DEFS.map((upgrade) => [upgrade.id, 0])),
     battleLog: ["小さな巣が地中で動き始めた"],
@@ -509,7 +517,7 @@ function migrateColony(raw) {
   const next = {
     ...base,
     ...raw,
-    version: 5,
+    version: 6,
     upgrades: { ...base.upgrades, ...(raw.upgrades ?? {}) },
     raidState: normalizeRaidState(raw.raidState, { resetActiveOnLoad: true }),
     battleLog: Array.isArray(raw.battleLog) ? raw.battleLog.slice(0, 5) : base.battleLog,
@@ -534,6 +542,23 @@ function migrateColony(raw) {
   next.lastSavedAt = Number(next.lastSavedAt) || Date.now();
   next.raidState = normalizeRaidState(next.raidState);
   next.nextEarthworkId = Math.floor(clamp(Number(next.nextEarthworkId) || 1, 1, 100000000));
+  next.earthworks = Array.isArray(raw.earthworks)
+    ? raw.earthworks.slice(0, 12).map((earthwork) => ({
+        id: Math.floor(clamp(Number(earthwork?.id) || next.nextEarthworkId++, 1, 100000000)),
+        kind: earthwork?.kind === "lowBarricade" ? "lowBarricade" : "trailReinforce",
+        x: clamp(Number(earthwork?.x) || 0, -180, 180),
+        z: clamp(Number(earthwork?.z) || 0, -180, 180),
+        radius: clamp(Number(earthwork?.radius) || 12, 4, 24),
+        progress: clamp(Number(earthwork?.progress) || 0, 0, 100),
+        maxProgress: clamp(Number(earthwork?.maxProgress) || 1, 0.5, 100),
+        rotation: Number.isFinite(Number(earthwork?.rotation)) ? Number(earthwork.rotation) : 0,
+        owner: "colony",
+      }))
+    : [];
+  for (const earthwork of next.earthworks) {
+    earthwork.progress = clamp(earthwork.progress, 0, earthwork.maxProgress);
+    next.nextEarthworkId = Math.max(next.nextEarthworkId, earthwork.id + 1);
+  }
   for (const upgrade of UPGRADE_DEFS) {
     next.upgrades[upgrade.id] = Math.floor(clamp(Number(next.upgrades[upgrade.id]) || 0, 0, upgrade.max));
   }
@@ -2614,6 +2639,7 @@ class AntColony3D {
     this.colonyCorpses = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.raidNotice = { message: "", kind: "warning", timer: 0 };
+    this.constructionMessage = "待機";
     this.renderAntBuffer = [];
     this.soldierSortieCooldown = 0;
     this.sortieRetireQueue = [];
@@ -2746,7 +2772,7 @@ class AntColony3D {
       corpseMark: new THREE.MeshBasicMaterial({ color: 0x5b271f, transparent: true, opacity: 0.34, depthWrite: false }),
       trailRescue: new THREE.MeshBasicMaterial({ color: 0x51b7a6, transparent: true, opacity: 0.22, depthWrite: false }),
       trailWater: new THREE.MeshBasicMaterial({ color: 0x55aee0, transparent: true, opacity: 0.18, depthWrite: false }),
-      earthworkTrail: new THREE.MeshBasicMaterial({ color: 0xb28c45, transparent: true, opacity: 0.2, depthWrite: false }),
+      earthworkTrail: new THREE.MeshBasicMaterial({ color: 0xb68b43, transparent: true, opacity: 0.3, depthWrite: false }),
       earthworkBarricade: new THREE.MeshBasicMaterial({ color: 0x8a6335, transparent: true, opacity: 0.28, depthWrite: false }),
     };
 
@@ -2931,27 +2957,63 @@ class AntColony3D {
   }
 
   ensureBuildTasks() {
-    if ((this.derived.builders ?? this.colony.builderAnts ?? 0) <= 0) return;
-    const openTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
-    const hasTrailWork =
-      openTasks.some((task) => task.kind === "trailReinforce") ||
-      this.earthworks.some((earthwork) => earthwork.kind === "trailReinforce" && earthwork.strength > 0.82);
-    const hasBarricadeWork =
-      openTasks.some((task) => task.kind === "lowBarricade") ||
-      this.earthworks.some((earthwork) => earthwork.kind === "lowBarricade" && earthwork.strength > 0.82);
-    if (!hasTrailWork) {
-      const foodTrail = this.findStrongestTrail("food", this.nest.x, this.nest.z, 92);
-      const x = foodTrail ? foodTrail.x : this.nest.x + this.nest.radius + 16;
-      const z = foodTrail ? foodTrail.z : this.nest.z + 6;
-      this.createBuildTask("trailReinforce", x, z, { radius: 13, maxProgress: 2.8 });
+    this.buildTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
+  }
+
+  canStartConstruction(kind) {
+    const d = this.computeDerived();
+    if ((d.builders ?? 0) <= 0) return { ok: false, reason: "土木アリがいない" };
+    if (this.buildTasks.some((task) => task.kind === kind && task.progress < task.maxProgress)) {
+      return { ok: false, reason: "同じ作業が進行中" };
     }
-    if (!hasBarricadeWork && (this.derived.heavySoldiers ?? 0) > 0) {
-      const raid = this.ensureRaidState();
-      const point = raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating"
-        ? this.raidSignalPoint(raid, 0.38)
-        : { x: this.nest.x + this.nest.radius * 1.35, z: this.nest.z - this.nest.radius * 0.25 };
-      this.createBuildTask("lowBarricade", point.x, point.z, { radius: 10, maxProgress: 3.6 });
+    const completedSameKind = this.earthworks.filter((earthwork) => earthwork.kind === kind && earthwork.strength > 0.82).length;
+    const limit = kind === "lowBarricade" ? 3 : 4;
+    if (completedSameKind >= limit) return { ok: false, reason: "作れる場所が埋まっている" };
+    if (kind === "lowBarricade" && (d.heavySoldiers ?? 0) <= 0) return { ok: false, reason: "重兵装アリがいない" };
+    return { ok: true, reason: "" };
+  }
+
+  startConstruction(kind) {
+    const checked = this.canStartConstruction(kind);
+    if (!checked.ok) {
+      this.constructionMessage = checked.reason;
+      this.updateStats();
+      return false;
     }
+    const target = this.constructionTarget(kind);
+    const task = this.createBuildTask(kind, target.x, target.z, target);
+    this.constructionMessage = kind === "lowBarricade" ? "低い土塁を発注" : "採餌道整備を発注";
+    this.pushLog(kind === "lowBarricade" ? "土木指示: 低い土塁を築く" : "土木指示: 採餌道を整える");
+    this.syncEarthworksToColony();
+    this.updateStats();
+    this.saveColony();
+    return Boolean(task);
+  }
+
+  constructionTarget(kind) {
+    if (kind === "trailReinforce") {
+      const foodTrail = this.findStrongestTrail("food", this.nest.x, this.nest.z, 96);
+      const x = foodTrail ? foodTrail.x : this.nest.x + this.nest.radius + 17;
+      const z = foodTrail ? foodTrail.z : this.nest.z + 7;
+      const angle = Math.atan2(z - this.nest.z, x - this.nest.x);
+      return { x, z, radius: 13, maxProgress: 2.8, rotation: angle };
+    }
+    const raid = this.ensureRaidState();
+    let point;
+    if (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating") {
+      point = this.raidSignalPoint(raid, 0.36);
+    } else {
+      const threat = this.findRivalThreat(this.nest.x, this.nest.z, 96);
+      point = threat ? { x: threat.x, z: threat.z } : { x: this.nest.x + this.nest.radius * 1.45, z: this.nest.z - this.nest.radius * 0.2 };
+    }
+    const angle = Math.atan2(point.z - this.nest.z, point.x - this.nest.x);
+    return {
+      x: this.nest.x + Math.cos(angle) * (this.nest.radius + 9.5),
+      z: this.nest.z + Math.sin(angle) * (this.nest.radius + 9.5),
+      radius: 10,
+      maxProgress: 3.6,
+      rotation: angle,
+    };
   }
 
   createBuildTask(kind, x, z, options = {}) {
@@ -2959,7 +3021,7 @@ class AntColony3D {
     this.colony.nextEarthworkId = id + 1;
     const radius = options.radius ?? (kind === "lowBarricade" ? 10 : 12);
     const maxProgress = options.maxProgress ?? (kind === "lowBarricade" ? 3.6 : 2.8);
-    const earthwork = this.addEarthwork({ id, kind, x, z, radius, progress: 0, maxProgress, owner: "colony" });
+    const earthwork = this.addEarthwork({ id, kind, x, z, radius, progress: 0, maxProgress, owner: "colony", rotation: options.rotation ?? 0 });
     const task = {
       id: earthwork.id,
       kind: earthwork.kind,
@@ -2969,21 +3031,30 @@ class AntColony3D {
       progress: earthwork.progress,
       maxProgress: earthwork.maxProgress,
       owner: earthwork.owner,
+      rotation: earthwork.rotation,
       claimedBy: null,
     };
     this.buildTasks.push(task);
+    this.syncEarthworksToColony();
     return task;
   }
 
   addEarthwork(config) {
     const material = config.kind === "lowBarricade" ? this.materials.earthworkBarricade.clone() : this.materials.earthworkTrail.clone();
+    const group = new THREE.Group();
+    group.position.set(config.x, 0, config.z);
+    group.rotation.y = config.rotation ?? 0;
     const mesh = new THREE.Mesh(this.geometries.trailCircle, material);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(config.x, config.kind === "lowBarricade" ? 0.075 : 0.05, config.z);
-    mesh.scale.setScalar(config.radius);
+    mesh.position.set(0, config.kind === "lowBarricade" ? 0.075 : 0.05, 0);
+    if (config.kind === "lowBarricade") mesh.scale.set(config.radius * 0.95, config.radius * 0.28, 1);
+    else mesh.scale.set(config.radius * 1.35, config.radius * 0.36, 1);
     mesh.visible = false;
-    this.scene.add(mesh);
-    this.sharedMaterials.add(material);
+    group.add(mesh);
+    const details = this.createEarthworkDetails(config.kind, config.radius);
+    for (const detail of details) group.add(detail.mesh);
+    this.scene.add(group);
+    this.dynamicObjects.add(group);
     const earthwork = {
       id: config.id,
       kind: config.kind,
@@ -2994,14 +3065,57 @@ class AntColony3D {
       progress: config.progress ?? 0,
       maxProgress: config.maxProgress ?? 1,
       owner: config.owner ?? "colony",
+      rotation: config.rotation ?? 0,
+      group,
       mesh,
+      details,
     };
     this.earthworks.push(earthwork);
     return earthwork;
   }
 
+  createEarthworkDetails(kind, radius) {
+    const details = [];
+    if (kind === "lowBarricade") {
+      const count = 26;
+      for (let i = 0; i < count; i += 1) {
+        const t = count === 1 ? 0.5 : i / (count - 1);
+        const arc = -1.18 + t * 2.36;
+        const lane = i % 3;
+        const localX = Math.sin(arc) * radius * (0.78 + lane * 0.035);
+        const localZ = Math.cos(arc) * radius * 0.32 + (lane - 1) * 0.34;
+        const scale = 0.28 + (i % 5) * 0.035;
+        const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
+        mesh.position.set(localX, 0.12 + scale * 0.18, localZ);
+        mesh.scale.set(scale * 1.15, scale * 0.7, scale);
+        mesh.rotation.set(Math.sin(i * 1.3) * 0.32, (i * 2.17) % Math.PI, Math.cos(i * 0.9) * 0.28);
+        mesh.castShadow = this.quality.shadowQuality !== "off";
+        mesh.receiveShadow = this.quality.shadowQuality !== "off";
+        mesh.visible = false;
+        details.push({ mesh, threshold: 0.08 + t * 0.86 });
+      }
+      return details;
+    }
+    const count = 30;
+    for (let i = 0; i < count; i += 1) {
+      const t = count === 1 ? 0.5 : i / (count - 1);
+      const side = i % 2 === 0 ? -1 : 1;
+      const localX = (t - 0.5) * radius * 2.15 + Math.sin(i * 1.7) * 0.42;
+      const localZ = side * (radius * 0.26 + (i % 4) * 0.11);
+      const scale = 0.16 + (i % 4) * 0.03;
+      const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
+      mesh.position.set(localX, 0.06 + scale * 0.12, localZ);
+      mesh.scale.set(scale * 1.15, scale * 0.46, scale * 0.9);
+      mesh.rotation.set(Math.sin(i * 0.8) * 0.16, (i * 1.91) % Math.PI, Math.cos(i * 1.2) * 0.12);
+      mesh.castShadow = this.quality.shadowQuality !== "off";
+      mesh.receiveShadow = this.quality.shadowQuality !== "off";
+      mesh.visible = false;
+      details.push({ mesh, threshold: 0.04 + t * 0.9 });
+    }
+    return details;
+  }
+
   claimBuildTask(ant) {
-    this.ensureBuildTasks();
     let task = this.buildTasks.find((item) => item.id === ant.buildTaskId && item.progress < item.maxProgress);
     if (task) return task;
     task = this.buildTasks
@@ -3027,8 +3141,10 @@ class AntColony3D {
     if (task.progress >= task.maxProgress) {
       task.claimedBy = null;
       ant.buildTaskId = null;
+      this.constructionMessage = task.kind === "lowBarricade" ? "低い土塁が完成" : "採餌道整備が完成";
       this.pushLog(task.kind === "lowBarricade" ? "土木アリが低い土塁を固めた" : "土木アリが採餌道を整えた");
     }
+    this.syncEarthworksToColony();
   }
 
   updateEarthworks() {
@@ -3036,10 +3152,55 @@ class AntColony3D {
       if (!earthwork.mesh) continue;
       earthwork.strength = clamp(earthwork.progress / Math.max(earthwork.maxProgress, 0.001), 0, 1);
       earthwork.mesh.visible = earthwork.strength > 0.02;
-      earthwork.mesh.material.opacity = (earthwork.kind === "lowBarricade" ? 0.28 : 0.2) * Math.max(0.15, earthwork.strength);
-      earthwork.mesh.scale.setScalar(earthwork.radius * (0.78 + earthwork.strength * 0.22));
+      earthwork.mesh.material.opacity = (earthwork.kind === "lowBarricade" ? 0.28 : 0.3) * Math.max(0.15, earthwork.strength);
+      const scale = 0.78 + earthwork.strength * 0.22;
+      if (earthwork.kind === "lowBarricade") earthwork.mesh.scale.set(earthwork.radius * 0.95 * scale, earthwork.radius * 0.28 * scale, 1);
+      else earthwork.mesh.scale.set(earthwork.radius * 1.35 * scale, earthwork.radius * 0.36 * scale, 1);
+      for (const detail of earthwork.details ?? []) {
+        detail.mesh.visible = earthwork.strength >= detail.threshold;
+      }
     }
     this.buildTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
+  }
+
+  serializeEarthworks() {
+    return (this.earthworks ?? []).map((earthwork) => ({
+      id: earthwork.id,
+      kind: earthwork.kind,
+      x: earthwork.x,
+      z: earthwork.z,
+      radius: earthwork.radius,
+      progress: earthwork.progress,
+      maxProgress: earthwork.maxProgress,
+      rotation: earthwork.rotation ?? 0,
+      owner: "colony",
+    }));
+  }
+
+  syncEarthworksToColony() {
+    if (!this.colony) return;
+    this.colony.earthworks = this.serializeEarthworks();
+  }
+
+  restoreEarthworksFromState() {
+    for (const record of this.colony.earthworks ?? []) {
+      const earthwork = this.addEarthwork(record);
+      if (earthwork.progress < earthwork.maxProgress) {
+        this.buildTasks.push({
+          id: earthwork.id,
+          kind: earthwork.kind,
+          x: earthwork.x,
+          z: earthwork.z,
+          radius: earthwork.radius,
+          progress: earthwork.progress,
+          maxProgress: earthwork.maxProgress,
+          owner: earthwork.owner,
+          rotation: earthwork.rotation ?? 0,
+          claimedBy: null,
+        });
+      }
+    }
+    this.updateEarthworks();
   }
 
   findStrongestTrail(kind, x, z, radius) {
@@ -3177,15 +3338,18 @@ class AntColony3D {
       this.buyUpgrade(button.dataset.upgrade);
     });
     ui.soldierSortieBtn.addEventListener("click", () => this.startSoldierSortie());
+    ui.constructionTrailBtn?.addEventListener("click", () => this.startConstruction("trailReinforce"));
+    ui.constructionBarricadeBtn?.addEventListener("click", () => this.startConstruction("lowBarricade"));
 
     const canvas = this.renderer.domElement;
     this.input = new InputManager(this, canvas);
   }
 
   setActiveTab(tab) {
-    this.activeTab = tab === "soldiers" ? "soldiers" : "growth";
+    this.activeTab = tab === "soldiers" || tab === "construction" ? tab : "growth";
     ui.buttons.forEach((item) => item.classList.toggle("active", item.dataset.tab === this.activeTab));
     ui.growthTab.classList.toggle("active", this.activeTab === "growth");
+    ui.constructionTab?.classList.toggle("active", this.activeTab === "construction");
     ui.soldierTab.classList.toggle("active", this.activeTab === "soldiers");
   }
 
@@ -3253,6 +3417,7 @@ class AntColony3D {
     for (const rival of this.rivalAnts) this.antRenderer?.releaseRenderObject(rival);
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+    this.constructionMessage = "待機";
     this.renderAntBuffer.length = 0;
     this.soldierSortieCooldown = 0;
     this.sortieRetireQueue = [];
@@ -3268,6 +3433,7 @@ class AntColony3D {
     }
     this.ensureRaidState();
     this.seedNaturalEnvironment();
+    this.restoreEarthworksFromState();
     this.syncAntPopulation();
     this.updateColonyVisuals();
     this.renderUpgrades();
@@ -3493,6 +3659,7 @@ class AntColony3D {
 
   saveColony() {
     if (!this.colony || this.raidSoonMode) return;
+    this.syncEarthworksToColony();
     this.colony.lastSavedAt = Date.now();
     writeStorage(SAVE_KEY, JSON.stringify(this.colony));
   }
@@ -4882,6 +5049,10 @@ class AntColony3D {
     const deployedSoldiers = this.deployedSoldierCount();
     const availableSoldiers = this.availableSortieSoldiers();
     const plannedSortie = this.plannedSortieCount();
+    const activeConstruction = this.buildTasks.filter((task) => task.progress < task.maxProgress).length;
+    const completeConstruction = this.earthworks.filter((earthwork) => earthwork.strength > 0.95).length;
+    const trailCommand = this.canStartConstruction("trailReinforce");
+    const barricadeCommand = this.canStartConstruction("lowBarricade");
     const cooldownLeft = Math.ceil(this.soldierSortieCooldown);
     const raid = this.ensureRaidState();
     const raidTime = Math.max(0, Math.ceil(raid.timer));
@@ -4906,6 +5077,22 @@ class AntColony3D {
       `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 土木 ${fmt(d.builders, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     ui.activeToolLabel.textContent = this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel;
+    if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);
+    if (ui.constructionActive) ui.constructionActive.textContent = fmt(activeConstruction, 0);
+    if (ui.constructionComplete) ui.constructionComplete.textContent = fmt(completeConstruction, 0);
+    if (ui.constructionTrailBtn) {
+      ui.constructionTrailBtn.disabled = !trailCommand.ok;
+      ui.constructionTrailBtn.title = trailCommand.reason || "採餌道を整える";
+    }
+    if (ui.constructionBarricadeBtn) {
+      ui.constructionBarricadeBtn.disabled = !barricadeCommand.ok;
+      ui.constructionBarricadeBtn.title = barricadeCommand.reason || "低い土塁を築く";
+    }
+    if (ui.constructionStatus) {
+      ui.constructionStatus.textContent =
+        activeConstruction > 0 ? `作業中 ${fmt(activeConstruction, 0)} / 完成 ${fmt(completeConstruction, 0)}` :
+        this.constructionMessage || "待機";
+    }
     ui.soldierNest.textContent = fmt(Math.max(0, d.normalSoldiers - deployedSoldiers), 0);
     ui.soldierDeployed.textContent = fmt(deployedSoldiers, 0);
     ui.soldierStatus.textContent =
