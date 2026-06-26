@@ -570,7 +570,9 @@ button {
 .upgrade-effect,
 .upgrade-meta,
 .battle-log,
-.construction-status {
+.construction-status,
+.construction-crew,
+.construction-progress-list {
   font-size: 0.72rem;
   line-height: 1.35;
 }
@@ -587,6 +589,60 @@ button {
   border-radius: 7px;
   background: rgba(0, 0, 0, 0.2);
   color: rgba(244, 241, 232, 0.78);
+}
+
+.construction-crew {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: rgba(125, 100, 59, 0.16);
+  color: rgba(244, 241, 232, 0.74);
+}
+
+.construction-progress-list {
+  display: grid;
+  gap: 7px;
+}
+
+.construction-task {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.construction-task-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(244, 241, 232, 0.86);
+}
+
+.construction-task-header strong,
+.construction-task-header span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.construction-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(244, 241, 232, 0.13);
+}
+
+.construction-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7faa6d, #d2b46c);
+}
+
+.construction-task-meta {
+  color: rgba(244, 241, 232, 0.66);
 }
 
 .upgrade-effect {

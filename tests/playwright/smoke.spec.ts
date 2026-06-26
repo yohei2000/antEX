@@ -340,15 +340,18 @@ test("food only increases when a carrying ant returns to the nest", async ({ pag
     carrier.foodSourceId = null;
     carrier.state = "return";
     const returnBefore = sim.colony.food;
+    const expectedReturnGain = carrier.carrying * sim.computeDerived().foragedFoodMultiplier;
     carrier.updateReturn(1 / 60, sim, { x: 0, z: 0 });
     const returnAfter = sim.colony.food;
 
-    return { noDeliveryBefore, noDeliveryAfter, returnBefore, returnAfter };
+    return { noDeliveryBefore, noDeliveryAfter, returnBefore, returnAfter, expectedReturnGain };
   });
 
   expect(result.noDeliveryAfter).toBeLessThanOrEqual(result.noDeliveryBefore + 0.0001);
   expect(result.noDeliveryAfter).toBeGreaterThan(result.noDeliveryBefore - 0.2);
   expect(result.returnAfter).toBeGreaterThan(result.returnBefore);
+  expect(result.returnAfter - result.returnBefore).toBeCloseTo(result.expectedReturnGain, 5);
+  expect(result.expectedReturnGain).toBeCloseTo(3.75, 5);
 });
 
 test("upgrade click increments an available upgrade", async ({ page }) => {
@@ -537,6 +540,9 @@ test("construction tab issues earthwork commands separately from growth", async 
       builderCountText: (document.querySelector("#constructionBuilders") as HTMLElement).textContent,
       activeCountText: (document.querySelector("#constructionActive") as HTMLElement).textContent,
       statusText: (document.querySelector("#constructionStatus") as HTMLElement).textContent,
+      crewText: (document.querySelector("#constructionCrew") as HTMLElement).textContent,
+      progressText: (document.querySelector("#constructionProgressList") as HTMLElement).textContent,
+      progressRows: document.querySelectorAll("#constructionProgressList .construction-task").length,
       trailDisabledAfterCommand: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).disabled,
       savedEarthworks: sim.colony.earthworks.length,
     };
@@ -551,6 +557,12 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.builderCountText).toBe("1");
   expect(result.activeCountText).toBe("2");
   expect(result.statusText).toContain("作業中");
+  expect(result.statusText).toContain("平均");
+  expect(result.crewText).toContain("待機");
+  expect(result.progressText).toContain("採餌道");
+  expect(result.progressText).toContain("低い土塁");
+  expect(result.progressText).toContain("担当 0/1");
+  expect(result.progressRows).toBe(2);
   expect(result.trailDisabledAfterCommand).toBe(true);
   expect(result.savedEarthworks).toBe(2);
 });
@@ -623,12 +635,15 @@ test("heavy soldiers brace while builders complete earthworks and retreat", asyn
     const rivalSpeed = sim.rivalSpeedAt(barricadeTask.x, barricadeTask.z);
     const braceBonus = sim.braceBonusAt(barricadeTask.x, barricadeTask.z);
 
+    const retreatTask = sim.createBuildTask("trailReinforce", sim.nest.x + 22, sim.nest.z + 8, { radius: 13, maxProgress: 2 });
+    retreatTask.claimedBy = builder.id;
     builder.x = rival.x + 1.5;
     builder.z = rival.z;
     builder.carryingSoil = true;
-    builder.buildTaskId = trailTask.id;
+    builder.buildTaskId = retreatTask.id;
     const retreatSteering = { x: 0, z: 0 };
     builder.updateBuilder(1 / 60, sim, retreatSteering, builder.sensed);
+    const retreatTaskClaimAfterDanger = retreatTask.claimedBy;
 
     return {
       heavyHandled,
@@ -643,6 +658,7 @@ test("heavy soldiers brace while builders complete earthworks and retreat", asyn
       builderAction: builder.lastTacticalAction,
       builderCarryingAfterDanger: builder.carryingSoil,
       builderTaskAfterDanger: builder.buildTaskId,
+      retreatTaskClaimAfterDanger,
       retreatLength: Math.hypot(retreatSteering.x, retreatSteering.z),
     };
   });
@@ -659,6 +675,7 @@ test("heavy soldiers brace while builders complete earthworks and retreat", asyn
   expect(result.builderAction).toBe("retreatBehindGuard");
   expect(result.builderCarryingAfterDanger).toBe(false);
   expect(result.builderTaskAfterDanger).toBeNull();
+  expect(result.retreatTaskClaimAfterDanger).toBeNull();
   expect(result.retreatLength).toBeGreaterThan(0);
 });
 

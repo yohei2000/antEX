@@ -28,6 +28,8 @@ const ui = {
   constructionTrailBtn: document.querySelector("#constructionTrailBtn"),
   constructionBarricadeBtn: document.querySelector("#constructionBarricadeBtn"),
   constructionStatus: document.querySelector("#constructionStatus"),
+  constructionCrew: document.querySelector("#constructionCrew"),
+  constructionProgressList: document.querySelector("#constructionProgressList"),
   soldierTab: document.querySelector("#soldierTab"),
   soldierNest: document.querySelector("#soldierNest"),
   soldierDeployed: document.querySelector("#soldierDeployed"),
@@ -86,6 +88,7 @@ const CAMERA_DISTANCE_MAX = 340;
 const CAMERA_DISTANCE_MOBILE = 252;
 const CAMERA_DISTANCE_DESKTOP = 238;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
+const FOOD_INCOME_MULTIPLIER = 3;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
@@ -1273,8 +1276,7 @@ class Ant3D {
   updateBuilder(dt, sim, steering) {
     const rival = sim.findRivalThreat(this.x, this.z, 16);
     if (rival) {
-      this.buildTaskId = null;
-      this.carryingSoil = false;
+      sim.releaseBuildTask(this);
       const cover = sim.findNearestVariant(this.x, this.z, "heavySoldier", this);
       const targetX = cover ? cover.x : sim.nest.x;
       const targetZ = cover ? cover.z : sim.nest.z;
@@ -3115,9 +3117,20 @@ class AntColony3D {
     return details;
   }
 
+  releaseBuildTask(ant) {
+    const task = this.buildTasks.find((item) => item.id === ant.buildTaskId);
+    if (task && task.claimedBy === ant.id) task.claimedBy = null;
+    ant.buildTaskId = null;
+    ant.carryingSoil = false;
+  }
+
   claimBuildTask(ant) {
     let task = this.buildTasks.find((item) => item.id === ant.buildTaskId && item.progress < item.maxProgress);
-    if (task) return task;
+    if (task && (task.claimedBy == null || task.claimedBy === ant.id)) {
+      task.claimedBy = ant.id;
+      return task;
+    }
+    if (task) ant.buildTaskId = null;
     task = this.buildTasks
       .filter((item) => item.progress < item.maxProgress && (item.claimedBy == null || item.claimedBy === ant.id))
       .sort((a, b) => distance2(ant.x, ant.z, a.x, a.z) - distance2(ant.x, ant.z, b.x, b.z))[0];
@@ -3488,7 +3501,7 @@ class AntColony3D {
     const workers = Math.max(0, availableWorkers - builders);
     const foragingBonus = 1 + foragerTrails * 0.24 + trailPheromones * 0.07 + foodDistribution * 0.025;
     const trafficBonus = 1 + chamberExcavation * 0.035 + ventilationShafts * 0.018;
-    const foodRate =
+    const baseFoodRate =
       (workers * getAntVariantConfig("worker").forageEfficiency + builders * getAntVariantConfig("builder").forageEfficiency) *
         0.034 *
         foragingBonus *
@@ -3497,6 +3510,7 @@ class AntColony3D {
       this.colony.territory * 0.075 +
       this.colony.nestLevel * 0.025 +
       storageChambers * 0.012;
+    const foodRate = baseFoodRate * FOOD_INCOME_MULTIPLIER;
     const distributionDiscount = clamp(1 - foodDistribution * 0.025 - storageChambers * 0.008, 0.78, 1);
     const antCost = (5.5 + this.colony.nestLevel * 1.3 + this.colony.antPopulation * 0.035) * distributionDiscount;
     const growthPerSecond =
@@ -3507,7 +3521,7 @@ class AntColony3D {
     const attackPower = 1 + soldierTraining * 0.15 + sentinelPosts * 0.03 + normalSoldiers * 0.002 + heavySoldiers * 0.01;
     const defensePower = 1 + nestGuard * 0.18 + sentinelPosts * 0.1 + ventilationShafts * 0.02 + wasteGallery * 0.03 + heavySoldiers * 0.035;
     const threatGrowthMultiplier = clamp(1 - wasteGallery * 0.055 - sentinelPosts * 0.03 - ventilationShafts * 0.015, 0.55, 1);
-    const foragedFoodMultiplier = 1 + foodDistribution * 0.025 + storageChambers * 0.01;
+    const foragedFoodMultiplier = (1 + foodDistribution * 0.025 + storageChambers * 0.01) * FOOD_INCOME_MULTIPLIER;
     const upkeepPerSecond =
       normalSoldiers * getAntVariantConfig("soldier").upkeep +
       heavySoldiers * getAntVariantConfig("heavySoldier").upkeep +
@@ -3630,11 +3644,13 @@ class AntColony3D {
     };
     let homeIndex = 0;
     for (const ant of this.ants) {
+      const nextVariant = ant.isSortieSoldier ? "soldier" : this.variantForIndex(homeIndex, counts);
+      if (ant.variant === "builder" && nextVariant !== "builder") this.releaseBuildTask(ant);
       if (ant.isSortieSoldier) {
         ant.setVariant("soldier");
         continue;
       }
-      ant.setVariant(this.variantForIndex(homeIndex, counts));
+      ant.setVariant(nextVariant);
       homeIndex += 1;
     }
   }
@@ -5044,6 +5060,80 @@ class AntColony3D {
     this.updateInspector();
   }
 
+  constructionLabel(kind) {
+    return kind === "lowBarricade" ? "低い土塁" : "採餌道";
+  }
+
+  constructionAssignees(task) {
+    return this.ants.filter((ant) => ant.variant === "builder" && ant.buildTaskId === task.id);
+  }
+
+  constructionTaskStatus(task) {
+    const assignees = this.constructionAssignees(task);
+    if (assignees.length <= 0) return "担当待ち";
+    if (assignees.some((ant) => ant.lastTacticalAction === "build")) return "作業中";
+    if (assignees.some((ant) => ant.lastTacticalAction === "deliverSoil" || ant.carryingSoil)) return "運搬中";
+    if (assignees.some((ant) => ant.lastTacticalAction === "fetchSoil")) return "採土中";
+    if (assignees.some((ant) => ant.lastTacticalAction === "retreatBehindGuard")) return "退避中";
+    return "移動中";
+  }
+
+  constructionCrewStatus() {
+    const totals = { fetching: 0, carrying: 0, building: 0, retreating: 0, idle: 0 };
+    for (const ant of this.ants) {
+      if (ant.variant !== "builder") continue;
+      if (ant.lastTacticalAction === "retreatBehindGuard") totals.retreating += 1;
+      else if (ant.lastTacticalAction === "build") totals.building += 1;
+      else if (ant.lastTacticalAction === "deliverSoil" || ant.lastTacticalAction === "carrySoil" || ant.carryingSoil) totals.carrying += 1;
+      else if (ant.lastTacticalAction === "fetchSoil") totals.fetching += 1;
+      else totals.idle += 1;
+    }
+    const { fetching, carrying, building, retreating, idle } = totals;
+    return { fetching, carrying, building, retreating, idle };
+  }
+
+  renderConstructionProgress() {
+    if (!ui.constructionProgressList) return;
+    const activeTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
+    ui.constructionProgressList.replaceChildren();
+    if (activeTasks.length <= 0) {
+      const empty = document.createElement("div");
+      empty.className = "construction-task";
+      empty.textContent = this.constructionMessage || "作業なし";
+      ui.constructionProgressList.append(empty);
+      return;
+    }
+    for (const task of activeTasks) {
+      const progress = clamp(task.progress / Math.max(task.maxProgress, 0.001), 0, 1);
+      const percent = Math.round(progress * 100);
+      const assigneeCount = this.constructionAssignees(task).length || (task.claimedBy == null ? 0 : 1);
+      const row = document.createElement("div");
+      row.className = "construction-task";
+
+      const header = document.createElement("div");
+      header.className = "construction-task-header";
+      const label = document.createElement("strong");
+      label.textContent = this.constructionLabel(task.kind);
+      const value = document.createElement("span");
+      value.textContent = `${percent}%`;
+      header.append(label, value);
+
+      const track = document.createElement("div");
+      track.className = "construction-progress-track";
+      const fill = document.createElement("span");
+      fill.className = "construction-progress-fill";
+      fill.style.width = `${percent}%`;
+      track.append(fill);
+
+      const meta = document.createElement("div");
+      meta.className = "construction-task-meta";
+      meta.textContent = `${this.constructionTaskStatus(task)} / 担当 ${fmt(assigneeCount, 0)}/1`;
+
+      row.append(header, track, meta);
+      ui.constructionProgressList.append(row);
+    }
+  }
+
   updateStats() {
     const d = this.computeDerived();
     const deployedSoldiers = this.deployedSoldierCount();
@@ -5089,10 +5179,22 @@ class AntColony3D {
       ui.constructionBarricadeBtn.title = barricadeCommand.reason || "低い土塁を築く";
     }
     if (ui.constructionStatus) {
+      const activeProgress = this.buildTasks
+        .filter((task) => task.progress < task.maxProgress)
+        .map((task) => clamp(task.progress / Math.max(task.maxProgress, 0.001), 0, 1));
+      const averageProgress = activeProgress.length > 0
+        ? Math.round((activeProgress.reduce((sum, value) => sum + value, 0) / activeProgress.length) * 100)
+        : 0;
       ui.constructionStatus.textContent =
-        activeConstruction > 0 ? `作業中 ${fmt(activeConstruction, 0)} / 完成 ${fmt(completeConstruction, 0)}` :
+        activeConstruction > 0 ? `作業中 ${fmt(activeConstruction, 0)} / 平均 ${averageProgress}% / 完成 ${fmt(completeConstruction, 0)}` :
         this.constructionMessage || "待機";
     }
+    if (ui.constructionCrew) {
+      const crew = this.constructionCrewStatus();
+      ui.constructionCrew.textContent =
+        `採土 ${fmt(crew.fetching, 0)} / 運搬 ${fmt(crew.carrying, 0)} / 作業 ${fmt(crew.building, 0)} / 退避 ${fmt(crew.retreating, 0)} / 待機 ${fmt(crew.idle, 0)}`;
+    }
+    if (this.activeTab === "construction") this.renderConstructionProgress();
     ui.soldierNest.textContent = fmt(Math.max(0, d.normalSoldiers - deployedSoldiers), 0);
     ui.soldierDeployed.textContent = fmt(deployedSoldiers, 0);
     ui.soldierStatus.textContent =
