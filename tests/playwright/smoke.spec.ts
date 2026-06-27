@@ -790,6 +790,13 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
     shield.sortieTimer = 30;
     shield.braceIntent = 0;
     shield.lastTacticalAction = "idle";
+    for (const ant of sim.ants) {
+      if (ant === shield) continue;
+      ant.x = block.x + 60 + ant.id * 0.1;
+      ant.z = block.z + 60;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
     rival.x = block.x + forward.x * 3;
     rival.z = block.z + forward.z * 3;
     rival.prevX = rival.x;
@@ -806,6 +813,13 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
     const braceBonus = sim.braceBonusAt(block.x + forward.x * 2, block.z + forward.z * 2);
     const pressureWithoutShield = 1;
     const pressureWithShield = Math.max(0.28, 1 - sim.shieldBlockStrengthAt(rival.x, rival.z) * 0.42);
+    const blockAction = shield.lastTacticalAction;
+    const rivalDistanceBeforePush = Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z);
+    const contactResolved = rival.resolveAntContacts(sim);
+    const rivalDistanceAfterPush = Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z);
+    const pushAction = shield.lastTacticalAction;
+    const noClashAfterPush = shield.state !== "clash" && !rival.clash;
+    const coverStrength = sim.shieldCoverStrengthAt(block.x - forward.x * 4, block.z - forward.z * 4);
     rival.x = block.x + forward.x * 80;
     rival.z = block.z + forward.z * 80;
     shield.updateShieldHead(1 / 60, sim, { x: 0, z: 0 });
@@ -817,7 +831,13 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
       shieldFound: true,
       rivalFound: true,
       handled,
-      action: shield.lastTacticalAction,
+      action: blockAction,
+      contactResolved,
+      pushAction,
+      noClashAfterPush,
+      pushedOutward: rivalDistanceAfterPush > rivalDistanceBeforePush,
+      fightCooldownAfterPush: rival.fightCooldown,
+      coverStrength,
       shieldPose: renderState.shieldPose,
       slowAtBlock,
       farSpeed,
@@ -837,6 +857,12 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
   expect(result.rivalFound).toBe(true);
   expect(result.handled).toBe(true);
   expect(result.action).toBe("shieldBlock");
+  expect(result.contactResolved).toBe(true);
+  expect(result.pushAction).toBe("shieldPush");
+  expect(result.noClashAfterPush).toBe(true);
+  expect(result.pushedOutward).toBe(true);
+  expect(result.fightCooldownAfterPush).toBeGreaterThan(0);
+  expect(result.coverStrength).toBeGreaterThan(0);
   expect(result.shieldPose).toBeGreaterThan(0.9);
   expect(result.slowAtBlock).toBeLessThan(result.farSpeed);
   expect(result.braceBonus).toBeGreaterThan(0);

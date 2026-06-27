@@ -664,6 +664,7 @@ class Ant3D {
 
   startRivalClash(rival, anchorX, anchorZ, duration = RIVAL_CLASH_DURATION) {
     if (this.clashTimer > 0 || this.fleeTimer > 0 || this.stun > 0 || this.state === "stunned") return false;
+    if (this.variant === "shieldHead") return false;
     if (this.variant === "heavySoldier" || this.variant === "shieldHead") this.braceIntent = 1;
     this.clashRival = rival;
     this.clashTimer = duration;
@@ -1603,7 +1604,8 @@ class RivalAnt3D {
       const exposedBonus = ant.role === "worker" && nestDistance > sim.nest.radius + 18 ? (this.isRaidRival ? 12 : 4) : 0;
       const builderBonus = ant.variant === "builder" ? (this.isRaidRival ? 9 : 5) : 0;
       const guardPenalty = ant.variant === "shieldHead" ? (this.isRaidRival ? -12 : -8) : ant.variant === "heavySoldier" || ant.role === "guard" ? (this.isRaidRival ? -8 : -5) : 0;
-      const score = baseScore - d + carryingBonus + workerBonus + returnBonus + foodBonus + exposedBonus + builderBonus + guardPenalty;
+      const shieldCoverPenalty = ant.variant === "shieldHead" ? 0 : sim.shieldCoverStrengthAt(ant.x, ant.z) * (this.isRaidRival ? 18 : 12);
+      const score = baseScore - d + carryingBonus + workerBonus + returnBonus + foodBonus + exposedBonus + builderBonus + guardPenalty - shieldCoverPenalty;
       if (score > bestScore) {
         best = ant;
         bestScore = score;
@@ -1736,6 +1738,7 @@ class RivalAnt3D {
     const candidates = sim.ants
       .filter((ant) =>
         !clash.ants.includes(ant) &&
+        ant.variant !== "shieldHead" &&
         ant.state !== "stunned" &&
         ant.state !== "flee" &&
         ant.fleeTimer <= 0 &&
@@ -1967,6 +1970,12 @@ class RivalAnt3D {
       const nx = d > 0.0001 ? dx / d : Math.sin(this.angle);
       const nz = d > 0.0001 ? dz / d : Math.cos(this.angle);
       const overlap = contact - d;
+
+      if (ant.variant === "shieldHead") {
+        sim.resolveShieldHeadContact(ant, this, overlap, nx, nz);
+        resolved = true;
+        continue;
+      }
 
       if (this.fightCooldown > 0) {
         const shove = Math.min(0.34, overlap * 0.18 + 0.06);
@@ -2378,7 +2387,7 @@ class AntRenderSystem {
     }
     if (renderState.variant === "shieldHead") {
       const pose = clamp(renderState.shieldPose ?? 0, 0, 1);
-      this.composeLocalMatrix(renderState, 0, 0.02 + pose * 0.035, 1.5, 0.98, 0.11, 0.62);
+      this.composeLocalMatrix(renderState, 0, -0.005 + pose * 0.018, 1.56, 1.32, 0.045, 0.56);
       this.shieldPlateMesh.setMatrixAt(index, this.dummy.matrix);
     }
 
@@ -2400,9 +2409,9 @@ class AntRenderSystem {
       scale.y *= config.headScale * 0.96;
       scale.z *= config.headScale;
       if (renderState.variant === "shieldHead") {
-        scale.x *= 1.44;
-        scale.y *= 0.5;
-        scale.z *= 1.12;
+        scale.x *= 1.62;
+        scale.y *= 0.32;
+        scale.z *= 0.88;
       }
     } else if (partName === "gaster") {
       scale.x *= config.abdomenScale;
@@ -2967,6 +2976,60 @@ class AntColony3D {
       strength += (1 - d / 18) * blockPose * chokeBonus;
     }
     return clamp(strength, 0, 1.3);
+  }
+
+  shieldCoverStrengthAt(x, z) {
+    let strength = 0;
+    for (const ant of this.ants ?? []) {
+      if (ant.variant !== "shieldHead" || !ant.isSortieSoldier || !this.shouldRenderAnt(ant)) continue;
+      if (ant.state === "return" || ant.state === "flee" || ant.fleeTimer > 0 || ant.stun > 0) continue;
+      const d = distance2(x, z, ant.x, ant.z);
+      if (d >= 16) continue;
+      const pose = ant.lastTacticalAction === "shieldBlock" || ant.lastTacticalAction === "shieldPush" || ant.braceIntent > 0.72 ? 1 : 0.5;
+      const shieldNestDistance = distance2(ant.x, ant.z, this.nest.x, this.nest.z);
+      const targetNestDistance = distance2(x, z, this.nest.x, this.nest.z);
+      const behindShield = targetNestDistance <= shieldNestDistance + 3 ? 1 : 0.55;
+      strength += (1 - d / 16) * pose * behindShield;
+    }
+    return clamp(strength, 0, 1.2);
+  }
+
+  resolveShieldHeadContact(shield, rival, overlap = 0, nx = null, nz = null) {
+    if (!shield || !rival || shield.variant !== "shieldHead") return false;
+    if (shield.state === "return" || shield.state === "flee" || shield.fleeTimer > 0 || shield.stun > 0) return false;
+    const awayShieldX = rival.x - shield.x;
+    const awayShieldZ = rival.z - shield.z;
+    const awayShieldDistance = Math.hypot(awayShieldX, awayShieldZ) || 1;
+    const shieldPushX = awayShieldX / awayShieldDistance;
+    const shieldPushZ = awayShieldZ / awayShieldDistance;
+    const nestDistance = distance2(rival.x, rival.z, this.nest.x, this.nest.z) || 1;
+    const outwardX = (rival.x - this.nest.x) / nestDistance;
+    const outwardZ = (rival.z - this.nest.z) / nestDistance;
+    const fallbackX = nx == null ? shieldPushX : -nx;
+    const fallbackZ = nz == null ? shieldPushZ : -nz;
+    let pushX = shieldPushX * 0.72 + outwardX * 0.68 + fallbackX * 0.32;
+    let pushZ = shieldPushZ * 0.72 + outwardZ * 0.68 + fallbackZ * 0.32;
+    const pushLength = Math.hypot(pushX, pushZ) || 1;
+    pushX /= pushLength;
+    pushZ /= pushLength;
+    const shove = clamp(0.5 + overlap * 0.7 + shield.variantConfig.pushMass * 0.16, 0.5, 1.65);
+    rival.x += pushX * shove;
+    rival.z += pushZ * shove;
+    rival.disrupt = Math.max(rival.disrupt, 0.92);
+    rival.fightCooldown = Math.max(rival.fightCooldown, 0.82);
+    rival.angle = Math.atan2(shield.x - rival.x, shield.z - rival.z);
+    shield.angle = Math.atan2(rival.x - shield.x, rival.z - shield.z);
+    shield.braceIntent = 1;
+    shield.energy = clamp(shield.energy - 0.006, 0, 1);
+    shield.lastTacticalAction = "shieldPush";
+    shield.skipMoveThisFrame = true;
+    if (shield.lastTrail > 0.2) {
+      this.addTrail(shield.x, shield.z, "alarm", 0.5);
+      shield.lastTrail = 0;
+    }
+    rival.keepInWorld(this);
+    shield.keepInWorld(this);
+    return true;
   }
 
   ensureBuildTasks() {
