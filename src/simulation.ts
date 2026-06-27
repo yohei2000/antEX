@@ -2936,9 +2936,8 @@ class AntColony3D {
 
   shieldHeadBlockPoint(ant = null) {
     const raid = this.ensureRaidState();
-    let target = null;
-    if (ant?.sortieTargetX != null && ant?.sortieTargetZ != null) target = { x: ant.sortieTargetX, z: ant.sortieTargetZ };
-    if (!target) target = this.currentSortieTarget(this.nest.x, this.nest.z);
+    let target = this.currentSortieTarget(ant?.x ?? this.nest.x, ant?.z ?? this.nest.z);
+    if (!target && ant?.sortieTargetX != null && ant?.sortieTargetZ != null) target = { x: ant.sortieTargetX, z: ant.sortieTargetZ };
     if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) target = this.raidSignalPoint(raid, 0.78);
 
     let dx = target ? target.x - this.nest.x : 0;
@@ -2955,7 +2954,8 @@ class AntColony3D {
     const flankX = -uz;
     const flankZ = ux;
     const lane = (((ant?.sortieIndex ?? ant?.id ?? 0) % 3) - 1) * 2.2;
-    const radius = this.nest.radius + 5.2;
+    const standoff = target?.kind === "rival" ? 8.4 : 14;
+    const radius = clamp(length - standoff, this.nest.radius + 5.2, this.worldRadius * 0.78);
     return {
       x: this.nest.x + ux * radius + flankX * lane,
       z: this.nest.z + uz * radius + flankZ * lane,

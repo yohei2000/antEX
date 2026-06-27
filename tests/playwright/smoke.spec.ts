@@ -749,7 +749,7 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
   expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
 });
 
-test("shield head ants hold nest choke points and slow raid pressure", async ({ page }) => {
+test("shield head ants advance to the front line and tank for allies", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -790,6 +790,8 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
     if (!shield || !rival) return { sortieStarted, shieldFound: Boolean(shield), rivalFound: Boolean(rival) };
 
     const block = sim.shieldHeadBlockPoint(shield);
+    const initialRivalDistance = Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z);
+    const frontlineDistance = Math.hypot(block.x - sim.nest.x, block.z - sim.nest.z);
     const forward = { x: Math.sin(block.angle), z: Math.cos(block.angle) };
     shield.x = block.x;
     shield.z = block.z;
@@ -806,8 +808,8 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
       ant.prevX = ant.x;
       ant.prevZ = ant.z;
     }
-    rival.x = block.x + forward.x * 3;
-    rival.z = block.z + forward.z * 3;
+    rival.x = block.x + forward.x * 8.4;
+    rival.z = block.z + forward.z * 8.4;
     rival.prevX = rival.x;
     rival.prevZ = rival.z;
     rival.retreat = 0;
@@ -823,6 +825,10 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
     const pressureWithoutShield = 1;
     const pressureWithShield = Math.max(0.28, 1 - sim.shieldBlockStrengthAt(rival.x, rival.z) * 0.42);
     const blockAction = shield.lastTacticalAction;
+    rival.x = block.x + forward.x * 3;
+    rival.z = block.z + forward.z * 3;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
     const rivalDistanceBeforePush = Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z);
     const contactResolved = rival.resolveAntContacts(sim);
     const rivalDistanceAfterPush = Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z);
@@ -831,8 +837,10 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
     const coverStrength = sim.shieldCoverStrengthAt(block.x - forward.x * 4, block.z - forward.z * 4);
     rival.x = block.x + forward.x * 80;
     rival.z = block.z + forward.z * 80;
-    shield.updateShieldHead(1 / 60, sim, { x: 0, z: 0 });
-    const chaseDistance = Math.hypot(shield.x - before.x, shield.z - before.z);
+    const followSteering = { x: 0, z: 0 };
+    const followHandled = shield.updateShieldHead(1 / 60, sim, followSteering);
+    const followIntent = Math.hypot(followSteering.x, followSteering.z);
+    const followAction = shield.lastTacticalAction;
     sim.renderGame(1);
 
     return {
@@ -847,13 +855,17 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
       pushedOutward: rivalDistanceAfterPush > rivalDistanceBeforePush,
       fightCooldownAfterPush: rival.fightCooldown,
       coverStrength,
+      initialRivalDistance,
+      frontlineDistance,
+      followHandled,
+      followIntent,
+      followAction,
       shieldPose: renderState.shieldPose,
       slowAtBlock,
       farSpeed,
       braceBonus,
       pressureWithoutShield,
       pressureWithShield,
-      chaseDistance,
       plateMeshCount: sim.antRenderer.shieldPlateMesh.count,
       shieldRoleLabel: sim.roleLabelSystem.textures.has("shieldHead"),
       shieldConfig: sim.getAntVariantConfig("shieldHead"),
@@ -865,18 +877,24 @@ test("shield head ants hold nest choke points and slow raid pressure", async ({ 
   expect(result.shieldFound).toBe(true);
   expect(result.rivalFound).toBe(true);
   expect(result.handled).toBe(true);
-  expect(result.action).toBe("shieldBlock");
+  expect(["shieldBlock", "shieldMove"]).toContain(result.action);
   expect(result.contactResolved).toBe(true);
   expect(result.pushAction).toBe("shieldPush");
   expect(result.noClashAfterPush).toBe(true);
   expect(result.pushedOutward).toBe(true);
   expect(result.fightCooldownAfterPush).toBeGreaterThan(0);
   expect(result.coverStrength).toBeGreaterThan(0);
-  expect(result.shieldPose).toBeGreaterThan(0.9);
+  expect(result.frontlineDistance).toBeGreaterThan(43);
+  expect(result.frontlineDistance).toBeLessThan(result.initialRivalDistance);
+  expect(result.followHandled).toBe(true);
+  expect(["shieldBlock", "shieldMove"]).toContain(result.followAction);
+  if (result.followAction === "shieldMove") {
+    expect(result.followIntent).toBeGreaterThan(0);
+  }
+  expect(result.shieldPose).toBeGreaterThan(0.3);
   expect(result.slowAtBlock).toBeLessThan(result.farSpeed);
   expect(result.braceBonus).toBeGreaterThan(0);
   expect(result.pressureWithShield).toBeLessThan(result.pressureWithoutShield);
-  expect(result.chaseDistance).toBeLessThan(0.01);
   expect(result.plateMeshCount).toBeGreaterThan(0);
   expect(result.shieldRoleLabel).toBe(true);
   expect(result.shieldConfig.headScale).toBeGreaterThan(result.heavyConfig.headScale);
