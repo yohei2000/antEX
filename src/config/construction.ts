@@ -70,7 +70,7 @@ export const CONSTRUCTION_DEFS: Record<ConstructionKind, ConstructionDef> = {
   earthWall: {
     label: "大きな土壁",
     command: "大きな土壁を築く",
-    timeNote: "完了時間は採土・往復・担当数で大きく変動",
+    timeNote: "完了時間は線の長さ・採土・往復・担当数で大きく変動",
     effect: "敵の侵入を大きく遅らせ、壁上の味方攻撃を強く助ける",
     buttonSummary: "侵入遅延・壁上攻撃↑↑",
     defaultRadius: 14,

@@ -638,19 +638,23 @@ test("construction tab issues earthwork commands separately from growth", async 
 
   expect(pendingWall.pendingKind).toBe("earthWall");
   expect(pendingWall.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
-  expect(pendingWall.wallButtonText).toContain("位置指定中");
-  expect(pendingWall.activeToolLabel).toContain("位置指定中");
+  expect(pendingWall.wallButtonText).toContain("線指定中");
+  expect(pendingWall.activeToolLabel).toContain("線指定中");
 
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.confirmConstructionPlacement({ x: sim.nest.x + 24, z: sim.nest.z - 12 });
+    sim.confirmConstructionPlacement(
+      { x: sim.nest.x + 15, z: sim.nest.z - 18 },
+      { x: sim.nest.x + 43, z: sim.nest.z - 10 },
+    );
   });
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.updateStats();
     const wallTask = sim.buildTasks.find((task: any) => task.kind === "earthWall");
-    const wallRadial = Math.atan2(wallTask.z - sim.nest.z, wallTask.x - sim.nest.x);
+    const expectedLineLength = Math.hypot(28, 8);
+    const expectedLineCost = sim.earthWallBuildCostForLength(expectedLineLength);
     return {
       activeTab: sim.activeTab,
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
@@ -662,7 +666,10 @@ test("construction tab issues earthwork commands separately from growth", async 
       wallTaskX: wallTask?.x,
       wallTaskZ: wallTask?.z,
       wallTaskRotation: wallTask?.rotation,
-      wallExpectedRotation: wallRadial + Math.PI / 2,
+      wallTaskRadius: wallTask?.radius,
+      wallTaskCost: wallTask?.maxProgress,
+      wallExpectedRotation: Math.atan2(8, 28),
+      expectedLineCost,
       builderCountText: (document.querySelector("#constructionBuilders") as HTMLElement).textContent,
       activeCountText: (document.querySelector("#constructionActive") as HTMLElement).textContent,
       statusText: (document.querySelector("#constructionStatus") as HTMLElement).textContent,
@@ -693,6 +700,9 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.wallTaskX).toBeGreaterThan(-30);
   expect(result.wallTaskZ).toBeLessThan(8);
   expect(Math.abs(result.wallTaskRotation - result.wallExpectedRotation)).toBeLessThan(0.001);
+  expect(result.wallTaskRadius).toBeGreaterThan(12);
+  expect(result.wallTaskCost).toBeCloseTo(result.expectedLineCost, 5);
+  expect(result.wallTaskCost).not.toBe(7.2);
   expect(result.builderCountText).toBe("4");
   expect(result.activeCountText).toBe("3");
   expect(result.statusText).toContain("作業中");
