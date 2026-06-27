@@ -24,6 +24,8 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
   const heavySoldierBrood = upgradeLevel(upgrades, "heavySoldierBrood");
   const shieldHeadBrood = upgradeLevel(upgrades, "shieldHeadBrood");
   const acidShooterBrood = upgradeLevel(upgrades, "acidShooterBrood");
+  const scoutBrood = upgradeLevel(upgrades, "scoutBrood");
+  const captainBrood = upgradeLevel(upgrades, "captainBrood");
   const builderTraining = upgradeLevel(upgrades, "builderTraining");
   const nestGuard = upgradeLevel(upgrades, "nestGuard");
   const sentinelPosts = upgradeLevel(upgrades, "sentinelPosts");
@@ -45,10 +47,14 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
   const shieldHeads = Math.floor(clamp(colony.shieldHeadAnts, 0, shieldHeadTarget));
   const acidShooterTarget = Math.min(Math.max(0, soldierAnts - heavySoldiers - shieldHeads), acidShooterBrood);
   const acidShooters = Math.floor(clamp(colony.acidShooterAnts, 0, acidShooterTarget));
+  const scoutTarget = Math.min(Math.max(0, soldierAnts - heavySoldiers - shieldHeads - acidShooters), scoutBrood);
+  const scouts = Math.floor(clamp(colony.scoutAnts, 0, scoutTarget));
+  const captainTarget = Math.min(Math.max(0, soldierAnts - heavySoldiers - shieldHeads - acidShooters - scouts), captainBrood);
+  const captains = Math.floor(clamp(colony.captainAnts, 0, captainTarget));
   const availableWorkers = Math.max(0, activeAnts - soldierAnts);
   const builderTarget = Math.min(availableWorkers, builderTraining * BUILDERS_PER_TRAINING);
   const builders = Math.floor(clamp(colony.builderAnts, 0, builderTarget));
-  const normalSoldiers = Math.max(0, soldierAnts - heavySoldiers - shieldHeads - acidShooters);
+  const normalSoldiers = Math.max(0, soldierAnts - heavySoldiers - shieldHeads - acidShooters - scouts - captains);
   const workers = Math.max(0, availableWorkers - builders);
   const foragingBonus = 1 + foragerTrails * 0.24 + trailPheromones * 0.07 + foodDistribution * 0.025;
   const trafficBonus = 1 + chamberExcavation * 0.035 + ventilationShafts * 0.018;
@@ -69,7 +75,7 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
     clamp(colony.food / Math.max(antCost * 2, 1), 0.18, 1) *
     (1 + ventilationShafts * 0.008);
   const recoveryPerSecond = 0.006 + broodNursery * 0.0025 + nestGuard * 0.0032 + wasteGallery * 0.0026 + broodClimate * 0.0008;
-  const attackPower = 1 + soldierTraining * 0.15 + sentinelPosts * 0.03 + normalSoldiers * 0.002 + heavySoldiers * 0.01 + shieldHeads * 0.004 + acidShooters * 0.006;
+  const attackPower = 1 + soldierTraining * 0.15 + sentinelPosts * 0.03 + normalSoldiers * 0.002 + heavySoldiers * 0.01 + shieldHeads * 0.004 + acidShooters * 0.006 + scouts * 0.003 + captains * 0.005;
   const defensePower =
     1 + nestGuard * 0.18 + sentinelPosts * 0.1 + ventilationShafts * 0.02 + wasteGallery * 0.03 + heavySoldiers * 0.035 + shieldHeads * 0.045;
   const threatGrowthMultiplier = clamp(1 - wasteGallery * 0.055 - sentinelPosts * 0.03 - ventilationShafts * 0.015, 0.55, 1);
@@ -79,6 +85,8 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
     heavySoldiers * getAntVariantConfig("heavySoldier").upkeep +
     shieldHeads * getAntVariantConfig("shieldHead").upkeep +
     acidShooters * getAntVariantConfig("acidShooter").upkeep +
+    scouts * getAntVariantConfig("scout").upkeep +
+    captains * getAntVariantConfig("captain").upkeep +
     builders * getAntVariantConfig("builder").upkeep;
   return {
     capacity,
@@ -87,12 +95,16 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
     heavyTarget,
     shieldHeadTarget,
     acidShooterTarget,
+    scoutTarget,
+    captainTarget,
     builderTarget,
     soldierAnts,
     normalSoldiers,
     heavySoldiers,
     shieldHeads,
     acidShooters,
+    scouts,
+    captains,
     builders,
     workers,
     foodRate,

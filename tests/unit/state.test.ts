@@ -8,7 +8,7 @@ describe("colony state modules", () => {
   it("creates the same default colony shape used by the browser game", () => {
     const colony = createDefaultColony();
 
-    expect(colony.version).toBe(8);
+    expect(colony.version).toBe(10);
     expect(colony.food).toBe(36);
     expect(colony.lifetimeFood).toBe(36);
     expect(colony.antPopulation).toBe(12);
@@ -16,6 +16,8 @@ describe("colony state modules", () => {
     expect(colony.heavySoldierAnts).toBe(0);
     expect(colony.shieldHeadAnts).toBe(0);
     expect(colony.acidShooterAnts).toBe(0);
+    expect(colony.scoutAnts).toBe(0);
+    expect(colony.captainAnts).toBe(0);
     expect(colony.builderAnts).toBe(0);
     expect(colony.raidState.phase).toBe("calm");
     expect(colony.raidState.timer).toBe(78);
@@ -34,6 +36,8 @@ describe("colony state modules", () => {
       heavySoldierAnts: 99,
       shieldHeadAnts: 99,
       acidShooterAnts: 99,
+      scoutAnts: 99,
+      captainAnts: 99,
       builderAnts: 99,
       nestLevel: 2,
       nextEarthworkId: -4,
@@ -61,7 +65,7 @@ describe("colony state modules", () => {
       battleLog: ["a", "b", "c", "d", "e", "f"],
     });
 
-    expect(colony.version).toBe(8);
+    expect(colony.version).toBe(10);
     expect(colony.food).toBe(321);
     expect(colony.lifetimeFood).toBe(654);
     expect(colony.antPopulation).toBe(18);
@@ -69,6 +73,8 @@ describe("colony state modules", () => {
     expect(colony.heavySoldierAnts).toBe(18);
     expect(colony.shieldHeadAnts).toBe(0);
     expect(colony.acidShooterAnts).toBe(0);
+    expect(colony.scoutAnts).toBe(0);
+    expect(colony.captainAnts).toBe(0);
     expect(colony.builderAnts).toBe(0);
     expect(colony.upgrades.storageChambers).toBe(2);
     expect(colony.upgrades.chamberExcavation).toBe(0);
@@ -104,6 +110,8 @@ describe("colony state modules", () => {
     expect(baseDerived.heavySoldiers).toBe(0);
     expect(baseDerived.shieldHeads).toBe(0);
     expect(baseDerived.acidShooters).toBe(0);
+    expect(baseDerived.scouts).toBe(0);
+    expect(baseDerived.captains).toBe(0);
     expect(baseDerived.builders).toBe(0);
     expect(baseDerived.workers).toBe(11);
     expect(baseDerived.foodRate).toBeCloseTo(1.197, 6);

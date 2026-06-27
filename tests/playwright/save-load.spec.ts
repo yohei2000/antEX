@@ -17,6 +17,8 @@ test("persists colony state through localStorage", async ({ page }) => {
     sim.colony.heavySoldierAnts = 1;
     sim.colony.shieldHeadAnts = 1;
     sim.colony.acidShooterAnts = 1;
+    sim.colony.scoutAnts = 1;
+    sim.colony.captainAnts = 1;
     sim.colony.builderAnts = 2;
     sim.colony.nestLevel = 2;
     sim.colony.upgrades = {
@@ -29,6 +31,8 @@ test("persists colony state through localStorage", async ({ page }) => {
       heavySoldierBrood: 1,
       shieldHeadBrood: 1,
       acidShooterBrood: 1,
+      scoutBrood: 1,
+      captainBrood: 1,
       builderTraining: 1,
       nestGuard: 0,
     };
@@ -59,6 +63,8 @@ test("persists colony state through localStorage", async ({ page }) => {
       heavySoldierAnts: sim.colony.heavySoldierAnts,
       shieldHeadAnts: sim.colony.shieldHeadAnts,
       acidShooterAnts: sim.colony.acidShooterAnts,
+      scoutAnts: sim.colony.scoutAnts,
+      captainAnts: sim.colony.captainAnts,
       builderAnts: sim.colony.builderAnts,
       nestLevel: sim.colony.nestLevel,
       storageChambers: sim.colony.upgrades.storageChambers,
@@ -66,6 +72,8 @@ test("persists colony state through localStorage", async ({ page }) => {
       heavySoldierBrood: sim.colony.upgrades.heavySoldierBrood,
       shieldHeadBrood: sim.colony.upgrades.shieldHeadBrood,
       acidShooterBrood: sim.colony.upgrades.acidShooterBrood,
+      scoutBrood: sim.colony.upgrades.scoutBrood,
+      captainBrood: sim.colony.upgrades.captainBrood,
       builderTraining: sim.colony.upgrades.builderTraining,
       trailPheromones: sim.colony.upgrades.trailPheromones,
       fallenAnts: sim.colony.fallenAnts,
@@ -87,6 +95,8 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.heavySoldierAnts).toBe(1);
   expect(restored.shieldHeadAnts).toBe(1);
   expect(restored.acidShooterAnts).toBe(1);
+  expect(restored.scoutAnts).toBe(1);
+  expect(restored.captainAnts).toBe(1);
   expect(restored.builderAnts).toBe(2);
   expect(restored.nestLevel).toBe(2);
   expect(restored.storageChambers).toBe(2);
@@ -94,6 +104,8 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.heavySoldierBrood).toBe(1);
   expect(restored.shieldHeadBrood).toBe(1);
   expect(restored.acidShooterBrood).toBe(1);
+  expect(restored.scoutBrood).toBe(1);
+  expect(restored.captainBrood).toBe(1);
   expect(restored.builderTraining).toBe(1);
   expect(restored.trailPheromones).toBe(0);
   expect(restored.fallenAnts).toBe(0);
@@ -143,11 +155,15 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
       heavySoldierAnts: sim.colony.heavySoldierAnts,
       shieldHeadAnts: sim.colony.shieldHeadAnts,
       acidShooterAnts: sim.colony.acidShooterAnts,
+      scoutAnts: sim.colony.scoutAnts,
+      captainAnts: sim.colony.captainAnts,
       builderAnts: sim.colony.builderAnts,
       nextEarthworkId: sim.colony.nextEarthworkId,
       heavySoldierBrood: sim.colony.upgrades.heavySoldierBrood,
       shieldHeadBrood: sim.colony.upgrades.shieldHeadBrood,
       acidShooterBrood: sim.colony.upgrades.acidShooterBrood,
+      scoutBrood: sim.colony.upgrades.scoutBrood,
+      captainBrood: sim.colony.upgrades.captainBrood,
       builderTraining: sim.colony.upgrades.builderTraining,
       renderedAnts: sim.ants.length,
       variantCounts: sim.ants.reduce((counts: Record<string, number>, ant: any) => {
@@ -157,15 +173,19 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
     };
   });
 
-  expect(migrated.version).toBe(8);
+  expect(migrated.version).toBe(10);
   expect(migrated.heavySoldierAnts).toBe(0);
   expect(migrated.shieldHeadAnts).toBe(0);
   expect(migrated.acidShooterAnts).toBe(0);
+  expect(migrated.scoutAnts).toBe(0);
+  expect(migrated.captainAnts).toBe(0);
   expect(migrated.builderAnts).toBe(0);
   expect(migrated.nextEarthworkId).toBe(1);
   expect(migrated.heavySoldierBrood).toBe(0);
   expect(migrated.shieldHeadBrood).toBe(0);
   expect(migrated.acidShooterBrood).toBe(0);
+  expect(migrated.scoutBrood).toBe(0);
+  expect(migrated.captainBrood).toBe(0);
   expect(migrated.builderTraining).toBe(0);
   expect(migrated.renderedAnts).toBe(12);
   expect(migrated.variantCounts.worker).toBe(12);

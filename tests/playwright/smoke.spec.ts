@@ -20,7 +20,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       antPopulation: sim.colony.antPopulation,
       renderedAnts: sim.ants.length,
       deployedSoldiers: sim.deployedSoldierCount(),
-      variantConfigCount: ["worker", "soldier", "heavySoldier", "shieldHead", "acidShooter", "builder"].filter((variant) =>
+      variantConfigCount: ["worker", "soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "captain", "builder"].filter((variant) =>
         Boolean(sim.getAntVariantConfig(variant)),
       ).length,
       variantCounts: sim.ants.reduce((counts: Record<string, number>, ant: any) => {
@@ -60,7 +60,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.antPopulation).toBe(12);
   expect(metrics.renderedAnts).toBe(11);
   expect(metrics.deployedSoldiers).toBe(0);
-  expect(metrics.variantConfigCount).toBe(6);
+  expect(metrics.variantConfigCount).toBe(8);
   expect(metrics.variantCounts.worker).toBe(11);
   expect(metrics.rivalAnts).toBe(0);
   expect(metrics.raidPhase).toBe("calm");
@@ -495,7 +495,7 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.logText).toContain("兵隊出撃");
 });
 
-test("heavy soldiers, shield heads, acid shooters, and builders unlock without replacing existing ants", async ({ page }) => {
+test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builders unlock without replacing existing ants", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -505,20 +505,24 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
     sim.colony.lifetimeFood = 100000;
     sim.colony.antPopulation = 40;
     sim.colony.woundedAnts = 0;
-    sim.colony.soldierAnts = 5;
+    sim.colony.soldierAnts = 10;
     sim.colony.nestLevel = 3;
     sim.colony.territory = 4;
-    sim.colony.upgrades.soldierTraining = 1;
+    sim.colony.upgrades.soldierTraining = 2;
     sim.colony.upgrades.chamberExcavation = 1;
     const heavyBought = sim.buyUpgrade("heavySoldierBrood");
     const shieldBought = sim.buyUpgrade("shieldHeadBrood");
     const acidBought = sim.buyUpgrade("acidShooterBrood");
+    const scoutBought = sim.buyUpgrade("scoutBrood");
+    const captainBought = sim.buyUpgrade("captainBrood");
     const builderBought = sim.buyUpgrade("builderTraining");
     sim.computeDerived();
     sim.syncAntPopulation();
     const surfaceHeavyBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "heavySoldier" && sim.shouldRenderAnt(ant)).length;
     const surfaceShieldBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "shieldHead" && sim.shouldRenderAnt(ant)).length;
     const surfaceAcidBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "acidShooter" && sim.shouldRenderAnt(ant)).length;
+    const surfaceScoutBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "scout" && sim.shouldRenderAnt(ant)).length;
+    const surfaceCaptainBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "captain" && sim.shouldRenderAnt(ant)).length;
     const sortieLimitBefore = sim.sortieSoldierLimit();
     const availableSortieBefore = sim.availableSortieSoldiers();
     sim.soldierSortieCooldown = 0;
@@ -532,7 +536,7 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
     }, {});
     const visibleRoleLabels = sim.roleLabelSystem.sprites.filter((sprite: any) => sprite.visible).length;
     const expectedRoleLabels = sim.ants.filter((ant: any) =>
-      sim.shouldRenderAnt(ant) && !ant.isRival && ["soldier", "heavySoldier", "shieldHead", "acidShooter", "builder"].includes(ant.variant),
+      sim.shouldRenderAnt(ant) && !ant.isRival && ["soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "captain", "builder"].includes(ant.variant),
     ).length;
     const roleLabelBands = [...sim.roleLabelSystem.textures.entries()].map(([, texture]: any) => {
       const sample = texture.image.getContext("2d").getImageData(24, 64, 1, 1).data;
@@ -542,6 +546,8 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
       heavyBought,
       shieldBought,
       acidBought,
+      scoutBought,
+      captainBought,
       builderBought,
       sameFirstObject: sim.ants[0] === first,
       firstId: sim.ants[0].id,
@@ -552,16 +558,22 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
       heavyCount: sim.colony.heavySoldierAnts,
       shieldCount: sim.colony.shieldHeadAnts,
       acidCount: sim.colony.acidShooterAnts,
+      scoutCount: sim.colony.scoutAnts,
+      captainCount: sim.colony.captainAnts,
       builderCount: sim.colony.builderAnts,
       builderTarget: sim.computeDerived().builderTarget,
       surfaceHeavyBeforeSortie,
       surfaceShieldBeforeSortie,
       surfaceAcidBeforeSortie,
+      surfaceScoutBeforeSortie,
+      surfaceCaptainBeforeSortie,
       sortieStarted,
       deployedCount: deployed.length,
       deployedHeavyCount: deployed.filter((ant: any) => ant.variant === "heavySoldier").length,
       deployedShieldCount: deployed.filter((ant: any) => ant.variant === "shieldHead").length,
       deployedAcidCount: deployed.filter((ant: any) => ant.variant === "acidShooter").length,
+      deployedScoutCount: deployed.filter((ant: any) => ant.variant === "scout").length,
+      deployedCaptainCount: deployed.filter((ant: any) => ant.variant === "captain").length,
       idleBuildersInNest: builders.every((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z) < sim.nest.radius * 0.6),
       surfaceBuilders: sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length,
       normalSoldiers: sim.computeDerived().normalSoldiers,
@@ -571,6 +583,8 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
       heavyConfig: sim.getAntVariantConfig("heavySoldier"),
       shieldConfig: sim.getAntVariantConfig("shieldHead"),
       acidConfig: sim.getAntVariantConfig("acidShooter"),
+      scoutConfig: sim.getAntVariantConfig("scout"),
+      captainConfig: sim.getAntVariantConfig("captain"),
       soldierConfig: sim.getAntVariantConfig("soldier"),
       builderConfig: sim.getAntVariantConfig("builder"),
       workerConfig: sim.getAntVariantConfig("worker"),
@@ -585,6 +599,8 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
   expect(result.heavyBought).toBe(true);
   expect(result.shieldBought).toBe(true);
   expect(result.acidBought).toBe(true);
+  expect(result.scoutBought).toBe(true);
+  expect(result.captainBought).toBe(true);
   expect(result.builderBought).toBe(true);
   expect(result.sameFirstObject).toBe(true);
   expect(result.firstId).toBe(result.beforeFirstId);
@@ -592,20 +608,28 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
   expect(result.counts.heavySoldier).toBeGreaterThanOrEqual(1);
   expect(result.counts.shieldHead).toBeGreaterThanOrEqual(1);
   expect(result.counts.acidShooter).toBeGreaterThanOrEqual(1);
+  expect(result.counts.scout).toBeGreaterThanOrEqual(1);
+  expect(result.counts.captain).toBeGreaterThanOrEqual(1);
   expect(result.counts.builder).toBeGreaterThanOrEqual(1);
   expect(result.heavyCount).toBeGreaterThanOrEqual(1);
   expect(result.shieldCount).toBeGreaterThanOrEqual(1);
   expect(result.acidCount).toBeGreaterThanOrEqual(1);
+  expect(result.scoutCount).toBeGreaterThanOrEqual(1);
+  expect(result.captainCount).toBeGreaterThanOrEqual(1);
   expect(result.builderCount).toBe(2);
   expect(result.builderTarget).toBe(2);
   expect(result.surfaceHeavyBeforeSortie).toBe(0);
   expect(result.surfaceShieldBeforeSortie).toBe(0);
   expect(result.surfaceAcidBeforeSortie).toBe(0);
+  expect(result.surfaceScoutBeforeSortie).toBe(0);
+  expect(result.surfaceCaptainBeforeSortie).toBe(0);
   expect(result.sortieStarted).toBe(true);
-  expect(result.deployedCount).toBe(3);
+  expect(result.deployedCount).toBe(5);
   expect(result.deployedHeavyCount).toBe(1);
   expect(result.deployedShieldCount).toBe(1);
   expect(result.deployedAcidCount).toBe(1);
+  expect(result.deployedScoutCount).toBe(1);
+  expect(result.deployedCaptainCount).toBe(1);
   expect(result.idleBuildersInNest).toBe(true);
   expect(result.surfaceBuilders).toBe(0);
   expect(result.sortieLimit).toBe(Math.ceil(result.soldierPool / 2));
@@ -617,6 +641,12 @@ test("heavy soldiers, shield heads, acid shooters, and builders unlock without r
   expect(result.shieldConfig.attack).toBeLessThan(result.heavyConfig.attack);
   expect(result.acidConfig.forageEfficiency).toBe(0);
   expect(result.acidConfig.attack).toBeLessThan(result.heavyConfig.attack);
+  expect(result.scoutConfig.forageEfficiency).toBe(0);
+  expect(result.scoutConfig.attack).toBeLessThan(result.soldierConfig.attack);
+  expect(result.scoutConfig.speed).toBeGreaterThan(result.soldierConfig.speed);
+  expect(result.captainConfig.forageEfficiency).toBe(0);
+  expect(result.captainConfig.attack).toBeLessThan(result.soldierConfig.attack);
+  expect(result.captainConfig.hp).toBeGreaterThan(result.workerConfig.hp);
   expect(result.builderConfig.attack).toBeLessThan(result.workerConfig.attack);
   expect(result.finitePositions).toBe(true);
   expect(result.visibleRoleLabels).toBe(result.expectedRoleLabels);
@@ -685,7 +715,7 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
     rival.acidDebuff = 0;
     const before = { x: acid.x, z: acid.z };
 
-    acid.update(1 / 60, sim);
+    acid.updateAcidShooter(1 / 60, sim, { x: 0, z: 0 });
     const firstRenderState = acid.renderState(sim, 1);
     const stoppedDistanceAfterSpray = Math.hypot(acid.x - before.x, acid.z - before.z);
     const firstAcidEffect = sim.combatEffects.find((effect: any) => effect.type === "acid");
@@ -747,6 +777,314 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
   expect(result.clashStarted).toBe(false);
   expect(result.rivalFightCooldown).toBeGreaterThan(0);
   expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
+});
+
+test("scout ants mark enemies so sortie ants prioritize the same target", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 40;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 4;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.shieldHeadAnts = 0;
+    sim.colony.acidShooterAnts = 1;
+    sim.colony.scoutAnts = 1;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 1;
+    sim.colony.upgrades.acidShooterBrood = 1;
+    sim.colony.upgrades.scoutBrood = 1;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 2,
+      activeCount: 2,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateRaid(0.01);
+    const rivals = sim.raidRivals();
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const acid = sim.deployedSoldiers().find((ant: any) => ant.variant === "acidShooter");
+    const scout = sim.deployedSoldiers().find((ant: any) => ant.variant === "scout");
+    if (!acid || !scout || rivals.length < 2) {
+      return { sortieStarted, acidFound: Boolean(acid), scoutFound: Boolean(scout), rivalCount: rivals.length };
+    }
+
+    const marked = rivals[0];
+    const decoy = rivals[1];
+    acid.x = 0;
+    acid.z = 0;
+    acid.prevX = acid.x;
+    acid.prevZ = acid.z;
+    acid.state = "explore";
+    acid.sortieTimer = 30;
+    acid.acidSprayCooldown = 0;
+    acid.acidSprayTimer = 0;
+    acid.acidTargetId = null;
+    scout.x = 30;
+    scout.z = 0;
+    scout.prevX = scout.x;
+    scout.prevZ = scout.z;
+    scout.state = "explore";
+    scout.sortieTimer = 30;
+    scout.scoutMarkCooldown = 0;
+    scout.scoutTargetId = null;
+    scout.scoutSignal = 0;
+    marked.x = 22;
+    marked.z = 0;
+    marked.prevX = marked.x;
+    marked.prevZ = marked.z;
+    marked.retreat = 0;
+    marked.clash = null;
+    marked.scoutMarkTimer = 0;
+    marked.scoutMarkStrength = 0;
+    marked.scoutMarkedById = null;
+    decoy.x = 14;
+    decoy.z = -10;
+    decoy.prevX = decoy.x;
+    decoy.prevZ = decoy.z;
+    decoy.retreat = 0;
+    decoy.clash = null;
+    decoy.scoutMarkTimer = 0;
+    decoy.scoutMarkStrength = 0;
+    decoy.scoutMarkedById = null;
+
+    const targetBeforeMark = sim.findRivalThreat(acid.x, acid.z, 230);
+    const scoutSteering = { x: 0, z: 0 };
+    const scoutHandled = scout.updateScout(1 / 60, sim, scoutSteering);
+    const targetAfterMark = sim.findRivalThreat(acid.x, acid.z, 230);
+    acid.update(1 / 60, sim);
+    const scoutRender = scout.renderState(sim, 1);
+    sim.renderGame(1);
+
+    return {
+      sortieStarted,
+      acidFound: true,
+      scoutFound: true,
+      rivalCount: rivals.length,
+      scoutHandled,
+      scoutAction: scout.lastTacticalAction,
+      scoutTargetId: scout.scoutTargetId,
+      scoutPose: scoutRender.scoutPose,
+      markedId: marked.id,
+      decoyId: decoy.id,
+      targetBeforeMarkId: targetBeforeMark?.id ?? null,
+      targetAfterMarkId: targetAfterMark?.id ?? null,
+      markedTimer: marked.scoutMarkTimer,
+      markedBy: marked.scoutMarkedById,
+      markedStrength: marked.scoutMarkStrength,
+      acidAction: acid.lastTacticalAction,
+      acidTargetId: acid.acidTargetId,
+      scoutEffects: sim.combatEffects.filter((effect: any) => effect.type === "scoutMark").length,
+      scoutRoleLabel: sim.roleLabelSystem.textures.has("scout"),
+      scoutInClash: Boolean(scout.state === "clash" || marked.clash?.ants?.includes(scout) || decoy.clash?.ants?.includes(scout)),
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.acidFound).toBe(true);
+  expect(result.scoutFound).toBe(true);
+  expect(result.rivalCount).toBe(2);
+  expect(result.scoutHandled).toBe(true);
+  expect(["scoutMark", "scoutEvade"]).toContain(result.scoutAction);
+  expect(result.scoutTargetId).toBe(result.markedId);
+  expect(result.scoutPose).toBeGreaterThan(0.9);
+  expect(result.targetBeforeMarkId).toBe(result.decoyId);
+  expect(result.targetAfterMarkId).toBe(result.markedId);
+  expect(result.markedTimer).toBeGreaterThan(0);
+  expect(result.markedBy).toBeTruthy();
+  expect(result.markedStrength).toBeGreaterThan(0);
+  expect(result.acidAction).toBe("acidSpray");
+  expect(result.acidTargetId).toBe(result.markedId);
+  expect(result.scoutEffects).toBeGreaterThanOrEqual(1);
+  expect(result.scoutRoleLabel).toBe(true);
+  expect(result.scoutInClash).toBe(false);
+});
+
+test("captain ants form temporary squads and align members on one target", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 44;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 8;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.shieldHeadAnts = 1;
+    sim.colony.acidShooterAnts = 1;
+    sim.colony.scoutAnts = 0;
+    sim.colony.captainAnts = 1;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.shieldHeadBrood = 1;
+    sim.colony.upgrades.acidShooterBrood = 1;
+    sim.colony.upgrades.captainBrood = 1;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 3,
+      activeCount: 2,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateRaid(0.01);
+    const rivals = sim.raidRivals();
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const captain = sim.deployedSoldiers().find((ant: any) => ant.variant === "captain");
+    const acid = sim.deployedSoldiers().find((ant: any) => ant.variant === "acidShooter");
+    const shield = sim.deployedSoldiers().find((ant: any) => ant.variant === "shieldHead");
+    const normal = sim.deployedSoldiers().find((ant: any) => ant.variant === "soldier");
+    if (!captain || !acid || !shield || !normal || rivals.length < 2) {
+      return {
+        sortieStarted,
+        captainFound: Boolean(captain),
+        acidFound: Boolean(acid),
+        shieldFound: Boolean(shield),
+        normalFound: Boolean(normal),
+        rivalCount: rivals.length,
+      };
+    }
+
+    const marked = rivals[0];
+    const decoy = rivals[1];
+    captain.x = 20;
+    captain.z = 0;
+    captain.prevX = captain.x;
+    captain.prevZ = captain.z;
+    captain.state = "explore";
+    captain.sortieTimer = 30;
+    captain.commandEffectCooldown = 0;
+    acid.x = 0;
+    acid.z = 0;
+    acid.prevX = acid.x;
+    acid.prevZ = acid.z;
+    acid.state = "explore";
+    acid.sortieTimer = 30;
+    acid.acidSprayCooldown = 0;
+    acid.acidSprayTimer = 0;
+    acid.acidTargetId = null;
+    shield.x = 14;
+    shield.z = 3;
+    shield.prevX = shield.x;
+    shield.prevZ = shield.z;
+    normal.x = 5;
+    normal.z = -5;
+    normal.prevX = normal.x;
+    normal.prevZ = normal.z;
+    marked.x = 24;
+    marked.z = 0;
+    marked.prevX = marked.x;
+    marked.prevZ = marked.z;
+    marked.retreat = 0;
+    marked.clash = null;
+    marked.scoutMarkTimer = 0;
+    marked.scoutMarkStrength = 0;
+    decoy.x = 10;
+    decoy.z = -2;
+    decoy.prevX = decoy.x;
+    decoy.prevZ = decoy.z;
+    decoy.retreat = 0;
+    decoy.clash = null;
+    decoy.scoutMarkTimer = 0;
+    decoy.scoutMarkStrength = 0;
+
+    sim.updateSquads(1 / 60);
+    const squad = sim.squads[0];
+    const targetBeforeCommand = sim.findRivalThreat(acid.x, acid.z, 230);
+    const steering = { x: 0, z: 0 };
+    const captainHandled = captain.updateCaptain(1 / 60, sim, steering);
+    sim.updateSquads(1 / 60);
+    const targetAfterCommand = sim.findRivalThreat(acid.x, acid.z, 230, acid.squadTargetId);
+    const squadSteering = { x: 0, z: 0 };
+    const squadPull = sim.applySquadSteering(acid, squadSteering);
+    acid.update(1 / 60, sim);
+    const captainRender = captain.renderState(sim, 1);
+    sim.renderGame(1);
+
+    return {
+      sortieStarted,
+      captainFound: true,
+      acidFound: true,
+      shieldFound: true,
+      normalFound: true,
+      rivalCount: rivals.length,
+      squadCount: sim.squads.length,
+      squadLeaderId: squad?.leaderId ?? null,
+      captainId: captain.id,
+      memberCount: squad?.memberIds?.length ?? 0,
+      acidSquadId: acid.squadId,
+      captainSquadId: captain.squadId,
+      captainHandled,
+      captainAction: captain.lastTacticalAction,
+      captainPose: captainRender.commandPose,
+      squadTargetId: squad?.targetRivalId ?? null,
+      acidTargetId: acid.squadTargetId,
+      markedId: marked.id,
+      decoyId: decoy.id,
+      targetBeforeCommandId: targetBeforeCommand?.id ?? null,
+      targetAfterCommandId: targetAfterCommand?.id ?? null,
+      acidAction: acid.lastTacticalAction,
+      acidSprayTarget: acid.acidTargetId,
+      acidAnchorSet: acid.squadAnchorX != null && acid.squadAnchorZ != null,
+      squadPull,
+      squadPullMagnitude: Math.hypot(squadSteering.x, squadSteering.z),
+      squadCohesion: squad?.cohesion ?? 0,
+      commandEffects: sim.combatEffects.filter((effect: any) => effect.type === "captainCommand").length,
+      captainRoleLabel: sim.roleLabelSystem.textures.has("captain"),
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.captainFound).toBe(true);
+  expect(result.acidFound).toBe(true);
+  expect(result.shieldFound).toBe(true);
+  expect(result.normalFound).toBe(true);
+  expect(result.rivalCount).toBe(2);
+  expect(result.squadCount).toBe(1);
+  expect(result.squadLeaderId).toBe(result.captainId);
+  expect(result.memberCount).toBeGreaterThanOrEqual(3);
+  expect(result.acidSquadId).toBe(result.captainSquadId);
+  expect(result.captainHandled).toBe(true);
+  expect(["captainAdvance", "captainCommand", "captainRally", "captainHold"]).toContain(result.captainAction);
+  expect(result.captainPose).toBeGreaterThan(0.6);
+  expect(result.squadTargetId).toBe(result.markedId);
+  expect(result.acidTargetId).toBe(result.markedId);
+  expect(result.targetBeforeCommandId).toBe(result.decoyId);
+  expect(result.targetAfterCommandId).toBe(result.markedId);
+  expect(result.acidAction).toBe("acidSpray");
+  expect(result.acidSprayTarget).toBe(result.markedId);
+  expect(result.acidAnchorSet).toBe(true);
+  expect(result.squadPull).toBe(true);
+  expect(result.squadPullMagnitude).toBeGreaterThan(0);
+  expect(result.squadCohesion).toBeGreaterThan(0);
+  expect(result.commandEffects).toBeGreaterThanOrEqual(1);
+  expect(result.captainRoleLabel).toBe(true);
 });
 
 test("shield head ants advance to the front line and tank for allies", async ({ page }) => {
@@ -1335,6 +1673,8 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
       heavySoldierBrood: 4,
       shieldHeadBrood: 4,
       acidShooterBrood: 4,
+      scoutBrood: 4,
+      captainBrood: 3,
       nestGuard: 6,
       sentinelPosts: 4,
     };
