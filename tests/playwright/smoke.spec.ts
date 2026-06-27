@@ -672,25 +672,40 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
     const before = { x: acid.x, z: acid.z };
 
     acid.update(1 / 60, sim);
+    const firstRenderState = acid.renderState(sim, 1);
+    const stoppedDistanceAfterSpray = Math.hypot(acid.x - before.x, acid.z - before.z);
+    let acidEffectCountAfterFirstSpray = sim.combatEffects.filter((effect: any) => effect.type === "acid").length;
+    let clashStarted = false;
+    for (let i = 0; i < 120; i += 1) {
+      acid.update(1 / 60, sim);
+      rival.update(1 / 60, sim);
+      acidEffectCountAfterFirstSpray = sim.combatEffects.filter((effect: any) => effect.type === "acid").length;
+      if (acid.state === "clash" || rival.clash?.ants?.includes(acid)) {
+        clashStarted = true;
+        break;
+      }
+    }
     const debuffedPower = rival.combatPowers(acid, sim).rivalPower;
     const debuff = rival.acidDebuff;
     rival.acidDebuff = 0;
     const normalPower = rival.combatPowers(acid, sim).rivalPower;
-    const renderState = acid.renderState(sim, 1);
 
     return {
       sortieStarted,
       acidFound: true,
       rivalFound: true,
       action: acid.lastTacticalAction,
-      stoppedDistance: Math.hypot(acid.x - before.x, acid.z - before.z),
+      stoppedDistance: stoppedDistanceAfterSpray,
       acidTargetId: acid.acidTargetId,
       rivalId: rival.id,
       debuff,
       debuffedPower,
       normalPower,
-      acidPose: renderState.acidPose,
+      acidPose: firstRenderState.acidPose,
       effectCount: sim.combatEffects.filter((effect: any) => effect.type === "acid").length,
+      repeatedEffectCount: acidEffectCountAfterFirstSpray,
+      clashStarted,
+      rivalFightCooldown: rival.fightCooldown,
       alarmTrails: sim.trails.filter((trail: any) => trail.kind === "alarm").length,
     };
   });
@@ -705,6 +720,9 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
   expect(result.debuffedPower).toBeLessThan(result.normalPower);
   expect(result.acidPose).toBeGreaterThan(0.8);
   expect(result.effectCount).toBeGreaterThanOrEqual(1);
+  expect(result.repeatedEffectCount).toBeGreaterThanOrEqual(2);
+  expect(result.clashStarted).toBe(false);
+  expect(result.rivalFightCooldown).toBeGreaterThan(0);
   expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
 });
 

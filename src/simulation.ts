@@ -943,18 +943,34 @@ class Ant3D {
     if (threat && targetDistance <= ACID_SPRAY_RANGE) {
       this.angle = Math.atan2(threat.x - this.x, threat.z - this.z);
       this.energy = clamp(this.energy - dt * 0.016, 0, 1);
-      this.lastTacticalAction = "acidSpray";
-      this.skipMoveThisFrame = true;
       if (this.acidSprayCooldown <= 0) {
         sim.sprayAcid(this, threat);
         this.acidSprayCooldown = ACID_SPRAY_COOLDOWN_SECONDS;
         this.acidSprayTimer = ACID_SPRAY_DURATION_SECONDS;
         this.acidTargetId = threat.id;
+        this.lastTacticalAction = "acidSpray";
+        this.skipMoveThisFrame = true;
+        return true;
       }
+      if (this.acidSprayTimer > 0) {
+        this.lastTacticalAction = "acidSpray";
+        this.skipMoveThisFrame = true;
+        return true;
+      }
+      const standoffDistance = ACID_SPRAY_RANGE * 0.62;
+      if (targetDistance < standoffDistance) {
+        const retreatPressure = 1.35 + (1 - targetDistance / standoffDistance) * 1.35;
+        steering.x += ((this.x - threat.x) / targetDistance) * retreatPressure;
+        steering.z += ((this.z - threat.z) / targetDistance) * retreatPressure;
+        this.lastTacticalAction = "acidReposition";
+        return true;
+      }
+      this.lastTacticalAction = "acidAim";
+      this.skipMoveThisFrame = true;
       return true;
     }
 
-    const desiredDistance = threat ? ACID_SPRAY_RANGE * 0.76 : 18;
+    const desiredDistance = threat ? ACID_SPRAY_RANGE * 0.72 : 20;
     const pressure = targetDistance > desiredDistance ? 2.0 : 0.72;
     steering.x += ((target.x - this.x) / targetDistance) * pressure;
     steering.z += ((target.z - this.z) / targetDistance) * pressure;
@@ -1871,8 +1887,8 @@ class RivalAnt3D {
   applyAcidDebuff(strength = 1) {
     this.acidDebuff = clamp(Math.max(this.acidDebuff, strength), 0, ACID_DEBUFF_MAX);
     this.acidFlash = 1;
-    this.disrupt = Math.max(this.disrupt, 0.28 + strength * 0.18);
-    this.fightCooldown = Math.max(this.fightCooldown, 0.28);
+    this.disrupt = Math.max(this.disrupt, 0.42 + strength * 0.24);
+    this.fightCooldown = Math.max(this.fightCooldown, ACID_SPRAY_COOLDOWN_SECONDS + 0.3);
   }
 
   move(dt, sim, steering) {
@@ -1883,7 +1899,7 @@ class RivalAnt3D {
     } else {
       this.angle += (Math.random() - 0.5) * dt * 0.4;
     }
-    const acidSlow = 1 - Math.min(0.34, this.acidDebuff * 0.18);
+    const acidSlow = 1 - Math.min(0.46, this.acidDebuff * 0.2);
     const speed = this.baseSpeed * acidSlow * (1 - this.disrupt * 0.28) * (this.retreat > 0 ? 1.28 : 1) * sim.terrainSpeedAt(this.x, this.z) * sim.rivalSpeedAt(this.x, this.z) * sim.timeScale;
     this.x += Math.sin(this.angle) * speed * dt;
     this.z += Math.cos(this.angle) * speed * dt;
