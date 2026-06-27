@@ -1,6 +1,11 @@
 // @ts-nocheck
 import * as THREE from "three";
 import {
+  ACID_DEBUFF_MAX,
+  ACID_DEBUFF_SECONDS,
+  ACID_SPRAY_COOLDOWN_SECONDS,
+  ACID_SPRAY_DURATION_SECONDS,
+  ACID_SPRAY_RANGE,
   CAMERA_DISTANCE_DESKTOP,
   CAMERA_DISTANCE_MAX,
   CAMERA_DISTANCE_MIN,
@@ -462,6 +467,9 @@ class Ant3D {
     this.carryingSoil = false;
     this.buildTaskId = null;
     this.braceIntent = 0;
+    this.acidSprayCooldown = rand(0, ACID_SPRAY_COOLDOWN_SECONDS * 0.4);
+    this.acidSprayTimer = 0;
+    this.acidTargetId = null;
     this.lastTacticalAction = "idle";
     this.steering = { x: 0, z: 0 };
     this.sensed = {
@@ -510,6 +518,12 @@ class Ant3D {
       this.foodSourceId = null;
       this.traits.caution = clamp(Math.max(this.traits.caution, 0.76) + 0.08, 0, 1);
       this.traits.persistence = clamp(Math.max(this.traits.persistence, 0.78) + 0.1, 0, 1);
+    } else if (nextVariant === "acidShooter") {
+      this.role = "guard";
+      this.carrying = 0;
+      this.foodSourceId = null;
+      this.traits.caution = clamp(Math.max(this.traits.caution, 0.62) + 0.04, 0, 1);
+      this.traits.persistence = clamp(Math.max(this.traits.persistence, 0.6) + 0.05, 0, 1);
     } else if (nextVariant === "soldier") {
       this.role = "guard";
       this.carrying = 0;
@@ -538,6 +552,9 @@ class Ant3D {
     this.homeTimer += dt;
     this.wet = Math.max(0, this.wet - dt * 0.11);
     this.braceIntent = Math.max(0, this.braceIntent - dt * 1.4);
+    this.acidSprayCooldown = Math.max(0, this.acidSprayCooldown - dt);
+    this.acidSprayTimer = Math.max(0, this.acidSprayTimer - dt);
+    if (this.acidSprayTimer <= 0) this.acidTargetId = null;
     this.energy = clamp(this.energy + dt * 0.012 * this.variantConfig.staminaRecovery, 0, 1);
     this.lastTrail += dt;
     this.skipMoveThisFrame = false;
@@ -799,6 +816,7 @@ class Ant3D {
 
   updateExplore(dt, sim, steering, sensed) {
     if (this.variant === "heavySoldier" && this.updateHeavySoldier(dt, sim, steering, sensed)) return;
+    if (this.variant === "acidShooter" && this.updateAcidShooter(dt, sim, steering)) return;
     if (this.role === "guard" && this.isSortieSoldier && this.updateGuardIntercept(dt, sim, steering)) return;
     if (this.role === "guard" && this.isSortieSoldier && this.updateSortiePatrol(dt, sim, steering)) return;
     if (this.variant === "builder" && this.updateBuilder(dt, sim, steering, sensed)) return;
@@ -897,6 +915,55 @@ class Ant3D {
     steering.x += ((target.x - this.x) / targetDistance) * pressure;
     steering.z += ((target.z - this.z) / targetDistance) * pressure;
     this.lastTacticalAction = threat ? "block" : "guardPost";
+    return true;
+  }
+
+  updateAcidShooter(dt, sim, steering) {
+    if (this.isSortieSoldier && this.sortieTimer <= 0 && this.state !== "return") {
+      this.setState("return");
+      return true;
+    }
+    const threat = sim.findRivalThreat(this.x, this.z, SOLDIER_SORTIE_SEEK_RANGE);
+    const raid = sim.ensureRaidState();
+    let target = threat;
+    if (!target && this.isSortieSoldier) {
+      target = sim.currentSortieTarget(this.x, this.z);
+      if (!target && this.sortieTargetX != null && this.sortieTargetZ != null) {
+        target = { x: this.sortieTargetX, z: this.sortieTargetZ };
+      }
+    }
+    if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) {
+      target = sim.raidSignalPoint(raid, 0.78);
+    }
+    if (!target) return false;
+
+    const targetDistance = distance2(this.x, this.z, target.x, target.z) || 1;
+    this.sortieTargetX = target.x;
+    this.sortieTargetZ = target.z;
+    if (threat && targetDistance <= ACID_SPRAY_RANGE) {
+      this.angle = Math.atan2(threat.x - this.x, threat.z - this.z);
+      this.energy = clamp(this.energy - dt * 0.016, 0, 1);
+      this.lastTacticalAction = "acidSpray";
+      this.skipMoveThisFrame = true;
+      if (this.acidSprayCooldown <= 0) {
+        sim.sprayAcid(this, threat);
+        this.acidSprayCooldown = ACID_SPRAY_COOLDOWN_SECONDS;
+        this.acidSprayTimer = ACID_SPRAY_DURATION_SECONDS;
+        this.acidTargetId = threat.id;
+      }
+      return true;
+    }
+
+    const desiredDistance = threat ? ACID_SPRAY_RANGE * 0.76 : 18;
+    const pressure = targetDistance > desiredDistance ? 2.0 : 0.72;
+    steering.x += ((target.x - this.x) / targetDistance) * pressure;
+    steering.z += ((target.z - this.z) / targetDistance) * pressure;
+    if (threat && targetDistance < ACID_SPRAY_RANGE * 0.55) {
+      steering.x += ((this.x - threat.x) / targetDistance) * 0.8;
+      steering.z += ((this.z - threat.z) / targetDistance) * 0.8;
+    }
+    this.energy = clamp(this.energy - dt * 0.012, 0, 1);
+    this.lastTacticalAction = threat ? "acidRange" : "acidSeek";
     return true;
   }
 
@@ -1250,6 +1317,8 @@ class Ant3D {
       carryingSoil: this.carryingSoil,
       variant: this.variant,
       variantConfig: this.variantConfig,
+      acidPose: this.variant === "acidShooter" ? clamp(this.acidSprayTimer / ACID_SPRAY_DURATION_SECONDS, 0, 1) : 0,
+      acidTargetId: this.acidTargetId,
       gaitPhase: this.gaitPhase,
       renderIndex: this.renderInstanceIndex,
       id: this.id,
@@ -1280,6 +1349,8 @@ class RivalAnt3D {
     this.prevX = 0;
     this.prevZ = 0;
     this.disrupt = 0;
+    this.acidDebuff = 0;
+    this.acidFlash = 0;
     this.retreat = 0;
     this.retreatFromX = 0;
     this.retreatFromZ = 0;
@@ -1370,6 +1441,8 @@ class RivalAnt3D {
     this.prevAngle = this.angle;
     this.fightCooldown = Math.max(0, this.fightCooldown - dt);
     this.disrupt = Math.max(0, this.disrupt - dt * 0.72);
+    this.acidDebuff = Math.max(0, this.acidDebuff - dt / ACID_DEBUFF_SECONDS);
+    this.acidFlash = Math.max(0, this.acidFlash - dt * 2.6);
     this.retreat = Math.max(0, this.retreat - dt);
     this.victoryFlash = Math.max(0, this.victoryFlash - dt * 1.4);
 
@@ -1531,7 +1604,8 @@ class RivalAnt3D {
     const threatPressure = this.isRaidRival && sim ? clamp(sim.colony.enemyThreat / 22, 0, 0.58) : 0;
     const defenseBonus = sim ? Math.max(0, (sim.computeDerived().defensePower ?? 1) - 1) : 0;
     const variant = ant.variantConfig ?? getAntVariantConfig(ant.variant);
-    const rivalPower = 0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28 + threatPressure;
+    const acidPenalty = 1 - Math.min(0.26, this.acidDebuff * 0.13);
+    const rivalPower = (0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28 + threatPressure) * acidPenalty;
     const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
     const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
     const braceBonus = ant.braceIntent > 0 ? variant.brace * 0.34 + (sim?.braceBonusAt(ant.x, ant.z) ?? 0) : 0;
@@ -1794,6 +1868,13 @@ class RivalAnt3D {
     this.fightCooldown = Math.max(this.fightCooldown, 1.05);
   }
 
+  applyAcidDebuff(strength = 1) {
+    this.acidDebuff = clamp(Math.max(this.acidDebuff, strength), 0, ACID_DEBUFF_MAX);
+    this.acidFlash = 1;
+    this.disrupt = Math.max(this.disrupt, 0.28 + strength * 0.18);
+    this.fightCooldown = Math.max(this.fightCooldown, 0.28);
+  }
+
   move(dt, sim, steering) {
     const length = Math.hypot(steering.x, steering.z);
     if (length > 0.001) {
@@ -1802,7 +1883,8 @@ class RivalAnt3D {
     } else {
       this.angle += (Math.random() - 0.5) * dt * 0.4;
     }
-    const speed = this.baseSpeed * (1 - this.disrupt * 0.28) * (this.retreat > 0 ? 1.28 : 1) * sim.terrainSpeedAt(this.x, this.z) * sim.rivalSpeedAt(this.x, this.z) * sim.timeScale;
+    const acidSlow = 1 - Math.min(0.34, this.acidDebuff * 0.18);
+    const speed = this.baseSpeed * acidSlow * (1 - this.disrupt * 0.28) * (this.retreat > 0 ? 1.28 : 1) * sim.terrainSpeedAt(this.x, this.z) * sim.rivalSpeedAt(this.x, this.z) * sim.timeScale;
     this.x += Math.sin(this.angle) * speed * dt;
     this.z += Math.cos(this.angle) * speed * dt;
     this.vx = (this.x - this.prevX) / Math.max(dt, 0.000001);
@@ -1864,7 +1946,7 @@ class RivalAnt3D {
   }
 
   renderState(sim, alpha) {
-    const jitter = this.disrupt > 0 || this.victoryFlash > 0 || this.clash ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.045 : 0;
+    const jitter = this.disrupt > 0 || this.victoryFlash > 0 || this.acidFlash > 0 || this.clash ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.045 : 0;
     return {
       x: this.prevX + (this.x - this.prevX) * alpha,
       z: this.prevZ + (this.z - this.prevZ) * alpha,
@@ -1939,6 +2021,14 @@ const ANT_ROLE_LABEL_CONFIG = {
     band: "#4d5a36",
     bg: "rgba(28, 33, 24, 0.84)",
     iconBg: "rgba(99, 112, 67, 0.36)",
+  },
+  acidShooter: {
+    text: "酸射",
+    asset: "assets/generated/ant-role-soldier-20260627.png",
+    accent: "#93b84f",
+    band: "#536b2f",
+    bg: "rgba(25, 33, 21, 0.86)",
+    iconBg: "rgba(119, 151, 62, 0.34)",
   },
 };
 
@@ -2189,7 +2279,11 @@ class AntRenderSystem {
     const meshes = this.bodyMeshes.get(materialState) ?? this.bodyMeshes.get("explore");
     for (const part of ANT_BODY_PARTS) {
       const scale = this.bodyPartScale(renderState, part.name);
-      this.composeLocalMatrix(renderState, part.x, part.y, part.z, part.sx * scale.x, part.sy * scale.y, part.sz * scale.z);
+      const pose = renderState.variant === "acidShooter" ? clamp(renderState.acidPose ?? 0, 0, 1) : 0;
+      const localX = part.x;
+      const localY = part.name === "gaster" ? part.y + pose * 0.58 : part.y;
+      const localZ = part.name === "gaster" ? part.z - pose * 0.16 : part.z;
+      this.composeLocalMatrix(renderState, localX, localY, localZ, part.sx * scale.x, part.sy * scale.y, part.sz * scale.z);
       meshes.get(part.name).setMatrixAt(index, this.dummy.matrix);
     }
 
@@ -2226,8 +2320,8 @@ class AntRenderSystem {
       scale.z *= config.headScale;
     } else if (partName === "gaster") {
       scale.x *= config.abdomenScale;
-      scale.y *= config.abdomenScale;
-      scale.z *= config.abdomenScale;
+      scale.y *= config.abdomenScale * (1 + (renderState.acidPose ?? 0) * 0.16);
+      scale.z *= config.abdomenScale * (1 - (renderState.acidPose ?? 0) * 0.04);
     } else if (renderState.variant === "heavySoldier" && partName === "mesosoma") {
       scale.x *= 1.16;
       scale.y *= 1.18;
@@ -2543,6 +2637,8 @@ class AntColony3D {
       combatDust: new THREE.MeshBasicMaterial({ color: 0xb88a55, transparent: true, opacity: 0.32, depthWrite: false }),
       combatFlash: new THREE.MeshBasicMaterial({ color: 0xffa15c, transparent: true, opacity: 0.5, depthWrite: false }),
       combatRing: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.34, depthWrite: false }),
+      acidSpray: new THREE.MeshBasicMaterial({ color: 0x9fd35a, transparent: true, opacity: 0.5, depthWrite: false }),
+      acidSplash: new THREE.MeshBasicMaterial({ color: 0xb9f36d, transparent: true, opacity: 0.38, depthWrite: false }),
       trailFood: new THREE.MeshBasicMaterial({ color: 0xd9a63f, transparent: true, opacity: 0.2, depthWrite: false }),
       trailAlarm: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.24, depthWrite: false }),
       corpseMark: new THREE.MeshBasicMaterial({ color: 0x5b271f, transparent: true, opacity: 0.34, depthWrite: false }),
@@ -3340,6 +3436,7 @@ class AntColony3D {
     });
     this.colony.soldierAnts = derived.soldierAnts;
     this.colony.heavySoldierAnts = derived.heavySoldiers;
+    this.colony.acidShooterAnts = derived.acidShooters;
     this.colony.builderAnts = derived.builders;
     this.colony.attackPower = derived.attackPower;
     this.colony.defensePower = derived.defensePower;
@@ -3369,6 +3466,10 @@ class AntColony3D {
     if (this.colony.heavySoldierAnts < nextDerived.heavyTarget && this.colony.food > nextDerived.antCost * 2.2) {
       this.colony.heavySoldierAnts += 1;
       this.colony.food -= 4.5;
+    }
+    if (this.colony.acidShooterAnts < nextDerived.acidShooterTarget && this.colony.food > nextDerived.antCost * 2.0) {
+      this.colony.acidShooterAnts += 1;
+      this.colony.food -= 4;
     }
     if (this.colony.builderAnts < nextDerived.builderTarget && this.colony.food > nextDerived.antCost * 1.35) {
       this.colony.builderAnts += 1;
@@ -3416,7 +3517,7 @@ class AntColony3D {
     const homeTarget = Math.floor(clamp(d.workers + d.builders, 1, Math.max(1, DISPLAY_ANT_CAP - deployed)));
     const target = Math.floor(clamp(homeTarget + deployed, 1, DISPLAY_ANT_CAP));
     for (const ant of this.ants) {
-      if (ant.role === "guard" && !ant.isSortieSoldier && ant.variant !== "soldier" && ant.variant !== "heavySoldier") ant.role = "worker";
+      if (ant.role === "guard" && !ant.isSortieSoldier && ant.variant !== "soldier" && ant.variant !== "heavySoldier" && ant.variant !== "acidShooter") ant.role = "worker";
     }
     while (this.ants.length < target) this.ants.push(new Ant3D(this.nextAntId++, this));
     while (this.ants.length > target) {
@@ -3617,6 +3718,10 @@ class AntColony3D {
     if (id === "heavySoldierBrood") {
       this.colony.soldierAnts = Math.max(this.colony.soldierAnts, this.colony.heavySoldierAnts + 1);
       this.colony.heavySoldierAnts = Math.min(this.colony.soldierAnts, this.colony.heavySoldierAnts + 1);
+    } else if (id === "acidShooterBrood") {
+      this.colony.soldierAnts = Math.max(this.colony.soldierAnts, this.colony.heavySoldierAnts + this.colony.acidShooterAnts + 1);
+      const acidSlots = Math.max(0, this.colony.soldierAnts - this.colony.heavySoldierAnts);
+      this.colony.acidShooterAnts = Math.min(acidSlots, this.colony.acidShooterAnts + 1);
     } else if (id === "builderTraining") {
       const availableWorkers = Math.max(0, this.colony.antPopulation - this.colony.woundedAnts - this.colony.soldierAnts);
       this.colony.builderAnts = Math.min(availableWorkers, this.colony.builderAnts + BUILDERS_PER_TRAINING);
@@ -3643,7 +3748,7 @@ class AntColony3D {
   }
 
   sortieSoldierPool(derived = this.computeDerived()) {
-    return Math.max(0, Math.floor((derived.normalSoldiers ?? 0) + (derived.heavySoldiers ?? 0)));
+    return Math.max(0, Math.floor((derived.normalSoldiers ?? 0) + (derived.heavySoldiers ?? 0) + (derived.acidShooters ?? 0)));
   }
 
   sortieSoldierLimit(derived = this.computeDerived()) {
@@ -3663,10 +3768,12 @@ class AntColony3D {
     const d = this.computeDerived();
     const desired = Math.max(0, Math.floor(count));
     const nestHeavy = Math.max(0, Math.floor((d.heavySoldiers ?? 0) - this.deployedSoldierCountByVariant("heavySoldier")));
+    const nestAcid = Math.max(0, Math.floor((d.acidShooters ?? 0) - this.deployedSoldierCountByVariant("acidShooter")));
     const nestNormal = Math.max(0, Math.floor((d.normalSoldiers ?? 0) - this.deployedSoldierCountByVariant("soldier")));
     const heavy = Math.min(nestHeavy, desired);
-    const normal = Math.min(nestNormal, desired - heavy);
-    return { heavy, normal, total: heavy + normal };
+    const acid = Math.min(nestAcid, desired - heavy);
+    const normal = Math.min(nestNormal, desired - heavy - acid);
+    return { heavy, acid, normal, total: heavy + acid + normal };
   }
 
   plannedSortieCount() {
@@ -3715,6 +3822,7 @@ class AntColony3D {
     const targetAngle = sortieTarget ? Math.atan2(sortieTarget.z - this.nest.z, sortieTarget.x - this.nest.x) : null;
     const variants = [
       ...Array.from({ length: composition.heavy }, () => "heavySoldier"),
+      ...Array.from({ length: composition.acid }, () => "acidShooter"),
       ...Array.from({ length: composition.normal }, () => "soldier"),
     ];
     for (let i = 0; i < count; i += 1) {
@@ -3750,7 +3858,8 @@ class AntColony3D {
 
     this.soldierSortieCooldown = SOLDIER_SORTIE_COOLDOWN_SECONDS;
     const heavyText = composition.heavy > 0 ? ` / 重兵装${composition.heavy}匹` : "";
-    this.pushLog(`兵隊出撃: ${count}匹${heavyText}が巣口から防衛へ`);
+    const acidText = composition.acid > 0 ? ` / 酸射${composition.acid}匹` : "";
+    this.pushLog(`兵隊出撃: ${count}匹${heavyText}${acidText}が巣口から防衛へ`);
     this.updateStats();
     this.saveColony();
     return true;
@@ -4414,6 +4523,7 @@ class AntColony3D {
     this.antRenderer?.releaseRenderObject(ant);
     if (ant.isSortieSoldier) {
       if (ant.variant === "heavySoldier") this.colony.heavySoldierAnts = Math.max(0, Math.floor(this.colony.heavySoldierAnts) - 1);
+      if (ant.variant === "acidShooter") this.colony.acidShooterAnts = Math.max(0, Math.floor(this.colony.acidShooterAnts) - 1);
       this.colony.soldierAnts = Math.max(0, Math.floor(this.colony.soldierAnts) - 1);
     }
     this.colony.antPopulation = Math.max(MIN_COLONY_SURVIVORS, Math.floor(this.colony.antPopulation) - 1);
@@ -4885,11 +4995,96 @@ class AntColony3D {
     }
   }
 
+  sprayAcid(attacker, rival) {
+    if (!attacker || !rival || rival.defeated || rival.leftRaid) return false;
+    const reach = ACID_SPRAY_RANGE + rival.scale * 1.8;
+    const d = distance2(attacker.x, attacker.z, rival.x, rival.z);
+    if (d > reach) return false;
+    const strength = clamp(1 - d / reach, 0.28, 1);
+    rival.applyAcidDebuff(0.85 + strength * 0.65);
+    this.addAcidSprayEffect(attacker.x, attacker.z, rival.x, rival.z, strength);
+    this.addTrail(rival.x, rival.z, "alarm", 0.38);
+    return true;
+  }
+
+  addAcidSprayEffect(fromX, fromZ, toX, toZ, strength = 1) {
+    const quality = this.quality.effectsQuality ?? 1;
+    if (quality <= 0) return;
+    const dx = toX - fromX;
+    const dz = toZ - fromZ;
+    const length = Math.hypot(dx, dz) || 1;
+    const group = new THREE.Group();
+    group.position.set(fromX, 0, fromZ);
+
+    const sprayMaterial = this.materials.acidSpray.clone();
+    const beam = new THREE.Mesh(this.geometries.combatSlash, sprayMaterial);
+    const direction = new THREE.Vector3(dx, length * 0.035, dz).normalize();
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+    beam.position.set(dx * 0.5, 0.56, dz * 0.5);
+    beam.scale.set(0.035 + strength * 0.018, length, 0.035 + strength * 0.018);
+    group.add(beam);
+
+    const splashMaterial = this.materials.acidSplash.clone();
+    const splash = new THREE.Mesh(this.geometries.impactRing, splashMaterial);
+    splash.rotation.x = Math.PI / 2;
+    splash.position.set(dx, 0.16, dz);
+    splash.scale.setScalar(0.55 + strength * 0.65);
+    group.add(splash);
+
+    const puffs = [];
+    const puffCount = Math.floor(clamp(2 + strength * 3, 2, 5) * quality);
+    const angle = Math.atan2(dx, dz);
+    for (let i = 0; i < puffCount; i += 1) {
+      const puff = new THREE.Mesh(this.geometries.combatDust, splashMaterial);
+      const spread = angle + rand(-0.7, 0.7);
+      const baseScale = rand(0.1, 0.18) * (1 + strength * 0.28);
+      puff.position.set(dx + Math.sin(spread) * rand(0.08, 0.35), 0.18 + rand(0, 0.12), dz + Math.cos(spread) * rand(0.08, 0.35));
+      puff.scale.setScalar(baseScale);
+      group.add(puff);
+      puffs.push({ mesh: puff, angle: spread, baseScale, lift: rand(0.12, 0.3), speed: rand(0.35, 1.1) });
+    }
+
+    this.scene.add(group);
+    this.dynamicObjects.add(group);
+    this.combatEffects.push({
+      type: "acid",
+      age: 0,
+      life: 0.62,
+      strength,
+      radius: 0.7 + strength * 0.9,
+      group,
+      beam,
+      splash,
+      sprayMaterial,
+      splashMaterial,
+      puffs,
+    });
+    while (this.combatEffects.length > COMBAT_EFFECT_CAP) {
+      const old = this.combatEffects.shift();
+      this.disposeDynamicItem(old);
+    }
+  }
+
   updateCombatEffects(dt) {
     for (const effect of this.combatEffects) {
       effect.age += dt;
       const t = clamp(effect.age / effect.life, 0, 1);
       const fade = Math.pow(1 - t, 1.35);
+      if (effect.type === "acid") {
+        effect.group.position.y = Math.sin(t * Math.PI) * 0.05;
+        effect.sprayMaterial.opacity = 0.52 * effect.strength * Math.max(0, 1 - t * 2.3);
+        effect.splashMaterial.opacity = 0.42 * effect.strength * fade;
+        effect.splash.scale.setScalar(effect.radius * (0.62 + t * 1.25));
+        effect.beam.visible = t < 0.5;
+        for (const puff of effect.puffs) {
+          const outward = puff.speed * t;
+          puff.mesh.position.x += Math.sin(puff.angle) * outward * dt;
+          puff.mesh.position.z += Math.cos(puff.angle) * outward * dt;
+          puff.mesh.position.y += puff.lift * Math.sin(t * Math.PI) * dt;
+          puff.mesh.scale.setScalar(puff.baseScale * (1 + t * 1.6));
+        }
+        continue;
+      }
       effect.group.position.y = Math.sin(t * Math.PI) * 0.08;
       effect.ring.scale.setScalar(effect.radius * (0.58 + t * 1.35));
       effect.ringMaterial.opacity = 0.42 * effect.strength * fade;
@@ -5098,7 +5293,7 @@ class AntColony3D {
     ui.statGrowthRate.textContent = fmt(d.growthPerSecond * 60, 2);
     ui.statThreat.textContent = fmt(this.colony.enemyThreat, 1);
     ui.colonySummary.textContent =
-      `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 土木 ${fmt(d.builders, 0)}`;
+      `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 土木 ${fmt(d.builders, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     ui.activeToolLabel.textContent = this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel;
     if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);

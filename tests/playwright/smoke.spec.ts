@@ -20,7 +20,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       antPopulation: sim.colony.antPopulation,
       renderedAnts: sim.ants.length,
       deployedSoldiers: sim.deployedSoldierCount(),
-      variantConfigCount: ["worker", "soldier", "heavySoldier", "builder"].filter((variant) =>
+      variantConfigCount: ["worker", "soldier", "heavySoldier", "acidShooter", "builder"].filter((variant) =>
         Boolean(sim.getAntVariantConfig(variant)),
       ).length,
       variantCounts: sim.ants.reduce((counts: Record<string, number>, ant: any) => {
@@ -60,7 +60,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.antPopulation).toBe(12);
   expect(metrics.renderedAnts).toBe(11);
   expect(metrics.deployedSoldiers).toBe(0);
-  expect(metrics.variantConfigCount).toBe(4);
+  expect(metrics.variantConfigCount).toBe(5);
   expect(metrics.variantCounts.worker).toBe(11);
   expect(metrics.rivalAnts).toBe(0);
   expect(metrics.raidPhase).toBe("calm");
@@ -495,7 +495,7 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.logText).toContain("兵隊出撃");
 });
 
-test("heavy soldiers and builders unlock without replacing existing ants", async ({ page }) => {
+test("heavy soldiers, acid shooters, and builders unlock without replacing existing ants", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -511,10 +511,12 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
     sim.colony.upgrades.soldierTraining = 1;
     sim.colony.upgrades.chamberExcavation = 1;
     const heavyBought = sim.buyUpgrade("heavySoldierBrood");
+    const acidBought = sim.buyUpgrade("acidShooterBrood");
     const builderBought = sim.buyUpgrade("builderTraining");
     sim.computeDerived();
     sim.syncAntPopulation();
     const surfaceHeavyBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "heavySoldier" && sim.shouldRenderAnt(ant)).length;
+    const surfaceAcidBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "acidShooter" && sim.shouldRenderAnt(ant)).length;
     const sortieLimitBefore = sim.sortieSoldierLimit();
     const availableSortieBefore = sim.availableSortieSoldiers();
     sim.soldierSortieCooldown = 0;
@@ -528,7 +530,7 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
     }, {});
     const visibleRoleLabels = sim.roleLabelSystem.sprites.filter((sprite: any) => sprite.visible).length;
     const expectedRoleLabels = sim.ants.filter((ant: any) =>
-      sim.shouldRenderAnt(ant) && !ant.isRival && ["soldier", "heavySoldier", "builder"].includes(ant.variant),
+      sim.shouldRenderAnt(ant) && !ant.isRival && ["soldier", "heavySoldier", "acidShooter", "builder"].includes(ant.variant),
     ).length;
     const roleLabelBands = [...sim.roleLabelSystem.textures.entries()].map(([, texture]: any) => {
       const sample = texture.image.getContext("2d").getImageData(24, 64, 1, 1).data;
@@ -536,6 +538,7 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
     });
     return {
       heavyBought,
+      acidBought,
       builderBought,
       sameFirstObject: sim.ants[0] === first,
       firstId: sim.ants[0].id,
@@ -544,12 +547,15 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
       renderedAnts: sim.ants.length,
       counts,
       heavyCount: sim.colony.heavySoldierAnts,
+      acidCount: sim.colony.acidShooterAnts,
       builderCount: sim.colony.builderAnts,
       builderTarget: sim.computeDerived().builderTarget,
       surfaceHeavyBeforeSortie,
+      surfaceAcidBeforeSortie,
       sortieStarted,
       deployedCount: deployed.length,
       deployedHeavyCount: deployed.filter((ant: any) => ant.variant === "heavySoldier").length,
+      deployedAcidCount: deployed.filter((ant: any) => ant.variant === "acidShooter").length,
       idleBuildersInNest: builders.every((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z) < sim.nest.radius * 0.6),
       surfaceBuilders: sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length,
       normalSoldiers: sim.computeDerived().normalSoldiers,
@@ -557,6 +563,7 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
       sortieLimit: sortieLimitBefore,
       availableSortie: availableSortieBefore,
       heavyConfig: sim.getAntVariantConfig("heavySoldier"),
+      acidConfig: sim.getAntVariantConfig("acidShooter"),
       soldierConfig: sim.getAntVariantConfig("soldier"),
       builderConfig: sim.getAntVariantConfig("builder"),
       workerConfig: sim.getAntVariantConfig("worker"),
@@ -569,19 +576,24 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
   });
 
   expect(result.heavyBought).toBe(true);
+  expect(result.acidBought).toBe(true);
   expect(result.builderBought).toBe(true);
   expect(result.sameFirstObject).toBe(true);
   expect(result.firstId).toBe(result.beforeFirstId);
   expect(result.uniqueIds).toBe(result.renderedAnts);
   expect(result.counts.heavySoldier).toBeGreaterThanOrEqual(1);
+  expect(result.counts.acidShooter).toBeGreaterThanOrEqual(1);
   expect(result.counts.builder).toBeGreaterThanOrEqual(1);
   expect(result.heavyCount).toBeGreaterThanOrEqual(1);
+  expect(result.acidCount).toBeGreaterThanOrEqual(1);
   expect(result.builderCount).toBe(2);
   expect(result.builderTarget).toBe(2);
   expect(result.surfaceHeavyBeforeSortie).toBe(0);
+  expect(result.surfaceAcidBeforeSortie).toBe(0);
   expect(result.sortieStarted).toBe(true);
   expect(result.deployedCount).toBe(3);
   expect(result.deployedHeavyCount).toBe(1);
+  expect(result.deployedAcidCount).toBe(1);
   expect(result.idleBuildersInNest).toBe(true);
   expect(result.surfaceBuilders).toBe(0);
   expect(result.sortieLimit).toBe(Math.ceil(result.soldierPool / 2));
@@ -589,11 +601,111 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
   expect(result.heavyConfig.speed).toBeLessThan(result.workerConfig.speed);
   expect(result.heavyConfig.hp).toBeGreaterThan(result.soldierConfig.hp);
   expect(result.heavyConfig.pushMass).toBeGreaterThan(result.soldierConfig.pushMass);
+  expect(result.acidConfig.forageEfficiency).toBe(0);
+  expect(result.acidConfig.attack).toBeLessThan(result.heavyConfig.attack);
   expect(result.builderConfig.attack).toBeLessThan(result.workerConfig.attack);
   expect(result.finitePositions).toBe(true);
   expect(result.visibleRoleLabels).toBe(result.expectedRoleLabels);
   expect(result.roleLabelTextureCount).toBeGreaterThanOrEqual(2);
   expect(result.distinctRoleLabelBandCount).toBe(result.roleLabelTextureCount);
+});
+
+test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 40;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 4;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.acidShooterAnts = 1;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 1;
+    sim.colony.upgrades.acidShooterBrood = 1;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const acid = sim.deployedSoldiers().find((ant: any) => ant.variant === "acidShooter");
+    if (!acid || !rival) return { sortieStarted, acidFound: Boolean(acid), rivalFound: Boolean(rival) };
+
+    acid.x = 0;
+    acid.z = 0;
+    acid.prevX = acid.x;
+    acid.prevZ = acid.z;
+    acid.state = "explore";
+    acid.sortieTimer = 30;
+    acid.acidSprayCooldown = 0;
+    acid.acidSprayTimer = 0;
+    acid.acidTargetId = null;
+    rival.x = 10;
+    rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.aggression = 0.1;
+    rival.stubbornness = 0.1;
+    rival.scale = 1.25;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.fightCooldown = 0;
+    rival.acidDebuff = 0;
+    const before = { x: acid.x, z: acid.z };
+
+    acid.update(1 / 60, sim);
+    const debuffedPower = rival.combatPowers(acid, sim).rivalPower;
+    const debuff = rival.acidDebuff;
+    rival.acidDebuff = 0;
+    const normalPower = rival.combatPowers(acid, sim).rivalPower;
+    const renderState = acid.renderState(sim, 1);
+
+    return {
+      sortieStarted,
+      acidFound: true,
+      rivalFound: true,
+      action: acid.lastTacticalAction,
+      stoppedDistance: Math.hypot(acid.x - before.x, acid.z - before.z),
+      acidTargetId: acid.acidTargetId,
+      rivalId: rival.id,
+      debuff,
+      debuffedPower,
+      normalPower,
+      acidPose: renderState.acidPose,
+      effectCount: sim.combatEffects.filter((effect: any) => effect.type === "acid").length,
+      alarmTrails: sim.trails.filter((trail: any) => trail.kind === "alarm").length,
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.acidFound).toBe(true);
+  expect(result.rivalFound).toBe(true);
+  expect(result.action).toBe("acidSpray");
+  expect(result.stoppedDistance).toBeLessThan(0.001);
+  expect(result.acidTargetId).toBe(result.rivalId);
+  expect(result.debuff).toBeGreaterThan(0);
+  expect(result.debuffedPower).toBeLessThan(result.normalPower);
+  expect(result.acidPose).toBeGreaterThan(0.8);
+  expect(result.effectCount).toBeGreaterThanOrEqual(1);
+  expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
 });
 
 test("construction tab issues earthwork commands separately from growth", async ({ page }) => {
@@ -1029,6 +1141,7 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
       queenCare: 8,
       soldierTraining: 6,
       heavySoldierBrood: 4,
+      acidShooterBrood: 4,
       nestGuard: 6,
       sentinelPosts: 4,
     };

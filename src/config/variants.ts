@@ -1,4 +1,4 @@
-export const ANT_VARIANTS = ["worker", "soldier", "heavySoldier", "builder"] as const;
+export const ANT_VARIANTS = ["worker", "soldier", "heavySoldier", "acidShooter", "builder"] as const;
 
 export type AntVariant = typeof ANT_VARIANTS[number];
 
@@ -75,6 +75,24 @@ export const ANT_VARIANT_CONFIG: Record<AntVariant, AntVariantConfig> = {
     forageEfficiency: 0,
     buildPower: 0,
     dangerResponse: 0.48,
+  },
+  acidShooter: {
+    bodyScale: 1.08,
+    headScale: 0.96,
+    abdomenScale: 1.28,
+    speed: 0.82,
+    turnRate: 0.86,
+    hp: 1.04,
+    carapace: 0.94,
+    pushMass: 0.86,
+    brace: 0.72,
+    attack: 0.42,
+    contact: 0.18,
+    staminaRecovery: 0.78,
+    upkeep: 0.0017,
+    forageEfficiency: 0,
+    buildPower: 0,
+    dangerResponse: 0.7,
   },
   builder: {
     bodyScale: 1.04,

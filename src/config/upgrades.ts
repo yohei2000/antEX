@@ -170,6 +170,17 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
     requires: { ants: 24, nestLevel: 2, upgrades: { soldierTraining: 1 } },
   },
   {
+    id: "acidShooterBrood",
+    branch: "defense",
+    name: "酸射アリを育てる",
+    desc: "腹部を持ち上げ、短射程の酸で敵の動きを鈍らせる兵隊を育てる",
+    effect: "出撃時に敵へ酸をかけ、一時的に速度と押し合いを弱める",
+    max: 4,
+    baseCost: 230,
+    costScale: 1.9,
+    requires: { ants: 24, nestLevel: 2, upgrades: { soldierTraining: 1 } },
+  },
+  {
     id: "nestGuard",
     branch: "defense",
     name: "巣の守り",

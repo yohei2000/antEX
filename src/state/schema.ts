@@ -37,6 +37,7 @@ export interface ColonyState {
   antPopulation: number;
   soldierAnts: number;
   heavySoldierAnts: number;
+  acidShooterAnts: number;
   builderAnts: number;
   woundedAnts: number;
   attackPower: number;
@@ -61,10 +62,12 @@ export interface DerivedColonyState {
   activeAnts: number;
   soldierTarget: number;
   heavyTarget: number;
+  acidShooterTarget: number;
   builderTarget: number;
   soldierAnts: number;
   normalSoldiers: number;
   heavySoldiers: number;
+  acidShooters: number;
   builders: number;
   workers: number;
   foodRate: number;
