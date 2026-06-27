@@ -449,6 +449,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         sim.soldierSortieCooldown = 0;
         sim.syncAntPopulation();
         const guardsBeforeSortie = sim.ants.filter((ant) => ant.role === "guard").length;
+        const sortieLimit = sim.sortieSoldierLimit();
+        const plannedSortie = sim.plannedSortieCount();
         const sortieStarted = sim.startSoldierSortie();
         const deployedAfterSortie = sim.deployedSoldierCount();
         const sortieRoles = sim.deployedSoldiers().map((ant) => ant.role);
@@ -475,6 +477,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           capacityAfterUpgrade,
           boughtUpgrade,
           guardsBeforeSortie,
+          sortieLimit,
+          plannedSortie,
           sortieStarted,
           deployedAfterSortie,
           deployedAfterRetire: sim.deployedSoldierCount(),
@@ -493,8 +497,10 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       !idle.boughtUpgrade ||
       idle.capacityAfterUpgrade <= idle.capacityBeforeUpgrade ||
       idle.guardsBeforeSortie !== 0 ||
+      idle.sortieLimit !== 4 ||
+      idle.plannedSortie !== 4 ||
       !idle.sortieStarted ||
-      idle.deployedAfterSortie !== 8 ||
+      idle.deployedAfterSortie !== 4 ||
       idle.deployedAfterRetire !== 0 ||
       !idle.sortieRoles.every((role) => role === "guard") ||
       idle.sortieSpawnMax >= 14 ||

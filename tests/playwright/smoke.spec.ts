@@ -430,6 +430,9 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
       visible: sim.ants.length,
       guards: sim.ants.filter((ant: any) => ant.role === "guard").length,
       deployed: sim.deployedSoldierCount(),
+      sortieLimit: sim.sortieSoldierLimit(),
+      availableSortie: sim.availableSortieSoldiers(),
+      plannedSortie: sim.plannedSortieCount(),
       activeTab: sim.activeTab,
       button: (document.querySelector("#soldierSortieBtn") as HTMLButtonElement).textContent,
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
@@ -463,10 +466,13 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.before.activeTab).toBe("soldiers");
   expect(result.before.guards).toBe(0);
   expect(result.before.deployed).toBe(0);
-  expect(result.before.button).toContain("兵隊を出撃");
+  expect(result.before.sortieLimit).toBe(4);
+  expect(result.before.availableSortie).toBe(4);
+  expect(result.before.plannedSortie).toBe(4);
+  expect(result.before.button).toContain("兵隊を出撃 4");
   expect(result.before.tabText).not.toContain("遠征");
   expect(result.started).toBe(true);
-  expect(result.deployedCount).toBe(7);
+  expect(result.deployedCount).toBe(4);
   expect(result.deployedRoles.every((role: string) => role === "guard")).toBe(true);
   expect(Math.max(...result.spawnDistances)).toBeLessThan(14);
   expect(result.afterRetire).toBe(0);
@@ -522,6 +528,7 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
       idleBuildersInNest: builders.every((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z) < sim.nest.radius * 0.6),
       surfaceBuilders: sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length,
       normalSoldiers: sim.computeDerived().normalSoldiers,
+      sortieLimit: sim.sortieSoldierLimit(),
       availableSortie: sim.availableSortieSoldiers(),
       heavyConfig: sim.getAntVariantConfig("heavySoldier"),
       soldierConfig: sim.getAntVariantConfig("soldier"),
@@ -547,7 +554,8 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
   expect(result.builderTarget).toBe(2);
   expect(result.idleBuildersInNest).toBe(true);
   expect(result.surfaceBuilders).toBe(0);
-  expect(result.availableSortie).toBe(result.normalSoldiers);
+  expect(result.sortieLimit).toBe(Math.ceil(result.normalSoldiers / 2));
+  expect(result.availableSortie).toBe(result.sortieLimit);
   expect(result.heavyConfig.speed).toBeLessThan(result.workerConfig.speed);
   expect(result.heavyConfig.hp).toBeGreaterThan(result.soldierConfig.hp);
   expect(result.heavyConfig.pushMass).toBeGreaterThan(result.soldierConfig.pushMass);
@@ -602,6 +610,8 @@ test("construction tab issues earthwork commands separately from growth", async 
       crewText: (document.querySelector("#constructionCrew") as HTMLElement).textContent,
       progressText: (document.querySelector("#constructionProgressList") as HTMLElement).textContent,
       progressRows: document.querySelectorAll("#constructionProgressList .construction-task").length,
+      taskAssigneeCounts: sim.buildTasks.map((task: any) => sim.constructionAssignees(task).length).sort(),
+      taskAssigneeLimit: sim.buildTaskAssigneeLimit(),
       trailDisabledAfterCommand: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).disabled,
       savedEarthworks: sim.colony.earthworks.length,
     };
@@ -620,7 +630,8 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.crewText).toContain("待機");
   expect(result.progressText).toContain("採餌道");
   expect(result.progressText).toContain("低い土塁");
-  expect(result.progressText.match(/担当 1\/2/g)).toHaveLength(2);
+  expect(result.taskAssigneeCounts).toEqual([1, 1]);
+  expect(result.taskAssigneeLimit).toBe(2);
   expect(result.progressRows).toBe(2);
   expect(result.trailDisabledAfterCommand).toBe(true);
   expect(result.savedEarthworks).toBe(2);
@@ -887,6 +898,8 @@ test("sortied soldiers intercept raid rivals after player command", async ({ pag
     rival.fightCooldown = 0;
     sim.colony.raidState.phase = "active";
 
+    const sortieLimit = sim.sortieSoldierLimit();
+    const plannedSortie = sim.plannedSortieCount();
     const started = sim.startSoldierSortie();
     const guard = sim.deployedSoldiers()[0];
     guard.x = sim.nest.x;
@@ -905,6 +918,8 @@ test("sortied soldiers intercept raid rivals after player command", async ({ pag
     return {
       guardsBefore,
       started,
+      sortieLimit,
+      plannedSortie,
       deployed: sim.deployedSoldierCount(),
       before,
       minDistance,
@@ -917,7 +932,9 @@ test("sortied soldiers intercept raid rivals after player command", async ({ pag
 
   expect(result.guardsBefore).toBe(0);
   expect(result.started).toBe(true);
-  expect(result.deployed).toBe(6);
+  expect(result.sortieLimit).toBe(3);
+  expect(result.plannedSortie).toBe(3);
+  expect(result.deployed).toBe(3);
   expect(result.before).toBeGreaterThan(62);
   expect(result.minDistance).toBeLessThan(result.before - 10);
   expect(result.after).toBeLessThan(result.before);

@@ -67,7 +67,6 @@ const RIVAL_HARASSMENT_RANGE = 22;
 const RAID_GRAPPLER_RECRUIT_RANGE = 11.6;
 const RIVAL_GRAPPLER_RECRUIT_RANGE = 9.4;
 const GUARD_INTERCEPT_RANGE = 62;
-const SOLDIER_SORTIE_CAP = 12;
 const SOLDIER_SORTIE_SECONDS = 58;
 const SOLDIER_SORTIE_COOLDOWN_SECONDS = 14;
 const SOLDIER_PATROL_RADIUS = 18;
@@ -2843,7 +2842,7 @@ class AntColony3D {
     this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP);
-    this.roleLabelSystem = new AntRoleLabelSystem(this, DISPLAY_ANT_CAP + SOLDIER_SORTIE_CAP);
+    this.roleLabelSystem = new AntRoleLabelSystem(this, DISPLAY_ANT_CAP);
     this.createWorld();
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
@@ -4112,13 +4111,21 @@ class AntColony3D {
     return this.deployedSoldiers().length;
   }
 
+  sortieSoldierLimit(derived = this.computeDerived()) {
+    const total = Math.max(0, Math.floor(derived.normalSoldiers ?? 0));
+    return total > 0 ? Math.max(1, Math.ceil(total / 2)) : 0;
+  }
+
   availableSortieSoldiers() {
     const d = this.computeDerived();
-    return Math.max(0, Math.floor(Math.min(d.normalSoldiers, d.activeAnts - 1)) - this.deployedSoldierCount());
+    const deployed = this.deployedSoldierCount();
+    const healthyNormalSoldiers = Math.floor(Math.min(d.normalSoldiers, d.activeAnts - 1));
+    const roomUnderSortieLimit = this.sortieSoldierLimit(d) - deployed;
+    return Math.max(0, Math.min(healthyNormalSoldiers - deployed, roomUnderSortieLimit));
   }
 
   plannedSortieCount() {
-    return Math.max(0, Math.floor(Math.min(this.availableSortieSoldiers(), SOLDIER_SORTIE_CAP)));
+    return Math.max(0, Math.floor(this.availableSortieSoldiers()));
   }
 
   currentSortieTarget(x = this.nest.x, z = this.nest.z) {
