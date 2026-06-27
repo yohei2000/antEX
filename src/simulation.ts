@@ -91,6 +91,7 @@ const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const FOOD_INCOME_MULTIPLIER = 3;
 const BUILD_TASK_ASSIGNEE_CAP = 3;
 const BUILDERS_PER_TRAINING = 2;
+const NEST_STAY_SECONDS = 10;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
@@ -873,6 +874,9 @@ class Ant3D {
     this.sortieIndex = 0;
     this.sortieTargetX = null;
     this.sortieTargetZ = null;
+    this.inNest = false;
+    this.nestStayTimer = 0;
+    this.nestExitAngle = angle;
     this.carryingSoil = false;
     this.buildTaskId = null;
     this.braceIntent = 0;
@@ -956,6 +960,14 @@ class Ant3D {
     this.lastTrail += dt;
     this.skipMoveThisFrame = false;
     if (this.isSortieSoldier) this.sortieTimer = Math.max(0, this.sortieTimer - dt);
+
+    if (this.inNest || this.nestStayTimer > 0) {
+      this.nestStayTimer = Math.max(0, this.nestStayTimer - dt);
+      if (this.nestStayTimer <= 0 && this.variant === "builder" && this.buildTaskId == null) sim.claimBuildTask(this);
+      if (this.nestStayTimer <= 0 && (this.variant !== "builder" || this.buildTaskId != null)) sim.releaseAntFromNest(this);
+      else sim.holdAntInNest(this);
+      return;
+    }
 
     if (this.clashTimer > 0 || this.state === "clash") {
       this.updateClash(dt, sim);
@@ -1418,7 +1430,7 @@ class Ant3D {
         sim.queueSortieRetire(this);
         return;
       }
-      this.setState("explore");
+      sim.enterNest(this);
     }
   }
 
@@ -3485,6 +3497,7 @@ class AntColony3D {
     let bestDistance = Infinity;
     for (const ant of this.ants) {
       if (ant === exclude || ant.variant !== variant) continue;
+      if (!this.shouldRenderAnt(ant)) continue;
       const d = distance2(x, z, ant.x, ant.z);
       if (d < bestDistance) {
         best = ant;
@@ -3495,23 +3508,31 @@ class AntColony3D {
   }
 
   createNest() {
-    const mound = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), this.materials.nest);
-    mound.position.set(this.nest.x, 1.25, this.nest.z);
-    mound.scale.set(this.nest.radius * 1.15, 2.1, this.nest.radius * 0.82);
-    mound.castShadow = this.quality.shadowQuality !== "off";
-    mound.receiveShadow = this.quality.shadowQuality !== "off";
-    this.scene.add(mound);
-    this.sharedGeometries.add(mound.geometry);
-    this.nestMound = mound;
+    const mainHole = new THREE.Group();
+    mainHole.position.set(this.nest.x, 0.035, this.nest.z);
+    const shadow = new THREE.Mesh(this.geometries.trailCircle, this.materials.nestDark);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.scale.set(this.nest.radius * 0.78, this.nest.radius * 0.52, 1);
+    shadow.position.y = 0.012;
+    mainHole.add(shadow);
+    const rim = new THREE.Mesh(this.geometries.nestRim, this.materials.nestRim);
+    rim.rotation.x = -Math.PI / 2;
+    rim.scale.set(this.nest.radius * 0.86, this.nest.radius * 0.58, 1);
+    rim.position.y = 0.055;
+    rim.castShadow = this.quality.shadowQuality !== "off";
+    rim.receiveShadow = this.quality.shadowQuality !== "off";
+    mainHole.add(rim);
+    this.scene.add(mainHole);
+    this.nestMound = mainHole;
     this.nestEntrances = [];
     this.nestSpoils = [];
     this.nestHoles = this.nestEntrances;
 
     const entrances = [
-      { angle: -0.45, distance: 0.62, y: 2.12, rx: 2.45, ry: 0.92, tilt: -0.5, spoils: 12 },
-      { angle: 1.02, distance: 0.42, y: 2.55, rx: 1.18, ry: 0.52, tilt: -0.72, spoils: 6 },
-      { angle: 2.55, distance: 0.5, y: 2.42, rx: 1.02, ry: 0.46, tilt: -0.64, spoils: 5 },
-      { angle: 3.76, distance: 0.34, y: 2.72, rx: 0.82, ry: 0.38, tilt: -0.78, spoils: 4 },
+      { angle: -0.45, distance: 0.12, y: 0.04, rx: 3.0, ry: 1.25, tilt: -Math.PI / 2, spoils: 12 },
+      { angle: 1.02, distance: 0.54, y: 0.045, rx: 1.18, ry: 0.52, tilt: -Math.PI / 2, spoils: 6 },
+      { angle: 2.55, distance: 0.5, y: 0.045, rx: 1.02, ry: 0.46, tilt: -Math.PI / 2, spoils: 5 },
+      { angle: 3.76, distance: 0.38, y: 0.045, rx: 0.82, ry: 0.38, tilt: -Math.PI / 2, spoils: 4 },
     ];
     for (const entrance of entrances) this.createNestEntrance(entrance);
     this.updateColonyVisuals();
@@ -3523,19 +3544,20 @@ class AntColony3D {
     const z = this.nest.z + Math.sin(config.angle) * radial;
     const group = new THREE.Group();
     group.position.set(x, config.y, z);
-    group.rotation.y = Math.PI / 2 - config.angle;
+    group.rotation.y = -config.angle;
     group.userData.base = { ...config, radial };
+    group.userData.angle = config.angle;
 
     const shadow = new THREE.Mesh(this.geometries.trailCircle, this.materials.nestDark);
     shadow.rotation.x = config.tilt;
     shadow.scale.set(config.rx, config.ry, 1);
-    shadow.position.z = 0.035;
+    shadow.position.y = 0.008;
     group.add(shadow);
 
     const rim = new THREE.Mesh(this.geometries.nestRim, this.materials.nestRim);
     rim.rotation.x = config.tilt;
     rim.scale.set(config.rx * 1.1, config.ry * 1.04, 1);
-    rim.position.z = 0.085;
+    rim.position.y = 0.045;
     rim.castShadow = this.quality.shadowQuality !== "off";
     rim.receiveShadow = this.quality.shadowQuality !== "off";
     group.add(rim);
@@ -3904,30 +3926,90 @@ class AntColony3D {
     }
   }
 
-  dockBuilderInNest(ant) {
-    if (!ant || ant.variant !== "builder") return;
-    this.releaseBuildTask(ant);
-    const angle = (ant.id * 2.399 + this.colony.nestLevel * 0.31) % (Math.PI * 2);
-    const radius = this.nest.radius * (0.18 + (ant.id % 5) * 0.045);
+  nestExitPoint(ant, radiusScale = 0.76) {
+    const entrance = this.nestEntrances?.[(ant.id - 1) % Math.max(1, this.nestEntrances.length)];
+    const base = entrance?.userData?.base;
+    const angle = base?.angle ?? ant.nestExitAngle ?? ((ant.id * 2.399) % (Math.PI * 2));
+    const radial = base?.radial ?? this.nest.radius * 0.42;
+    const radius = Math.max(this.nest.radius * radiusScale, radial + 1.2);
+    return {
+      x: this.nest.x + Math.cos(angle) * radius,
+      z: this.nest.z + Math.sin(angle) * radius,
+      angle,
+    };
+  }
+
+  enterNest(ant, staySeconds = NEST_STAY_SECONDS) {
+    if (!ant) return;
+    ant.inNest = true;
+    ant.nestStayTimer = Math.max(ant.nestStayTimer ?? 0, staySeconds);
+    ant.nestExitAngle = Math.atan2(ant.z - this.nest.z, ant.x - this.nest.x);
+    ant.carrying = 0;
+    ant.carryingSoil = false;
+    ant.foodSourceId = null;
+    ant.vx = 0;
+    ant.vz = 0;
+    ant.energy = 1;
+    ant.homeTimer = 0;
+    ant.lastTacticalAction = "inNest";
+    ant.setState("explore");
+    this.holdAntInNest(ant);
+  }
+
+  holdAntInNest(ant) {
+    if (!ant) return;
+    const angle = ant.nestExitAngle ?? ((ant.id * 2.399) % (Math.PI * 2));
+    const radius = this.nest.radius * (0.12 + (ant.id % 5) * 0.035);
     const x = this.nest.x + Math.cos(angle) * radius;
     const z = this.nest.z + Math.sin(angle) * radius;
+    ant.inNest = true;
     ant.x = x;
     ant.z = z;
     ant.prevX = x;
     ant.prevZ = z;
     ant.vx = 0;
     ant.vz = 0;
+    ant.gaitPhase = (ant.gaitPhase + 0.03) % (Math.PI * 2);
+  }
+
+  releaseAntFromNest(ant) {
+    if (!ant) return;
+    const point = this.nestExitPoint(ant);
+    ant.inNest = false;
+    ant.nestStayTimer = 0;
+    ant.x = point.x;
+    ant.z = point.z;
+    ant.prevX = point.x;
+    ant.prevZ = point.z;
+    ant.angle = point.angle + Math.PI * 0.5;
+    ant.prevAngle = ant.angle;
+    ant.vx = 0;
+    ant.vz = 0;
+    ant.homeTimer = 0;
+    ant.lastTacticalAction = ant.variant === "builder" && ant.buildTaskId != null ? "leaveNestForBuild" : "leaveNest";
+    ant.setState("explore");
+  }
+
+  dockBuilderInNest(ant) {
+    if (!ant || ant.variant !== "builder") return;
+    this.releaseBuildTask(ant);
+    ant.inNest = true;
+    ant.nestExitAngle = (ant.id * 2.399 + this.colony.nestLevel * 0.31) % (Math.PI * 2);
+    ant.vx = 0;
+    ant.vz = 0;
     ant.carrying = 0;
     ant.carryingSoil = false;
     ant.foodSourceId = null;
-    ant.lastTacticalAction = "idleInNest";
+    ant.lastTacticalAction = ant.nestStayTimer > 0 ? "inNest" : "idleInNest";
     ant.homeTimer = 0;
     ant.energy = Math.min(1, ant.energy + 0.02);
     ant.skipMoveThisFrame = true;
     if (ant.state !== "explore") ant.setState("explore");
+    this.holdAntInNest(ant);
   }
 
   shouldRenderAnt(ant) {
+    if (ant.inNest || ant.nestStayTimer > 0) return false;
     if (ant.variant === "builder" && ant.buildTaskId == null && !ant.carryingSoil) return false;
     return true;
   }
@@ -4155,14 +4237,14 @@ class AntColony3D {
   updateColonyVisuals() {
     if (!this.nestMound) return;
     const growth = 1 + Math.min(2.3, (this.colony.nestLevel - 1) * 0.13 + this.colony.territory * 0.025);
-    this.nestMound.scale.set(this.nest.radius * 1.15 * growth, 2.1 + growth * 0.55, this.nest.radius * 0.82 * growth);
+    this.nestMound.scale.setScalar(1 + (growth - 1) * 0.08);
     for (const entrance of this.nestEntrances ?? []) {
       const base = entrance.userData.base;
       if (!base) continue;
       const radial = base.radial * (1 + (growth - 1) * 0.1);
       entrance.position.set(
         this.nest.x + Math.cos(base.angle) * radial,
-        base.y + (growth - 1) * 0.24,
+        base.y,
         this.nest.z + Math.sin(base.angle) * radial,
       );
       entrance.scale.setScalar(1 + (growth - 1) * 0.08);
@@ -5054,6 +5136,7 @@ class AntColony3D {
     const item = { x, z, radius, shock: 1, group, ring };
     this.stones.push(item);
     for (const ant of this.ants) {
+      if (!this.shouldRenderAnt(ant)) continue;
       const d = distance2(ant.x, ant.z, x, z);
       if (d < radius + 28) ant.shock((1 - d / (radius + 28)) * (0.78 + intensity * 0.13));
     }
@@ -5318,6 +5401,7 @@ class AntColony3D {
     let bestDistance = Infinity;
     for (const ant of this.ants) {
       if (ant === helper || ant.stun <= 0) continue;
+      if (!this.shouldRenderAnt(ant)) continue;
       const d = distance2(helper.x, helper.z, ant.x, ant.z);
       if (d < bestDistance && d < 22) {
         best = ant;

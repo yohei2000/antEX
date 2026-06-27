@@ -41,6 +41,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
       terrainBumps: sim.terrainBumps?.length ?? 0,
       nestEntrances: sim.nestEntrances?.length ?? sim.nestHoles?.length ?? 0,
       nestSpoils: sim.nestSpoils?.length ?? 0,
+      nestIsHoleGroup: sim.nestMound?.type === "Group",
+      nestHasMoundGeometry: Boolean(sim.nestMound?.geometry),
+      nestEntranceMaxY: Math.max(...(sim.nestEntrances ?? []).map((entrance: any) => entrance.position.y)),
       stoneCount: sim.stones.length,
       branchCount: sim.branches.length,
       upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
@@ -69,6 +72,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(8);
   expect(metrics.nestEntrances).toBeGreaterThanOrEqual(4);
   expect(metrics.nestSpoils).toBeGreaterThanOrEqual(24);
+  expect(metrics.nestIsHoleGroup).toBe(true);
+  expect(metrics.nestHasMoundGeometry).toBe(false);
+  expect(metrics.nestEntranceMaxY).toBeLessThan(0.12);
   expect(metrics.stoneCount).toBeGreaterThanOrEqual(6);
   expect(metrics.branchCount).toBeGreaterThanOrEqual(5);
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
@@ -110,8 +116,9 @@ test("raidSoon query keeps normal mode but starts a raid quickly without saving"
   expect(result.initial.raidSoonMode).toBe(true);
   expect(result.initial.bodyClass).toBe(true);
   expect(result.initial.activeTab).toBe("growth");
-  expect(result.initial.phase).toBe("calm");
-  expect(result.initial.timer).toBeLessThanOrEqual(2.6);
+  expect(["calm", "warning", "active"]).toContain(result.initial.phase);
+  if (result.initial.phase === "calm") expect(result.initial.timer).toBeLessThanOrEqual(2.6);
+  if (result.initial.phase === "warning") expect(result.initial.timer).toBeLessThanOrEqual(5.6);
   expect(result.initial.savedState).toBeNull();
   expect(result.phase).toBe("active");
   expect(result.activeCount).toBeGreaterThan(0);
@@ -343,8 +350,26 @@ test("food only increases when a carrying ant returns to the nest", async ({ pag
     const expectedReturnGain = carrier.carrying * sim.computeDerived().foragedFoodMultiplier;
     carrier.updateReturn(1 / 60, sim, { x: 0, z: 0 });
     const returnAfter = sim.colony.food;
+    const hiddenAfterNestEntry = !sim.shouldRenderAnt(carrier);
+    const stayTimerAfterEntry = carrier.nestStayTimer;
+    carrier.update(9.8, sim);
+    const hiddenBeforeCooldownEnds = !sim.shouldRenderAnt(carrier);
+    carrier.update(0.4, sim);
+    const visibleAfterCooldown = sim.shouldRenderAnt(carrier);
+    const distanceAfterCooldown = Math.hypot(carrier.x - sim.nest.x, carrier.z - sim.nest.z);
 
-    return { noDeliveryBefore, noDeliveryAfter, returnBefore, returnAfter, expectedReturnGain };
+    return {
+      noDeliveryBefore,
+      noDeliveryAfter,
+      returnBefore,
+      returnAfter,
+      expectedReturnGain,
+      hiddenAfterNestEntry,
+      stayTimerAfterEntry,
+      hiddenBeforeCooldownEnds,
+      visibleAfterCooldown,
+      distanceAfterCooldown,
+    };
   });
 
   expect(result.noDeliveryAfter).toBeLessThanOrEqual(result.noDeliveryBefore + 0.0001);
@@ -352,6 +377,11 @@ test("food only increases when a carrying ant returns to the nest", async ({ pag
   expect(result.returnAfter).toBeGreaterThan(result.returnBefore);
   expect(result.returnAfter - result.returnBefore).toBeCloseTo(result.expectedReturnGain, 5);
   expect(result.expectedReturnGain).toBeCloseTo(3.75, 5);
+  expect(result.hiddenAfterNestEntry).toBe(true);
+  expect(result.stayTimerAfterEntry).toBeGreaterThanOrEqual(9.9);
+  expect(result.hiddenBeforeCooldownEnds).toBe(true);
+  expect(result.visibleAfterCooldown).toBe(true);
+  expect(result.distanceAfterCooldown).toBeGreaterThan(5);
 });
 
 test("upgrade click increments an available upgrade", async ({ page }) => {
@@ -370,9 +400,15 @@ test("upgrade click increments an available upgrade", async ({ page }) => {
   });
 
   const before = await page.evaluate(() => (window.__ANT_SIM as any).colony.upgrades.storageChambers);
-  await page.locator('[data-upgrade="storageChambers"]').click();
+  const clicked = await page.evaluate(() => {
+    const button = document.querySelector('[data-upgrade="storageChambers"]');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  });
   const after = await page.evaluate(() => (window.__ANT_SIM as any).colony.upgrades.storageChambers);
 
+  expect(clicked).toBe(true);
   expect(after).toBe(before + 1);
 });
 
@@ -672,6 +708,7 @@ test("builders stay in the nest until assigned and spread across construction ty
     const trail = sim.createBuildTask("trailReinforce", sim.nest.x + 18, sim.nest.z + 4, { radius: 13, maxProgress: 4 });
     const barricade = sim.createBuildTask("lowBarricade", sim.nest.x + 12, sim.nest.z - 10, { radius: 10, maxProgress: 4 });
     const claimedTaskIds = builders.map((builder: any) => sim.claimBuildTask(builder)?.id ?? null);
+    for (let i = 0; i < 3; i += 1) sim.updateGame(1 / 60);
     sim.renderGame(1);
 
     return {

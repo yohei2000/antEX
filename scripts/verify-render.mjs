@@ -585,6 +585,19 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         sim.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
         const antPopulationBefore = sim.colony.antPopulation;
         const colonyCorpseCountBeforeWorker = sim.colonyCorpses?.length ?? 0;
+        for (const other of sim.ants) {
+          other.inNest = false;
+          other.nestStayTimer = 0;
+          other.clashRival = null;
+          other.clashTimer = 0;
+          other.fleeTimer = 0;
+          if (other === ant) continue;
+          other.state = "explore";
+          other.x = 80 + other.id * 0.05;
+          other.z = 80;
+          other.prevX = other.x;
+          other.prevZ = other.z;
+        }
         ant.role = "worker";
         ant.traits.persistence = 0.1;
         ant.traits.caution = 0.1;
@@ -627,7 +640,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           const gaitDelta = Math.atan2(Math.sin(ant.gaitPhase - workerPreviousGait), Math.cos(ant.gaitPhase - workerPreviousGait));
           workerGaitAdvance += Math.abs(gaitDelta);
           workerPreviousGait = ant.gaitPhase;
-          if (i < 100 && rival.clash) {
+          const workerStillClashing = sim.ants.includes(ant) && ant.state === "clash" && rival.clash;
+          if (i < 100 && workerStillClashing) {
             const centerX = (ant.x + rival.x) * 0.5;
             const centerZ = (ant.z + rival.z) * 0.5;
             maxCenterDrift = Math.max(maxCenterDrift, Math.hypot(centerX - anchorX, centerZ - anchorZ));
@@ -653,6 +667,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         guard.traits.persistence = 1;
         guard.traits.caution = 1;
         guard.state = "explore";
+        guard.inNest = false;
+        guard.nestStayTimer = 0;
         guard.carrying = 0;
         guard.energy = 1;
         guard.x = 4;
@@ -665,6 +681,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         supportA.traits.persistence = 1;
         supportA.traits.caution = 1;
         supportA.state = "explore";
+        supportA.inNest = false;
+        supportA.nestStayTimer = 0;
         supportA.x = 3.35;
         supportA.z = 0.9;
         supportA.prevX = supportA.x;
@@ -675,6 +693,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         supportB.traits.persistence = 0.8;
         supportB.traits.caution = 0.8;
         supportB.state = "explore";
+        supportB.inNest = false;
+        supportB.nestStayTimer = 0;
         supportB.x = 3.55;
         supportB.z = -0.9;
         supportB.prevX = supportB.x;
