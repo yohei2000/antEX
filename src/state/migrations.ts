@@ -59,7 +59,8 @@ export function migrateColony(raw: unknown): ColonyState {
   next.antPopulation = Math.floor(clamp(Number(next.antPopulation) || 12, 12, 1000000));
   next.soldierAnts = Math.floor(clamp(Number(next.soldierAnts) || 1, 0, next.antPopulation));
   next.heavySoldierAnts = Math.floor(clamp(Number(next.heavySoldierAnts) || 0, 0, next.soldierAnts));
-  next.acidShooterAnts = Math.floor(clamp(Number(next.acidShooterAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts)));
+  next.shieldHeadAnts = Math.floor(clamp(Number(next.shieldHeadAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts)));
+  next.acidShooterAnts = Math.floor(clamp(Number(next.acidShooterAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts - next.shieldHeadAnts)));
   next.builderAnts = Math.floor(clamp(Number(next.builderAnts) || 0, 0, Math.max(0, next.antPopulation - next.soldierAnts)));
   next.woundedAnts = Math.floor(clamp(Number(next.woundedAnts) || 0, 0, next.antPopulation));
   next.nestLevel = Math.floor(clamp(Number(next.nestLevel) || 1, 1, 999));

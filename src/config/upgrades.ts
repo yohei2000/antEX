@@ -170,6 +170,17 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
     requires: { ants: 24, nestLevel: 2, upgrades: { soldierTraining: 1 } },
   },
   {
+    id: "shieldHeadBrood",
+    branch: "defense",
+    name: "盾頭アリを育てる",
+    desc: "平たく大きな頭で巣口や狭い道を塞ぐ兵隊を育てる",
+    effect: "出撃時に巣口へ構え、敵の侵入と突破圧を遅らせる",
+    max: 4,
+    baseCost: 245,
+    costScale: 1.92,
+    requires: { ants: 24, nestLevel: 2, upgrades: { soldierTraining: 1 } },
+  },
+  {
     id: "acidShooterBrood",
     branch: "defense",
     name: "酸射アリを育てる",

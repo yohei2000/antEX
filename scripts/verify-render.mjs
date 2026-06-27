@@ -230,9 +230,10 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           antCount: sim?.ants?.length ?? null,
           colonyAnts: sim?.colony?.antPopulation ?? null,
           deployedSoldiers: sim?.deployedSoldierCount?.() ?? null,
-          variantConfigCount: ["worker", "soldier", "heavySoldier", "acidShooter", "builder"].filter((variant) => Boolean(sim?.getAntVariantConfig?.(variant))).length,
+          variantConfigCount: ["worker", "soldier", "heavySoldier", "shieldHead", "acidShooter", "builder"].filter((variant) => Boolean(sim?.getAntVariantConfig?.(variant))).length,
           workerVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "worker").length ?? null,
           heavyVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "heavySoldier").length ?? null,
+          shieldVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "shieldHead").length ?? null,
           acidVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "acidShooter").length ?? null,
           builderVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "builder").length ?? null,
           earthworkCount: sim?.earthworks?.length ?? null,
@@ -296,9 +297,10 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.colonyAnts !== 12 ||
       metrics.antCount !== 11 ||
       metrics.deployedSoldiers !== 0 ||
-      metrics.variantConfigCount !== 5 ||
+      metrics.variantConfigCount !== 6 ||
       metrics.workerVariantCount !== 11 ||
       metrics.heavyVariantCount !== 0 ||
+      metrics.shieldVariantCount !== 0 ||
       metrics.acidVariantCount !== 0 ||
       metrics.builderVariantCount !== 0 ||
       metrics.earthworkCount !== 0 ||
@@ -362,6 +364,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           queenCare: 8,
           soldierTraining: 6,
           heavySoldierBrood: 4,
+          shieldHeadBrood: 4,
           acidShooterBrood: 4,
           nestGuard: 6,
           sentinelPosts: 4,
