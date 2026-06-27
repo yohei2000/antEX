@@ -625,16 +625,44 @@ test("construction tab issues earthwork commands separately from growth", async 
   await page.locator("#constructionBarricadeBtn").click();
   await page.locator("#constructionWallBtn").click();
 
+  const pendingWall = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.updateStats();
+    return {
+      pendingKind: sim.pendingConstructionKind,
+      taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
+      wallButtonText: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).textContent,
+      activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
+    };
+  });
+
+  expect(pendingWall.pendingKind).toBe("earthWall");
+  expect(pendingWall.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
+  expect(pendingWall.wallButtonText).toContain("位置指定中");
+  expect(pendingWall.activeToolLabel).toContain("位置指定中");
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.confirmConstructionPlacement({ x: sim.nest.x + 24, z: sim.nest.z - 12 });
+  });
+
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.updateStats();
+    const wallTask = sim.buildTasks.find((task: any) => task.kind === "earthWall");
+    const wallRadial = Math.atan2(wallTask.z - sim.nest.z, wallTask.x - sim.nest.x);
     return {
       activeTab: sim.activeTab,
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
       growthActive: document.querySelector("#growthTab")?.classList.contains("active") ?? false,
       constructionActive: document.querySelector("#constructionTab")?.classList.contains("active") ?? false,
+      pendingKind: sim.pendingConstructionKind,
       taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
       earthworkKinds: sim.earthworks.map((earthwork: any) => earthwork.kind).sort(),
+      wallTaskX: wallTask?.x,
+      wallTaskZ: wallTask?.z,
+      wallTaskRotation: wallTask?.rotation,
+      wallExpectedRotation: wallRadial + Math.PI / 2,
       builderCountText: (document.querySelector("#constructionBuilders") as HTMLElement).textContent,
       activeCountText: (document.querySelector("#constructionActive") as HTMLElement).textContent,
       statusText: (document.querySelector("#constructionStatus") as HTMLElement).textContent,
@@ -659,8 +687,12 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.tabText).toContain("土木");
   expect(result.growthActive).toBe(false);
   expect(result.constructionActive).toBe(true);
+  expect(result.pendingKind).toBeNull();
   expect(result.taskKinds).toEqual(["earthWall", "lowBarricade", "trailReinforce"]);
   expect(result.earthworkKinds).toEqual(["earthWall", "lowBarricade", "trailReinforce"]);
+  expect(result.wallTaskX).toBeGreaterThan(-30);
+  expect(result.wallTaskZ).toBeLessThan(8);
+  expect(Math.abs(result.wallTaskRotation - result.wallExpectedRotation)).toBeLessThan(0.001);
   expect(result.builderCountText).toBe("4");
   expect(result.activeCountText).toBe("3");
   expect(result.statusText).toContain("作業中");
@@ -676,7 +708,7 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.barricadeButtonText).toContain("工数3.6");
   expect(result.barricadeButtonText).toContain("敵減速");
   expect(result.wallButtonText).toContain("工数7.2");
-  expect(result.wallButtonText).toContain("踏ん張り");
+  expect(result.wallButtonText).toContain("壁上攻撃");
   expect(result.trailButtonTitle).toContain("距離・担当数で変動");
   expect(result.trailButtonTitle).toContain("工数 2.8");
   expect(result.trailButtonTitle).toContain("味方の移動");
@@ -684,7 +716,7 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.barricadeButtonTitle).toContain("重兵装");
   expect(result.wallButtonTitle).toContain("工数 7.2");
   expect(result.wallButtonTitle).toContain("長め");
-  expect(result.wallButtonTitle).toContain("大きく助ける");
+  expect(result.wallButtonTitle).toContain("敵の侵入");
   expect(result.taskAssigneeCounts.every((count: number) => count <= result.taskAssigneeLimit)).toBe(true);
   expect(result.taskAssigneeTotal).toBe(4);
   expect(result.taskAssigneeLimit).toBe(3);
@@ -874,6 +906,21 @@ test("heavy soldiers brace while builders complete earthworks and retreat", asyn
     const rivalSpeed = sim.rivalSpeedAt(barricadeTask.x, barricadeTask.z);
     const braceBonus = sim.braceBonusAt(barricadeTask.x, barricadeTask.z);
 
+    const wallTask = sim.createBuildTask("earthWall", sim.nest.x + 18, sim.nest.z - 8, { radius: 14, maxProgress: 1, rotation: Math.PI / 2 });
+    sim.progressBuildTask(wallTask, builder, 1);
+    sim.updateEarthworks();
+    const wall = sim.earthworks.find((item: any) => item.kind === "earthWall");
+    const wallTop = sim.earthWallWorldPoint(wall, 0, 0);
+    heavy.x = wallTop.x;
+    heavy.z = wallTop.z;
+    heavy.prevX = wallTop.x;
+    heavy.prevZ = wallTop.z;
+    heavy.braceIntent = 1;
+    const wallRivalSpeed = sim.rivalSpeedAt(wallTop.x, wallTop.z);
+    const wallBraceBonus = sim.braceBonusAt(wallTop.x, wallTop.z);
+    const wallAttackBonus = sim.wallAttackBonusAt(wallTop.x, wallTop.z);
+    const wallElevation = heavy.renderState(sim, 1).y;
+
     const retreatTask = sim.createBuildTask("trailReinforce", sim.nest.x + 22, sim.nest.z + 8, { radius: 13, maxProgress: 2 });
     retreatTask.claimedBy = builder.id;
     retreatTask.claimedByIds = [builder.id];
@@ -898,6 +945,10 @@ test("heavy soldiers brace while builders complete earthworks and retreat", asyn
       friendlySpeed,
       rivalSpeed,
       braceBonus,
+      wallRivalSpeed,
+      wallBraceBonus,
+      wallAttackBonus,
+      wallElevation,
       builderAction: builder.lastTacticalAction,
       builderCarryingAfterDanger: builder.carryingSoil,
       builderTaskAfterDanger: builder.buildTaskId,
@@ -918,6 +969,10 @@ test("heavy soldiers brace while builders complete earthworks and retreat", asyn
   expect(result.friendlySpeed).toBeGreaterThan(1);
   expect(result.rivalSpeed).toBeLessThan(1);
   expect(result.braceBonus).toBeGreaterThan(0);
+  expect(result.wallRivalSpeed).toBeLessThan(result.rivalSpeed);
+  expect(result.wallBraceBonus).toBeGreaterThan(result.braceBonus);
+  expect(result.wallAttackBonus).toBeGreaterThan(1);
+  expect(result.wallElevation).toBeGreaterThan(0.7);
   expect(result.builderAction).toBe("retreatBehindGuard");
   expect(result.builderCarryingAfterDanger).toBe(false);
   expect(result.builderTaskAfterDanger).toBeNull();

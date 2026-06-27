@@ -44,8 +44,10 @@ describe("construction registry", () => {
       timeHint: "長め",
       completedLimit: 2,
       requiresHeavySoldier: true,
-      enemySlowStrength: 0.28,
-      braceBonus: 0.42,
+      enemySlowStrength: 0.62,
+      braceBonus: 0.55,
+      wallAttackBonus: 1.15,
+      wallTopHeight: 0.58,
       startMessage: "大きな土壁を発注",
       completeMessage: "大きな土壁が完成",
     });
