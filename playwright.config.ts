@@ -17,6 +17,7 @@ const webServer =
 export default defineConfig({
   testDir: "tests/playwright",
   fullyParallel: true,
+  workers: process.env.CI ? undefined : 2,
   reporter: [["html", { open: "never" }], ["list"]],
   use: {
     baseURL: "http://127.0.0.1:4173/",

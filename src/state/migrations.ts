@@ -1,0 +1,93 @@
+import { RAID_INITIAL_DELAY_SECONDS, RAID_RIVAL_CAP, RAID_WARNING_SECONDS } from "../config/balance";
+import { UPGRADE_DEFS } from "../config/upgrades";
+import { clamp } from "../shared/math";
+import { COLONY_SAVE_VERSION, createDefaultColony, createDefaultRaidState } from "./colony";
+import type { ColonyState, RaidPhase, RaidState } from "./schema";
+
+const RAID_PHASES: RaidPhase[] = ["calm", "warning", "active", "retreating", "recovering"];
+
+export function normalizeRaidState(raw: unknown, options: { resetActiveOnLoad?: boolean } = {}): RaidState {
+  const base = createDefaultRaidState();
+  if (!raw || typeof raw !== "object") return base;
+  const source = raw as Partial<RaidState>;
+  const phase = RAID_PHASES.includes(source.phase as RaidPhase) ? source.phase as RaidPhase : base.phase;
+  const next: RaidState = {
+    ...base,
+    ...source,
+    phase,
+    timer: clamp(Number(source.timer) || 0, 0, 3600),
+    wave: Math.floor(clamp(Number(source.wave) || 0, 0, 999999)),
+    activeCount: Math.floor(clamp(Number(source.activeCount) || 0, 0, RAID_RIVAL_CAP)),
+    approachAngle: Number.isFinite(Number(source.approachAngle)) ? Number(source.approachAngle) : base.approachAngle,
+    signalTimer: clamp(Number(source.signalTimer) || 0, 0, 30),
+    breachTimer: clamp(Number(source.breachTimer) || 0, 0, 30),
+    casualties: Math.floor(clamp(Number(source.casualties) || 0, 0, 999999)),
+    enemyCasualties: Math.floor(clamp(Number(source.enemyCasualties) || 0, 0, 999999)),
+    startFallenAnts: Number.isFinite(Number(source.startFallenAnts))
+      ? Math.floor(clamp(Number(source.startFallenAnts), 0, 999999))
+      : null,
+    lastOutcome: typeof source.lastOutcome === "string" ? source.lastOutcome : base.lastOutcome,
+  };
+  if (options.resetActiveOnLoad && (next.phase === "active" || next.phase === "retreating")) {
+    next.phase = "warning";
+    next.timer = Math.max(6, Math.min(RAID_WARNING_SECONDS, next.timer || 10));
+    next.signalTimer = 0;
+  }
+  if (next.phase === "calm" && next.timer <= 0) next.timer = RAID_INITIAL_DELAY_SECONDS;
+  return next;
+}
+
+export function migrateColony(raw: unknown): ColonyState {
+  const base = createDefaultColony();
+  if (!raw || typeof raw !== "object") return base;
+  const source = raw as Partial<ColonyState>;
+  const next: ColonyState = {
+    ...base,
+    ...source,
+    version: COLONY_SAVE_VERSION,
+    upgrades: { ...base.upgrades, ...(source.upgrades ?? {}) },
+    raidState: normalizeRaidState(source.raidState, { resetActiveOnLoad: true }),
+    battleLog: Array.isArray(source.battleLog) ? source.battleLog.slice(0, 5) : base.battleLog,
+  };
+
+  if (!Number.isFinite(next.antPopulation) || next.antPopulation > 80) {
+    next.antPopulation = clamp(Number(next.antPopulation) || 12, 12, 32);
+  }
+  next.food = clamp(Number(next.food) || base.food, 0, 100000000);
+  next.lifetimeFood = Math.max(next.food, Number(next.lifetimeFood) || next.food);
+  next.antPopulation = Math.floor(clamp(Number(next.antPopulation) || 12, 12, 1000000));
+  next.soldierAnts = Math.floor(clamp(Number(next.soldierAnts) || 1, 0, next.antPopulation));
+  next.heavySoldierAnts = Math.floor(clamp(Number(next.heavySoldierAnts) || 0, 0, next.soldierAnts));
+  next.builderAnts = Math.floor(clamp(Number(next.builderAnts) || 0, 0, Math.max(0, next.antPopulation - next.soldierAnts)));
+  next.woundedAnts = Math.floor(clamp(Number(next.woundedAnts) || 0, 0, next.antPopulation));
+  next.nestLevel = Math.floor(clamp(Number(next.nestLevel) || 1, 1, 999));
+  next.territory = Math.floor(clamp(Number(next.territory) || 0, 0, 999999));
+  next.enemyThreat = clamp(Number(next.enemyThreat) || base.enemyThreat, 0, 999999);
+  next.fallenAnts = Math.floor(clamp(Number(next.fallenAnts) || 0, 0, 999999));
+  next.hatchProgress = clamp(Number(next.hatchProgress) || 0, 0, 0.999);
+  next.battleCooldownUntil = Number(next.battleCooldownUntil) || 0;
+  next.lastSavedAt = Number(next.lastSavedAt) || Date.now();
+  next.raidState = normalizeRaidState(next.raidState);
+  next.nextEarthworkId = Math.floor(clamp(Number(next.nextEarthworkId) || 1, 1, 100000000));
+  next.earthworks = Array.isArray(source.earthworks)
+    ? source.earthworks.slice(0, 12).map((earthwork) => ({
+        id: Math.floor(clamp(Number(earthwork?.id) || next.nextEarthworkId++, 1, 100000000)),
+        kind: earthwork?.kind === "lowBarricade" ? "lowBarricade" : "trailReinforce",
+        x: clamp(Number(earthwork?.x) || 0, -180, 180),
+        z: clamp(Number(earthwork?.z) || 0, -180, 180),
+        radius: clamp(Number(earthwork?.radius) || 12, 4, 24),
+        progress: clamp(Number(earthwork?.progress) || 0, 0, 100),
+        maxProgress: clamp(Number(earthwork?.maxProgress) || 1, 0.5, 100),
+        rotation: Number.isFinite(Number(earthwork?.rotation)) ? Number(earthwork.rotation) : 0,
+        owner: "colony",
+      }))
+    : [];
+  for (const earthwork of next.earthworks) {
+    earthwork.progress = clamp(earthwork.progress, 0, earthwork.maxProgress);
+    next.nextEarthworkId = Math.max(next.nextEarthworkId, earthwork.id + 1);
+  }
+  for (const upgrade of UPGRADE_DEFS) {
+    next.upgrades[upgrade.id] = Math.floor(clamp(Number(next.upgrades[upgrade.id]) || 0, 0, upgrade.max));
+  }
+  return next;
+}

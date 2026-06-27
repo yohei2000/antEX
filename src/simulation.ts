@@ -1,5 +1,56 @@
 // @ts-nocheck
 import * as THREE from "three";
+import {
+  CAMERA_DISTANCE_DESKTOP,
+  CAMERA_DISTANCE_MAX,
+  CAMERA_DISTANCE_MIN,
+  CAMERA_DISTANCE_MOBILE,
+  COLONY_CORPSE_CAP,
+  COMBAT_EFFECT_CAP,
+  COMBAT_EFFECT_LIFE,
+  CORPSE_LIFE_SECONDS,
+  DISPLAY_ANT_CAP,
+  FIXED_DT,
+  GUARD_INTERCEPT_RANGE,
+  MAX_FIXED_STEPS,
+  MAX_FRAME_DELTA,
+  MIN_COLONY_SURVIVORS,
+  OFFLINE_CAP_SECONDS,
+  RAID_ACTIVE_SECONDS,
+  RAID_BASE_INTERVAL_SECONDS,
+  RAID_EXIT_PADDING,
+  RAID_GRAPPLER_RECRUIT_RANGE,
+  RAID_HARASSMENT_RANGE,
+  RAID_NOTICE_SECONDS,
+  RAID_RECOVERY_SECONDS,
+  RAID_RETREAT_SECONDS,
+  RAID_RIVAL_CAP,
+  BUILD_TASK_ASSIGNEE_CAP,
+  BUILDERS_PER_TRAINING,
+  CONSTRUCTION_DETAILS,
+  FOOD_INCOME_MULTIPLIER,
+  NEST_HOLE_DIAMETER_SCALE,
+  NEST_STAY_SECONDS,
+  RAID_SOON_CALM_SECONDS,
+  RAID_SOON_WARNING_SECONDS,
+  RAID_WARNING_SECONDS,
+  RIVAL_CLASH_DURATION,
+  RIVAL_CONTACT_RADIUS,
+  RIVAL_CORPSE_CAP,
+  RIVAL_GRAPPLER_RECRUIT_RANGE,
+  RIVAL_HARASSMENT_RANGE,
+  SOLDIER_PATROL_RADIUS,
+  SOLDIER_SORTIE_COOLDOWN_SECONDS,
+  SOLDIER_SORTIE_SECONDS,
+  SOLDIER_SORTIE_SEEK_RANGE,
+} from "./config/balance";
+import { UPGRADE_BRANCHES, UPGRADE_DEFS, upgradeCost, upgradeLevel, upgradeName } from "./config/upgrades";
+import { ANT_VARIANTS, ANT_VARIANT_CONFIG, getAntVariantConfig, normalizeAntVariant } from "./config/variants";
+import { clamp } from "./shared/math";
+import { createDefaultColony } from "./state/colony";
+import { computeDerivedColony } from "./state/derived";
+import { normalizeRaidState } from "./state/migrations";
+import { SAVE_KEY, readColonyState, readStorage, serializeColonyState, writeStorage } from "./state/save";
 
 const ui = {
   world: document.querySelector("#world3d"),
@@ -49,63 +100,6 @@ const ui = {
   qualitySelect: document.querySelector("#qualitySelect"),
 };
 
-const FIXED_DT = 1 / 60;
-const MAX_FRAME_DELTA = 0.25;
-const MAX_FIXED_STEPS = 5;
-const SAVE_KEY = "ant3d.colonyState";
-const DISPLAY_ANT_CAP = 80;
-const RAID_RIVAL_CAP = 40;
-const RIVAL_CONTACT_RADIUS = 4.1;
-const RIVAL_CLASH_DURATION = 2.7;
-const COMBAT_EFFECT_CAP = 96;
-const COMBAT_EFFECT_LIFE = 0.78;
-const RIVAL_CORPSE_CAP = 28;
-const COLONY_CORPSE_CAP = 28;
-const CORPSE_LIFE_SECONDS = 10;
-const RAID_HARASSMENT_RANGE = 56;
-const RIVAL_HARASSMENT_RANGE = 22;
-const RAID_GRAPPLER_RECRUIT_RANGE = 11.6;
-const RIVAL_GRAPPLER_RECRUIT_RANGE = 9.4;
-const GUARD_INTERCEPT_RANGE = 62;
-const SOLDIER_SORTIE_SECONDS = 58;
-const SOLDIER_SORTIE_COOLDOWN_SECONDS = 14;
-const SOLDIER_PATROL_RADIUS = 18;
-const SOLDIER_SORTIE_SEEK_RANGE = 230;
-const RAID_INITIAL_DELAY_SECONDS = 78;
-const RAID_BASE_INTERVAL_SECONDS = 132;
-const RAID_WARNING_SECONDS = 18;
-const RAID_ACTIVE_SECONDS = 92;
-const RAID_RETREAT_SECONDS = 18;
-const RAID_EXIT_PADDING = 24;
-const RAID_RECOVERY_SECONDS = 26;
-const RAID_NOTICE_SECONDS = 6;
-const RAID_SOON_CALM_SECONDS = 2.5;
-const RAID_SOON_WARNING_SECONDS = 5.5;
-const MIN_COLONY_SURVIVORS = 4;
-const CAMERA_DISTANCE_MIN = 138;
-const CAMERA_DISTANCE_MAX = 340;
-const CAMERA_DISTANCE_MOBILE = 252;
-const CAMERA_DISTANCE_DESKTOP = 238;
-const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
-const FOOD_INCOME_MULTIPLIER = 3;
-const BUILD_TASK_ASSIGNEE_CAP = 3;
-const BUILDERS_PER_TRAINING = 2;
-const NEST_STAY_SECONDS = 10;
-const NEST_HOLE_DIAMETER_SCALE = 0.1;
-const CONSTRUCTION_DETAILS = {
-  trailReinforce: {
-    label: "採餌道",
-    command: "採餌道を整える",
-    timeNote: "完了時間は距離・担当数で変動",
-    effect: "味方の移動と採餌効率を少し上げる",
-  },
-  lowBarricade: {
-    label: "低い土塁",
-    command: "低い土塁を築く",
-    timeNote: "完了時間は距離・担当数で変動",
-    effect: "敵を少し鈍らせ、重兵装の踏ん張りを助ける",
-  },
-};
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
@@ -143,22 +137,6 @@ const QUALITY_PRESETS = {
   },
 };
 
-function readStorage(key) {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(key, value) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Non-critical user preference persistence can fail in private or locked-down contexts.
-  }
-}
-
 function chooseQualityPreset() {
   const queryQuality = DEBUG_QUERY.get("quality");
   const savedQuality = readStorage("ant3d.quality");
@@ -191,421 +169,11 @@ const STATE_LABELS = {
   build: "土木",
 };
 
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const rand = (min, max) => min + Math.random() * (max - min);
 const chance = (p) => Math.random() < p;
 const distance2 = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const normAngle = (angle) => Math.atan2(Math.sin(angle), Math.cos(angle));
 const fmt = (value, digits = 0) => Number(value).toLocaleString("ja-JP", { maximumFractionDigits: digits });
-
-const ANT_VARIANTS = ["worker", "soldier", "heavySoldier", "builder"];
-const ANT_VARIANT_CONFIG = {
-  worker: {
-    bodyScale: 1,
-    headScale: 1,
-    abdomenScale: 1,
-    speed: 1,
-    turnRate: 1,
-    hp: 1,
-    carapace: 1,
-    pushMass: 1,
-    brace: 1,
-    attack: 0.22,
-    contact: 0.18,
-    staminaRecovery: 1,
-    upkeep: 0,
-    forageEfficiency: 1,
-    buildPower: 0,
-    dangerResponse: 1,
-  },
-  soldier: {
-    bodyScale: 1.1,
-    headScale: 1.18,
-    abdomenScale: 0.94,
-    speed: 0.94,
-    turnRate: 0.94,
-    hp: 1.28,
-    carapace: 1.22,
-    pushMass: 1.24,
-    brace: 1.22,
-    attack: 0.58,
-    contact: 0.42,
-    staminaRecovery: 0.9,
-    upkeep: 0.0011,
-    forageEfficiency: 0.12,
-    buildPower: 0,
-    dangerResponse: 0.82,
-  },
-  heavySoldier: {
-    bodyScale: 1.34,
-    headScale: 1.42,
-    abdomenScale: 0.98,
-    speed: 0.68,
-    turnRate: 0.72,
-    hp: 1.95,
-    carapace: 1.8,
-    pushMass: 1.86,
-    brace: 2.08,
-    attack: 0.76,
-    contact: 0.68,
-    staminaRecovery: 0.58,
-    upkeep: 0.0028,
-    forageEfficiency: 0,
-    buildPower: 0,
-    dangerResponse: 0.48,
-  },
-  builder: {
-    bodyScale: 1.04,
-    headScale: 0.98,
-    abdomenScale: 1.12,
-    speed: 0.9,
-    turnRate: 1.04,
-    hp: 0.86,
-    carapace: 0.86,
-    pushMass: 0.82,
-    brace: 0.68,
-    attack: 0.12,
-    contact: 0.11,
-    staminaRecovery: 0.96,
-    upkeep: 0.0007,
-    forageEfficiency: 0.62,
-    buildPower: 1,
-    dangerResponse: 1.36,
-  },
-};
-
-function normalizeAntVariant(variant) {
-  return ANT_VARIANTS.includes(variant) ? variant : "worker";
-}
-
-function getAntVariantConfig(variant) {
-  return ANT_VARIANT_CONFIG[normalizeAntVariant(variant)];
-}
-
-const UPGRADE_BRANCHES = [
-  { id: "foraging", name: "採餌網" },
-  { id: "nursery", name: "育房" },
-  { id: "architecture", name: "巣構造" },
-  { id: "defense", name: "防衛" },
-];
-
-const UPGRADE_DEFS = [
-  {
-    id: "foragerTrails",
-    branch: "foraging",
-    name: "採餌道",
-    desc: "働き蟻が餌場へ戻る道を覚えやすくする",
-    effect: "採餌効率を大きく上げる",
-    max: 8,
-    baseCost: 40,
-    costScale: 1.72,
-    requires: {},
-  },
-  {
-    id: "trailPheromones",
-    branch: "foraging",
-    name: "匂い道の維持",
-    desc: "成功した採餌道の情報を長く使う",
-    effect: "採餌効率を少し上げる",
-    max: 4,
-    baseCost: 95,
-    costScale: 1.86,
-    requires: { ants: 16, upgrades: { foragerTrails: 2 } },
-  },
-  {
-    id: "storageChambers",
-    branch: "architecture",
-    name: "貯蔵室",
-    desc: "餌と働き蟻を受け入れる空間を広げる",
-    effect: "収容上限と採餌の安定性を上げる",
-    max: 8,
-    baseCost: 85,
-    costScale: 1.9,
-    requires: { ants: 18 },
-  },
-  {
-    id: "chamberExcavation",
-    branch: "architecture",
-    name: "坑道分岐",
-    desc: "巣内の通路を増やし、混雑を減らす",
-    effect: "収容上限と採餌効率を上げる",
-    max: 6,
-    baseCost: 75,
-    costScale: 1.75,
-    requires: { ants: 14 },
-  },
-  {
-    id: "builderTraining",
-    branch: "architecture",
-    name: "土木アリを育てる",
-    desc: "土粒を運ぶ作業アリを育て、採餌道と巣口を整える",
-    effect: "土木アリを2匹ずつ増やし、簡易土木効果を増やす",
-    max: 5,
-    baseCost: 150,
-    costScale: 1.75,
-    requires: { ants: 16, upgrades: { chamberExcavation: 1 } },
-  },
-  {
-    id: "ventilationShafts",
-    branch: "architecture",
-    name: "換気孔",
-    desc: "巣内の空気と湿度を安定させる",
-    effect: "収容上限、防御、脅威耐性を少し上げる",
-    max: 5,
-    baseCost: 140,
-    costScale: 1.88,
-    requires: { nestLevel: 2, upgrades: { chamberExcavation: 2 } },
-  },
-  {
-    id: "wasteGallery",
-    branch: "architecture",
-    name: "廃棄坑",
-    desc: "食べ残しや死骸を生活区から離す",
-    effect: "回復、防御、脅威耐性を上げる",
-    max: 4,
-    baseCost: 190,
-    costScale: 1.95,
-    requires: { nestLevel: 3, upgrades: { ventilationShafts: 2 } },
-  },
-  {
-    id: "broodNursery",
-    branch: "nursery",
-    name: "育児室",
-    desc: "卵と幼虫をまとめて世話しやすくする",
-    effect: "孵化速度と負傷回復を上げる",
-    max: 8,
-    baseCost: 65,
-    costScale: 1.82,
-    requires: { ants: 14 },
-  },
-  {
-    id: "broodClimate",
-    branch: "nursery",
-    name: "育房の保温",
-    desc: "幼虫と蛹を安定した場所へ移しやすくする",
-    effect: "孵化速度を上げる",
-    max: 5,
-    baseCost: 115,
-    costScale: 1.86,
-    requires: { nestLevel: 2, upgrades: { broodNursery: 2 } },
-  },
-  {
-    id: "foodDistribution",
-    branch: "nursery",
-    name: "食料分配",
-    desc: "働き蟻どうしの食料受け渡しを滑らかにする",
-    effect: "幼虫コストを下げ、採餌効率を少し上げる",
-    max: 5,
-    baseCost: 130,
-    costScale: 1.9,
-    requires: { upgrades: { storageChambers: 1, broodNursery: 1 } },
-  },
-  {
-    id: "queenCare",
-    branch: "nursery",
-    name: "女王の世話",
-    desc: "女王の周囲に世話役を集める",
-    effect: "孵化速度を大きく上げる",
-    max: 8,
-    baseCost: 120,
-    costScale: 2.05,
-    requires: { lifetimeFood: 160, upgrades: { broodNursery: 1 } },
-  },
-  {
-    id: "soldierTraining",
-    branch: "defense",
-    name: "兵隊訓練",
-    desc: "大きめの働き蟻を巣内兵隊として育てる",
-    effect: "兵隊比率と攻撃力を上げる",
-    max: 6,
-    baseCost: 180,
-    costScale: 2.1,
-    requires: { ants: 24, nestLevel: 2 },
-  },
-  {
-    id: "heavySoldierBrood",
-    branch: "defense",
-    name: "重兵装アリを育てる",
-    desc: "大きな頭部と厚い外骨格を持つ兵隊アリを育てる",
-    effect: "巣防衛と押し合いに強い兵隊を増やす",
-    max: 4,
-    baseCost: 260,
-    costScale: 1.95,
-    requires: { ants: 24, nestLevel: 2, upgrades: { soldierTraining: 1 } },
-  },
-  {
-    id: "nestGuard",
-    branch: "defense",
-    name: "巣の守り",
-    desc: "入口周辺を守る働き蟻を増やす",
-    effect: "防御力と負傷回復を上げる",
-    max: 6,
-    baseCost: 220,
-    costScale: 2.12,
-    requires: { territory: 2 },
-  },
-  {
-    id: "sentinelPosts",
-    branch: "defense",
-    name: "見張り口",
-    desc: "外敵に近い入口へ警戒役を置く",
-    effect: "防御力、攻撃力、脅威耐性を上げる",
-    max: 4,
-    baseCost: 260,
-    costScale: 2.0,
-    requires: { territory: 3, upgrades: { nestGuard: 2 } },
-  },
-];
-
-function createDefaultColony() {
-  return {
-    version: 6,
-    food: 36,
-    lifetimeFood: 36,
-    antPopulation: 12,
-    soldierAnts: 1,
-    heavySoldierAnts: 0,
-    builderAnts: 0,
-    woundedAnts: 0,
-    attackPower: 1,
-    defensePower: 1,
-    nestLevel: 1,
-    territory: 0,
-    enemyThreat: 6,
-    fallenAnts: 0,
-    hatchProgress: 0,
-    battleCooldownUntil: 0,
-    raidState: createDefaultRaidState(),
-    nextEarthworkId: 1,
-    earthworks: [],
-    unlockedEnemyColonies: ["near-food"],
-    upgrades: Object.fromEntries(UPGRADE_DEFS.map((upgrade) => [upgrade.id, 0])),
-    battleLog: ["小さな巣が地中で動き始めた"],
-    lastSavedAt: Date.now(),
-  };
-}
-
-function createDefaultRaidState() {
-  return {
-    phase: "calm",
-    timer: RAID_INITIAL_DELAY_SECONDS,
-    wave: 0,
-    activeCount: 0,
-    approachAngle: -0.25,
-    signalTimer: 0,
-    breachTimer: 0,
-    casualties: 0,
-    enemyCasualties: 0,
-    startFallenAnts: null,
-    lastOutcome: "none",
-  };
-}
-
-function normalizeRaidState(raw, options = {}) {
-  const base = createDefaultRaidState();
-  if (!raw || typeof raw !== "object") return base;
-  const phase = ["calm", "warning", "active", "retreating", "recovering"].includes(raw.phase) ? raw.phase : base.phase;
-  const next = {
-    ...base,
-    ...raw,
-    phase,
-    timer: clamp(Number(raw.timer) || 0, 0, 3600),
-    wave: Math.floor(clamp(Number(raw.wave) || 0, 0, 999999)),
-    activeCount: Math.floor(clamp(Number(raw.activeCount) || 0, 0, RAID_RIVAL_CAP)),
-    approachAngle: Number.isFinite(Number(raw.approachAngle)) ? Number(raw.approachAngle) : base.approachAngle,
-    signalTimer: clamp(Number(raw.signalTimer) || 0, 0, 30),
-    breachTimer: clamp(Number(raw.breachTimer) || 0, 0, 30),
-    casualties: Math.floor(clamp(Number(raw.casualties) || 0, 0, 999999)),
-    enemyCasualties: Math.floor(clamp(Number(raw.enemyCasualties) || 0, 0, 999999)),
-    startFallenAnts: Number.isFinite(Number(raw.startFallenAnts))
-      ? Math.floor(clamp(Number(raw.startFallenAnts), 0, 999999))
-      : null,
-    lastOutcome: typeof raw.lastOutcome === "string" ? raw.lastOutcome : base.lastOutcome,
-  };
-  if (options.resetActiveOnLoad && (next.phase === "active" || next.phase === "retreating")) {
-    next.phase = "warning";
-    next.timer = Math.max(6, Math.min(RAID_WARNING_SECONDS, next.timer || 10));
-    next.signalTimer = 0;
-  }
-  if (next.phase === "calm" && next.timer <= 0) next.timer = RAID_INITIAL_DELAY_SECONDS;
-  return next;
-}
-
-function migrateColony(raw) {
-  const base = createDefaultColony();
-  if (!raw || typeof raw !== "object") return base;
-  const next = {
-    ...base,
-    ...raw,
-    version: 6,
-    upgrades: { ...base.upgrades, ...(raw.upgrades ?? {}) },
-    raidState: normalizeRaidState(raw.raidState, { resetActiveOnLoad: true }),
-    battleLog: Array.isArray(raw.battleLog) ? raw.battleLog.slice(0, 5) : base.battleLog,
-  };
-
-  if (!Number.isFinite(next.antPopulation) || next.antPopulation > 80) {
-    next.antPopulation = clamp(Number(next.antPopulation) || 12, 12, 32);
-  }
-  next.food = clamp(Number(next.food) || base.food, 0, 100000000);
-  next.lifetimeFood = Math.max(next.food, Number(next.lifetimeFood) || next.food);
-  next.antPopulation = Math.floor(clamp(Number(next.antPopulation) || 12, 12, 1000000));
-  next.soldierAnts = Math.floor(clamp(Number(next.soldierAnts) || 1, 0, next.antPopulation));
-  next.heavySoldierAnts = Math.floor(clamp(Number(next.heavySoldierAnts) || 0, 0, next.soldierAnts));
-  next.builderAnts = Math.floor(clamp(Number(next.builderAnts) || 0, 0, Math.max(0, next.antPopulation - next.soldierAnts)));
-  next.woundedAnts = Math.floor(clamp(Number(next.woundedAnts) || 0, 0, next.antPopulation));
-  next.nestLevel = Math.floor(clamp(Number(next.nestLevel) || 1, 1, 999));
-  next.territory = Math.floor(clamp(Number(next.territory) || 0, 0, 999999));
-  next.enemyThreat = clamp(Number(next.enemyThreat) || base.enemyThreat, 0, 999999);
-  next.fallenAnts = Math.floor(clamp(Number(next.fallenAnts) || 0, 0, 999999));
-  next.hatchProgress = clamp(Number(next.hatchProgress) || 0, 0, 0.999);
-  next.battleCooldownUntil = Number(next.battleCooldownUntil) || 0;
-  next.lastSavedAt = Number(next.lastSavedAt) || Date.now();
-  next.raidState = normalizeRaidState(next.raidState);
-  next.nextEarthworkId = Math.floor(clamp(Number(next.nextEarthworkId) || 1, 1, 100000000));
-  next.earthworks = Array.isArray(raw.earthworks)
-    ? raw.earthworks.slice(0, 12).map((earthwork) => ({
-        id: Math.floor(clamp(Number(earthwork?.id) || next.nextEarthworkId++, 1, 100000000)),
-        kind: earthwork?.kind === "lowBarricade" ? "lowBarricade" : "trailReinforce",
-        x: clamp(Number(earthwork?.x) || 0, -180, 180),
-        z: clamp(Number(earthwork?.z) || 0, -180, 180),
-        radius: clamp(Number(earthwork?.radius) || 12, 4, 24),
-        progress: clamp(Number(earthwork?.progress) || 0, 0, 100),
-        maxProgress: clamp(Number(earthwork?.maxProgress) || 1, 0.5, 100),
-        rotation: Number.isFinite(Number(earthwork?.rotation)) ? Number(earthwork.rotation) : 0,
-        owner: "colony",
-      }))
-    : [];
-  for (const earthwork of next.earthworks) {
-    earthwork.progress = clamp(earthwork.progress, 0, earthwork.maxProgress);
-    next.nextEarthworkId = Math.max(next.nextEarthworkId, earthwork.id + 1);
-  }
-  for (const upgrade of UPGRADE_DEFS) {
-    next.upgrades[upgrade.id] = Math.floor(clamp(Number(next.upgrades[upgrade.id]) || 0, 0, upgrade.max));
-  }
-  return next;
-}
-
-function readColonyState() {
-  const raw = readStorage(SAVE_KEY);
-  if (!raw) return createDefaultColony();
-  try {
-    return migrateColony(JSON.parse(raw));
-  } catch {
-    return createDefaultColony();
-  }
-}
-
-function upgradeCost(upgrade, level) {
-  return Math.floor(upgrade.baseCost * Math.pow(upgrade.costScale, level));
-}
-
-function upgradeLevel(upgrades, id) {
-  return Math.max(0, Number(upgrades?.[id]) || 0);
-}
-
-function upgradeName(id) {
-  return UPGRADE_DEFS.find((upgrade) => upgrade.id === id)?.name ?? id;
-}
 
 // Food trails model short-lived recruitment signals: successful returners reinforce them,
 // and depleted sources stop reinforcement so the trail quickly evaporates.
@@ -3760,92 +3328,15 @@ class AntColony3D {
   }
 
   computeDerived() {
-    const upgrades = this.colony.upgrades;
-    const foragerTrails = upgradeLevel(upgrades, "foragerTrails");
-    const trailPheromones = upgradeLevel(upgrades, "trailPheromones");
-    const storageChambers = upgradeLevel(upgrades, "storageChambers");
-    const chamberExcavation = upgradeLevel(upgrades, "chamberExcavation");
-    const ventilationShafts = upgradeLevel(upgrades, "ventilationShafts");
-    const wasteGallery = upgradeLevel(upgrades, "wasteGallery");
-    const broodNursery = upgradeLevel(upgrades, "broodNursery");
-    const broodClimate = upgradeLevel(upgrades, "broodClimate");
-    const foodDistribution = upgradeLevel(upgrades, "foodDistribution");
-    const queenCare = upgradeLevel(upgrades, "queenCare");
-    const soldierTraining = upgradeLevel(upgrades, "soldierTraining");
-    const heavySoldierBrood = upgradeLevel(upgrades, "heavySoldierBrood");
-    const builderTraining = upgradeLevel(upgrades, "builderTraining");
-    const nestGuard = upgradeLevel(upgrades, "nestGuard");
-    const sentinelPosts = upgradeLevel(upgrades, "sentinelPosts");
-
-    const capacity = Math.floor(
-      18 +
-      this.colony.nestLevel * 10 +
-      storageChambers * 12 +
-      chamberExcavation * 10 +
-      ventilationShafts * 4 +
-      this.colony.territory * 3,
-    );
-    const activeAnts = Math.max(0, this.colony.antPopulation - this.colony.woundedAnts);
-    const soldierTarget = Math.floor(this.colony.antPopulation * (0.08 + soldierTraining * 0.023 + sentinelPosts * 0.004));
-    this.colony.soldierAnts = Math.floor(clamp(this.colony.soldierAnts, 0, activeAnts));
-    const heavyTarget = Math.min(this.colony.soldierAnts, heavySoldierBrood);
-    this.colony.heavySoldierAnts = Math.floor(clamp(this.colony.heavySoldierAnts, 0, heavyTarget));
-    const availableWorkers = Math.max(0, activeAnts - this.colony.soldierAnts);
-    const builderTarget = Math.min(availableWorkers, builderTraining * BUILDERS_PER_TRAINING);
-    this.colony.builderAnts = Math.floor(clamp(this.colony.builderAnts, 0, builderTarget));
-    const heavySoldiers = this.colony.heavySoldierAnts;
-    const normalSoldiers = Math.max(0, this.colony.soldierAnts - heavySoldiers);
-    const builders = this.colony.builderAnts;
-    const workers = Math.max(0, availableWorkers - builders);
-    const foragingBonus = 1 + foragerTrails * 0.24 + trailPheromones * 0.07 + foodDistribution * 0.025;
-    const trafficBonus = 1 + chamberExcavation * 0.035 + ventilationShafts * 0.018;
-    const baseFoodRate =
-      (workers * getAntVariantConfig("worker").forageEfficiency + builders * getAntVariantConfig("builder").forageEfficiency) *
-        0.034 *
-        foragingBonus *
-        trafficBonus *
-        (1 + this.earthworkProductionBonus()) +
-      this.colony.territory * 0.075 +
-      this.colony.nestLevel * 0.025 +
-      storageChambers * 0.012;
-    const foodRate = baseFoodRate * FOOD_INCOME_MULTIPLIER;
-    const distributionDiscount = clamp(1 - foodDistribution * 0.025 - storageChambers * 0.008, 0.78, 1);
-    const antCost = (5.5 + this.colony.nestLevel * 1.3 + this.colony.antPopulation * 0.035) * distributionDiscount;
-    const growthPerSecond =
-      (0.017 + queenCare * 0.0058 + broodNursery * 0.0038 + broodClimate * 0.003 + foodDistribution * 0.0012) *
-      clamp(this.colony.food / Math.max(antCost * 2, 1), 0.18, 1) *
-      (1 + ventilationShafts * 0.008);
-    const recoveryPerSecond = 0.006 + broodNursery * 0.0025 + nestGuard * 0.0032 + wasteGallery * 0.0026 + broodClimate * 0.0008;
-    const attackPower = 1 + soldierTraining * 0.15 + sentinelPosts * 0.03 + normalSoldiers * 0.002 + heavySoldiers * 0.01;
-    const defensePower = 1 + nestGuard * 0.18 + sentinelPosts * 0.1 + ventilationShafts * 0.02 + wasteGallery * 0.03 + heavySoldiers * 0.035;
-    const threatGrowthMultiplier = clamp(1 - wasteGallery * 0.055 - sentinelPosts * 0.03 - ventilationShafts * 0.015, 0.55, 1);
-    const foragedFoodMultiplier = (1 + foodDistribution * 0.025 + storageChambers * 0.01) * FOOD_INCOME_MULTIPLIER;
-    const upkeepPerSecond =
-      normalSoldiers * getAntVariantConfig("soldier").upkeep +
-      heavySoldiers * getAntVariantConfig("heavySoldier").upkeep +
-      builders * getAntVariantConfig("builder").upkeep;
-    this.colony.attackPower = attackPower;
-    this.colony.defensePower = defensePower;
-    this.derived = {
-      capacity,
-      activeAnts,
-      soldierTarget,
-      heavyTarget,
-      builderTarget,
-      normalSoldiers,
-      heavySoldiers,
-      builders,
-      workers,
-      foodRate,
-      antCost,
-      growthPerSecond,
-      recoveryPerSecond,
-      attackPower,
-      defensePower,
-      threatGrowthMultiplier,
-      foragedFoodMultiplier,
-      upkeepPerSecond,
-    };
+    const derived = computeDerivedColony(this.colony, {
+      earthworkProductionBonus: this.earthworkProductionBonus(),
+    });
+    this.colony.soldierAnts = derived.soldierAnts;
+    this.colony.heavySoldierAnts = derived.heavySoldiers;
+    this.colony.builderAnts = derived.builders;
+    this.colony.attackPower = derived.attackPower;
+    this.colony.defensePower = derived.defensePower;
+    this.derived = derived;
     return this.derived;
   }
 
@@ -4064,7 +3555,7 @@ class AntColony3D {
     if (!this.colony || this.raidSoonMode) return;
     this.syncEarthworksToColony();
     this.colony.lastSavedAt = Date.now();
-    writeStorage(SAVE_KEY, JSON.stringify(this.colony));
+    writeStorage(SAVE_KEY, serializeColonyState(this.colony));
   }
 
   applyOfflineProgress(now) {

@@ -1,0 +1,57 @@
+export const FIXED_DT = 1 / 60;
+export const MAX_FRAME_DELTA = 0.25;
+export const MAX_FIXED_STEPS = 5;
+export const DISPLAY_ANT_CAP = 80;
+export const RAID_RIVAL_CAP = 40;
+export const RIVAL_CONTACT_RADIUS = 4.1;
+export const RIVAL_CLASH_DURATION = 2.7;
+export const COMBAT_EFFECT_CAP = 96;
+export const COMBAT_EFFECT_LIFE = 0.78;
+export const RIVAL_CORPSE_CAP = 28;
+export const COLONY_CORPSE_CAP = 28;
+export const CORPSE_LIFE_SECONDS = 10;
+export const RAID_HARASSMENT_RANGE = 56;
+export const RIVAL_HARASSMENT_RANGE = 22;
+export const RAID_GRAPPLER_RECRUIT_RANGE = 11.6;
+export const RIVAL_GRAPPLER_RECRUIT_RANGE = 9.4;
+export const GUARD_INTERCEPT_RANGE = 62;
+export const SOLDIER_SORTIE_SECONDS = 58;
+export const SOLDIER_SORTIE_COOLDOWN_SECONDS = 14;
+export const SOLDIER_PATROL_RADIUS = 18;
+export const SOLDIER_SORTIE_SEEK_RANGE = 230;
+export const RAID_INITIAL_DELAY_SECONDS = 78;
+export const RAID_BASE_INTERVAL_SECONDS = 132;
+export const RAID_WARNING_SECONDS = 18;
+export const RAID_ACTIVE_SECONDS = 92;
+export const RAID_RETREAT_SECONDS = 18;
+export const RAID_EXIT_PADDING = 24;
+export const RAID_RECOVERY_SECONDS = 26;
+export const RAID_NOTICE_SECONDS = 6;
+export const RAID_SOON_CALM_SECONDS = 2.5;
+export const RAID_SOON_WARNING_SECONDS = 5.5;
+export const MIN_COLONY_SURVIVORS = 4;
+export const CAMERA_DISTANCE_MIN = 138;
+export const CAMERA_DISTANCE_MAX = 340;
+export const CAMERA_DISTANCE_MOBILE = 252;
+export const CAMERA_DISTANCE_DESKTOP = 238;
+export const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
+export const FOOD_INCOME_MULTIPLIER = 3;
+export const BUILD_TASK_ASSIGNEE_CAP = 3;
+export const BUILDERS_PER_TRAINING = 2;
+export const NEST_STAY_SECONDS = 10;
+export const NEST_HOLE_DIAMETER_SCALE = 0.1;
+
+export const CONSTRUCTION_DETAILS = {
+  trailReinforce: {
+    label: "採餌道",
+    command: "採餌道を整える",
+    timeNote: "完了時間は距離・担当数で変動",
+    effect: "味方の移動と採餌効率を少し上げる",
+  },
+  lowBarricade: {
+    label: "低い土塁",
+    command: "低い土塁を築く",
+    timeNote: "完了時間は距離・担当数で変動",
+    effect: "敵を少し鈍らせ、重兵装の踏ん張りを助ける",
+  },
+};
