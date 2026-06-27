@@ -1,4 +1,5 @@
 import { RAID_INITIAL_DELAY_SECONDS, RAID_RIVAL_CAP, RAID_WARNING_SECONDS } from "../config/balance";
+import { normalizeConstructionKind } from "../config/construction";
 import { UPGRADE_DEFS } from "../config/upgrades";
 import { clamp } from "../shared/math";
 import { COLONY_SAVE_VERSION, createDefaultColony, createDefaultRaidState } from "./colony";
@@ -72,7 +73,7 @@ export function migrateColony(raw: unknown): ColonyState {
   next.earthworks = Array.isArray(source.earthworks)
     ? source.earthworks.slice(0, 12).map((earthwork) => ({
         id: Math.floor(clamp(Number(earthwork?.id) || next.nextEarthworkId++, 1, 100000000)),
-        kind: earthwork?.kind === "lowBarricade" ? "lowBarricade" : "trailReinforce",
+        kind: normalizeConstructionKind(earthwork?.kind),
         x: clamp(Number(earthwork?.x) || 0, -180, 180),
         z: clamp(Number(earthwork?.z) || 0, -180, 180),
         radius: clamp(Number(earthwork?.radius) || 12, 4, 24),

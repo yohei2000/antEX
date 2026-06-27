@@ -1,3 +1,5 @@
+import type { ConstructionKind } from "../config/construction";
+
 export type RaidPhase = "calm" | "warning" | "active" | "retreating" | "recovering";
 
 export interface RaidState {
@@ -14,7 +16,7 @@ export interface RaidState {
   lastOutcome: string;
 }
 
-export type EarthworkKind = "trailReinforce" | "lowBarricade";
+export type EarthworkKind = ConstructionKind;
 
 export interface EarthworkState {
   id: number;

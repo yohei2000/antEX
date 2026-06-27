@@ -27,7 +27,6 @@ import {
   RAID_RIVAL_CAP,
   BUILD_TASK_ASSIGNEE_CAP,
   BUILDERS_PER_TRAINING,
-  CONSTRUCTION_DETAILS,
   FOOD_INCOME_MULTIPLIER,
   NEST_HOLE_DIAMETER_SCALE,
   NEST_STAY_SECONDS,
@@ -44,6 +43,7 @@ import {
   SOLDIER_SORTIE_SECONDS,
   SOLDIER_SORTIE_SEEK_RANGE,
 } from "./config/balance";
+import { getConstructionDef, isConstructionKind, normalizeConstructionKind } from "./config/construction";
 import { UPGRADE_BRANCHES, UPGRADE_DEFS, upgradeCost, upgradeLevel, upgradeName } from "./config/upgrades";
 import { ANT_VARIANTS, ANT_VARIANT_CONFIG, getAntVariantConfig, normalizeAntVariant } from "./config/variants";
 import { clamp } from "./shared/math";
@@ -2748,20 +2748,22 @@ class AntColony3D {
   }
 
   canStartConstruction(kind) {
+    if (!isConstructionKind(kind)) return { ok: false, reason: "不明な土木工事" };
+    const def = getConstructionDef(kind);
     const d = this.computeDerived();
     if ((d.builders ?? 0) <= 0) return { ok: false, reason: "土木アリがいない" };
     if (this.buildTasks.some((task) => task.kind === kind && task.progress < task.maxProgress)) {
       return { ok: false, reason: "同じ作業が進行中" };
     }
     const completedSameKind = this.earthworks.filter((earthwork) => earthwork.kind === kind && earthwork.strength > 0.82).length;
-    const limit = kind === "lowBarricade" ? 3 : 4;
-    if (completedSameKind >= limit) return { ok: false, reason: "作れる場所が埋まっている" };
-    if (kind === "lowBarricade" && (d.heavySoldiers ?? 0) <= 0) return { ok: false, reason: "重兵装アリがいない" };
+    if (completedSameKind >= def.completedLimit) return { ok: false, reason: "作れる場所が埋まっている" };
+    if (def.requiresHeavySoldier && (d.heavySoldiers ?? 0) <= 0) return { ok: false, reason: "重兵装アリがいない" };
     if (this.availableBuilderSlotsForNewConstruction() <= 0) return { ok: false, reason: "待機中の土木アリがいない" };
     return { ok: true, reason: "" };
   }
 
   startConstruction(kind) {
+    const def = getConstructionDef(kind);
     const checked = this.canStartConstruction(kind);
     if (!checked.ok) {
       this.constructionMessage = checked.reason;
@@ -2770,8 +2772,8 @@ class AntColony3D {
     }
     const target = this.constructionTarget(kind);
     const task = this.createBuildTask(kind, target.x, target.z, target);
-    this.constructionMessage = kind === "lowBarricade" ? "低い土塁を発注" : "採餌道整備を発注";
-    this.pushLog(kind === "lowBarricade" ? "土木指示: 低い土塁を築く" : "土木指示: 採餌道を整える");
+    this.constructionMessage = def.startMessage;
+    this.pushLog(def.startLog);
     this.syncEarthworksToColony();
     this.updateStats();
     this.saveColony();
@@ -2780,12 +2782,14 @@ class AntColony3D {
 
   constructionTarget(kind) {
     if (kind === "trailReinforce") {
+      const def = getConstructionDef(kind);
       const foodTrail = this.findStrongestTrail("food", this.nest.x, this.nest.z, 96);
       const x = foodTrail ? foodTrail.x : this.nest.x + this.nest.radius + 17;
       const z = foodTrail ? foodTrail.z : this.nest.z + 7;
       const angle = Math.atan2(z - this.nest.z, x - this.nest.x);
-      return { x, z, radius: 13, maxProgress: 2.8, rotation: angle };
+      return { x, z, radius: def.targetRadius, maxProgress: def.defaultMaxProgress, rotation: angle };
     }
+    const def = getConstructionDef(kind);
     const raid = this.ensureRaidState();
     let point;
     if (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating") {
@@ -2798,18 +2802,20 @@ class AntColony3D {
     return {
       x: this.nest.x + Math.cos(angle) * (this.nest.radius + 9.5),
       z: this.nest.z + Math.sin(angle) * (this.nest.radius + 9.5),
-      radius: 10,
-      maxProgress: 3.6,
+      radius: def.targetRadius,
+      maxProgress: def.defaultMaxProgress,
       rotation: angle,
     };
   }
 
   createBuildTask(kind, x, z, options = {}) {
+    const constructionKind = normalizeConstructionKind(kind);
+    const def = getConstructionDef(constructionKind);
     const id = this.colony.nextEarthworkId ?? 1;
     this.colony.nextEarthworkId = id + 1;
-    const radius = options.radius ?? (kind === "lowBarricade" ? 10 : 12);
-    const maxProgress = options.maxProgress ?? (kind === "lowBarricade" ? 3.6 : 2.8);
-    const earthwork = this.addEarthwork({ id, kind, x, z, radius, progress: 0, maxProgress, owner: "colony", rotation: options.rotation ?? 0 });
+    const radius = options.radius ?? def.defaultRadius;
+    const maxProgress = options.maxProgress ?? def.defaultMaxProgress;
+    const earthwork = this.addEarthwork({ id, kind: constructionKind, x, z, radius, progress: 0, maxProgress, owner: "colony", rotation: options.rotation ?? 0 });
     const task = {
       id: earthwork.id,
       kind: earthwork.kind,
@@ -3001,6 +3007,7 @@ class AntColony3D {
       earthwork.strength = clamp(task.progress / task.maxProgress, 0, 1);
     }
     if (task.progress >= task.maxProgress) {
+      const def = getConstructionDef(task.kind);
       task.claimedByIds = [];
       task.claimedBy = null;
       for (const builder of this.ants) {
@@ -3009,8 +3016,8 @@ class AntColony3D {
           builder.carryingSoil = false;
         }
       }
-      this.constructionMessage = task.kind === "lowBarricade" ? "低い土塁が完成" : "採餌道整備が完成";
-      this.pushLog(task.kind === "lowBarricade" ? "土木アリが低い土塁を固めた" : "土木アリが採餌道を整えた");
+      this.constructionMessage = def.completeMessage;
+      this.pushLog(def.completeLog);
     }
     this.syncEarthworksToColony();
   }
@@ -4979,12 +4986,12 @@ class AntColony3D {
   }
 
   constructionLabel(kind) {
-    return CONSTRUCTION_DETAILS[kind]?.label ?? "土木";
+    return isConstructionKind(kind) ? getConstructionDef(kind).label : "土木";
   }
 
   constructionButtonTitle(kind, commandState) {
-    const detail = CONSTRUCTION_DETAILS[kind];
-    if (!detail) return commandState?.reason ?? "";
+    if (!isConstructionKind(kind)) return commandState?.reason ?? "";
+    const detail = getConstructionDef(kind);
     return `${detail.command}: ${detail.timeNote} / 採土・往復あり / ${detail.effect}${commandState?.reason ? ` / ${commandState.reason}` : ""}`;
   }
 

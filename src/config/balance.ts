@@ -40,18 +40,3 @@ export const BUILD_TASK_ASSIGNEE_CAP = 3;
 export const BUILDERS_PER_TRAINING = 2;
 export const NEST_STAY_SECONDS = 10;
 export const NEST_HOLE_DIAMETER_SCALE = 0.1;
-
-export const CONSTRUCTION_DETAILS = {
-  trailReinforce: {
-    label: "採餌道",
-    command: "採餌道を整える",
-    timeNote: "完了時間は距離・担当数で変動",
-    effect: "味方の移動と採餌効率を少し上げる",
-  },
-  lowBarricade: {
-    label: "低い土塁",
-    command: "低い土塁を築く",
-    timeNote: "完了時間は距離・担当数で変動",
-    effect: "敵を少し鈍らせ、重兵装の踏ん張りを助ける",
-  },
-};
