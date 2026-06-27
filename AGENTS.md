@@ -38,6 +38,14 @@
 - docs/decision-log.mdへの追記。
 - 今後のCodex引き継ぎに必要なルール、検証手順、運用上の注意が増えた場合のAGENTS.md更新。
 
+## Architecture notes
+- `src/simulation.ts` はまだ通常ゲームの compatibility entrypoint / orchestration 層。新しい定義や拡張点を無条件にここへ増やさず、既存 registry/state 境界を優先する。
+- アリ種別の追加・調整は `src/config/variants.ts` を起点にする。既存アリの `id`, `position`, `heading`, `gaitPhase`, `renderIndex` の連続性を壊さない。
+- 土木工事の種類追加・調整は `src/config/construction.ts` の `CONSTRUCTION_KINDS` / `CONSTRUCTION_DEFS` を起点にする。`src/config/balance.ts` に土木カタログを戻さない。
+- `EarthworkKind` は `ConstructionKind` に追従する。土木種別を追加する場合は、`src/state/migrations.ts` の正規化、保存互換、unit test、`npm run eval:save` を必ず確認する。
+- colony state、derived計算、save/migration は `src/state/*` を優先して扱う。セーブキー `ant3d.colonyState` は不用意に変えない。
+- `src/expedition/` は旧遠征/検証由来。通常アプリへ遠征モードを戻す根拠にしない。
+
 ## Forbidden changes
 - ゲーム仕様の暗黙変更。
 - UI文言の大幅変更。
