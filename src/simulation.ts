@@ -96,13 +96,13 @@ const CONSTRUCTION_DETAILS = {
   trailReinforce: {
     label: "採餌道",
     command: "採餌道を整える",
-    duration: "1匹で約3秒+移動",
+    timeNote: "完了時間は距離・担当数で変動",
     effect: "味方の移動と採餌効率を少し上げる",
   },
   lowBarricade: {
     label: "低い土塁",
     command: "低い土塁を築く",
-    duration: "1匹で約4秒+移動",
+    timeNote: "完了時間は距離・担当数で変動",
     effect: "敵を少し鈍らせ、重兵装の踏ん張りを助ける",
   },
 };
@@ -5503,7 +5503,7 @@ class AntColony3D {
   constructionButtonTitle(kind, commandState) {
     const detail = CONSTRUCTION_DETAILS[kind];
     if (!detail) return commandState?.reason ?? "";
-    return `${detail.command}: ${detail.duration} / ${detail.effect}${commandState?.reason ? ` / ${commandState.reason}` : ""}`;
+    return `${detail.command}: ${detail.timeNote} / 採土・往復あり / ${detail.effect}${commandState?.reason ? ` / ${commandState.reason}` : ""}`;
   }
 
   constructionAssignees(task) {

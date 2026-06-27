@@ -665,11 +665,13 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.crewText).toContain("待機");
   expect(result.progressText).toContain("採餌道");
   expect(result.progressText).toContain("低い土塁");
-  expect(result.trailButtonText).toContain("約3秒");
+  expect(result.trailButtonText).toContain("採土・往復あり");
   expect(result.trailButtonText).toContain("採餌効率");
-  expect(result.barricadeButtonText).toContain("約4秒");
+  expect(result.barricadeButtonText).toContain("採土・往復あり");
   expect(result.barricadeButtonText).toContain("敵減速");
+  expect(result.trailButtonTitle).toContain("距離・担当数で変動");
   expect(result.trailButtonTitle).toContain("味方の移動");
+  expect(result.barricadeButtonTitle).toContain("距離・担当数で変動");
   expect(result.barricadeButtonTitle).toContain("重兵装");
   expect(result.taskAssigneeCounts.every((count: number) => count <= result.taskAssigneeLimit)).toBe(true);
   expect(result.taskAssigneeTotal).toBe(2);
