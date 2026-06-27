@@ -2740,8 +2740,8 @@ class AntColony3D {
       combatDust: new THREE.MeshBasicMaterial({ color: 0xb88a55, transparent: true, opacity: 0.32, depthWrite: false }),
       combatFlash: new THREE.MeshBasicMaterial({ color: 0xffa15c, transparent: true, opacity: 0.5, depthWrite: false }),
       combatRing: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.34, depthWrite: false }),
-      acidSpray: new THREE.MeshBasicMaterial({ color: 0x9fd35a, transparent: true, opacity: 0.5, depthWrite: false }),
-      acidSplash: new THREE.MeshBasicMaterial({ color: 0xb9f36d, transparent: true, opacity: 0.38, depthWrite: false }),
+      acidSpray: new THREE.MeshBasicMaterial({ color: 0xff5a47, transparent: true, opacity: 0.72, depthWrite: false }),
+      acidSplash: new THREE.MeshBasicMaterial({ color: 0xff2f5d, transparent: true, opacity: 0.5, depthWrite: false }),
       trailFood: new THREE.MeshBasicMaterial({ color: 0xd9a63f, transparent: true, opacity: 0.2, depthWrite: false }),
       trailAlarm: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.24, depthWrite: false }),
       corpseMark: new THREE.MeshBasicMaterial({ color: 0x5b271f, transparent: true, opacity: 0.34, depthWrite: false }),
@@ -5259,7 +5259,7 @@ class AntColony3D {
     const direction = new THREE.Vector3(dx, length * 0.035, dz).normalize();
     beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
     beam.position.set(dx * 0.5, 0.56, dz * 0.5);
-    beam.scale.set(0.035 + strength * 0.018, length, 0.035 + strength * 0.018);
+    beam.scale.set(0.055 + strength * 0.026, length, 0.055 + strength * 0.026);
     group.add(beam);
 
     const splashMaterial = this.materials.acidSplash.clone();
@@ -5269,12 +5269,27 @@ class AntColony3D {
     splash.scale.setScalar(0.55 + strength * 0.65);
     group.add(splash);
 
+    const droplets = [];
+    const dropletCount = Math.floor(clamp(4 + strength * 5, 4, 9) * quality);
+    const pathAngle = Math.atan2(dx, dz);
+    const sideX = Math.cos(pathAngle);
+    const sideZ = -Math.sin(pathAngle);
+    for (let i = 0; i < dropletCount; i += 1) {
+      const t = (i + 0.5) / Math.max(1, dropletCount);
+      const wobble = rand(-0.18, 0.18) * (1 + strength * 0.35);
+      const droplet = new THREE.Mesh(this.geometries.combatDust, sprayMaterial);
+      const baseScale = rand(0.065, 0.12) * (1 + strength * 0.35) * (1 - t * 0.22);
+      droplet.position.set(dx * t + sideX * wobble, 0.42 + Math.sin(t * Math.PI) * (0.22 + strength * 0.12), dz * t + sideZ * wobble);
+      droplet.scale.setScalar(baseScale);
+      group.add(droplet);
+      droplets.push({ mesh: droplet, baseScale, phase: rand(0, Math.PI * 2), sideX, sideZ });
+    }
+
     const puffs = [];
     const puffCount = Math.floor(clamp(2 + strength * 3, 2, 5) * quality);
-    const angle = Math.atan2(dx, dz);
     for (let i = 0; i < puffCount; i += 1) {
       const puff = new THREE.Mesh(this.geometries.combatDust, splashMaterial);
-      const spread = angle + rand(-0.7, 0.7);
+      const spread = pathAngle + rand(-0.7, 0.7);
       const baseScale = rand(0.1, 0.18) * (1 + strength * 0.28);
       puff.position.set(dx + Math.sin(spread) * rand(0.08, 0.35), 0.18 + rand(0, 0.12), dz + Math.cos(spread) * rand(0.08, 0.35));
       puff.scale.setScalar(baseScale);
@@ -5295,6 +5310,7 @@ class AntColony3D {
       splash,
       sprayMaterial,
       splashMaterial,
+      droplets,
       puffs,
     });
     while (this.combatEffects.length > COMBAT_EFFECT_CAP) {
@@ -5310,10 +5326,18 @@ class AntColony3D {
       const fade = Math.pow(1 - t, 1.35);
       if (effect.type === "acid") {
         effect.group.position.y = Math.sin(t * Math.PI) * 0.05;
-        effect.sprayMaterial.opacity = 0.52 * effect.strength * Math.max(0, 1 - t * 2.3);
-        effect.splashMaterial.opacity = 0.42 * effect.strength * fade;
+        effect.sprayMaterial.opacity = 0.74 * effect.strength * Math.max(0, 1 - t * 1.85);
+        effect.splashMaterial.opacity = 0.52 * effect.strength * fade;
         effect.splash.scale.setScalar(effect.radius * (0.62 + t * 1.25));
-        effect.beam.visible = t < 0.5;
+        effect.beam.visible = t < 0.62;
+        for (const droplet of effect.droplets ?? []) {
+          const pulse = 1 + Math.sin(t * 18 + droplet.phase) * 0.18;
+          droplet.mesh.position.x += droplet.sideX * Math.sin(t * Math.PI) * 0.34 * dt;
+          droplet.mesh.position.z += droplet.sideZ * Math.sin(t * Math.PI) * 0.34 * dt;
+          droplet.mesh.position.y += 0.08 * Math.cos(t * Math.PI * 1.2 + droplet.phase) * dt;
+          droplet.mesh.scale.setScalar(droplet.baseScale * pulse * (1 + t * 0.7));
+          droplet.mesh.visible = t < 0.82;
+        }
         for (const puff of effect.puffs) {
           const outward = puff.speed * t;
           puff.mesh.position.x += Math.sin(puff.angle) * outward * dt;

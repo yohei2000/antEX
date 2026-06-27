@@ -688,6 +688,7 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
     acid.update(1 / 60, sim);
     const firstRenderState = acid.renderState(sim, 1);
     const stoppedDistanceAfterSpray = Math.hypot(acid.x - before.x, acid.z - before.z);
+    const firstAcidEffect = sim.combatEffects.find((effect: any) => effect.type === "acid");
     let acidEffectCountAfterFirstSpray = sim.combatEffects.filter((effect: any) => effect.type === "acid").length;
     let clashStarted = false;
     for (let i = 0; i < 120; i += 1) {
@@ -716,6 +717,10 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
       debuffedPower,
       normalPower,
       acidPose: firstRenderState.acidPose,
+      acidSprayColor: firstAcidEffect?.sprayMaterial?.color?.getHexString?.() ?? "",
+      acidSplashColor: firstAcidEffect?.splashMaterial?.color?.getHexString?.() ?? "",
+      acidDropletCount: firstAcidEffect?.droplets?.length ?? 0,
+      acidBeamRadius: firstAcidEffect?.beam?.scale?.x ?? 0,
       effectCount: sim.combatEffects.filter((effect: any) => effect.type === "acid").length,
       repeatedEffectCount: acidEffectCountAfterFirstSpray,
       clashStarted,
@@ -733,6 +738,10 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
   expect(result.debuff).toBeGreaterThan(0);
   expect(result.debuffedPower).toBeLessThan(result.normalPower);
   expect(result.acidPose).toBeGreaterThan(0.8);
+  expect(result.acidSprayColor).toBe("ff5a47");
+  expect(result.acidSplashColor).toBe("ff2f5d");
+  expect(result.acidDropletCount).toBeGreaterThanOrEqual(4);
+  expect(result.acidBeamRadius).toBeGreaterThan(0.05);
   expect(result.effectCount).toBeGreaterThanOrEqual(1);
   expect(result.repeatedEffectCount).toBeGreaterThanOrEqual(2);
   expect(result.clashStarted).toBe(false);
