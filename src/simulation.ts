@@ -91,6 +91,7 @@ const FOOD_INCOME_MULTIPLIER = 3;
 const BUILD_TASK_ASSIGNEE_CAP = 3;
 const BUILDERS_PER_TRAINING = 2;
 const NEST_STAY_SECONDS = 10;
+const NEST_HOLE_DIAMETER_SCALE = 0.1;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
@@ -3511,12 +3512,12 @@ class AntColony3D {
     mainHole.position.set(this.nest.x, 0.035, this.nest.z);
     const shadow = new THREE.Mesh(this.geometries.trailCircle, this.materials.nestDark);
     shadow.rotation.x = -Math.PI / 2;
-    shadow.scale.set(this.nest.radius * 0.78, this.nest.radius * 0.52, 1);
+    shadow.scale.set(this.nest.radius * 0.78 * NEST_HOLE_DIAMETER_SCALE, this.nest.radius * 0.52 * NEST_HOLE_DIAMETER_SCALE, 1);
     shadow.position.y = 0.012;
     mainHole.add(shadow);
     const rim = new THREE.Mesh(this.geometries.nestRim, this.materials.nestRim);
     rim.rotation.x = -Math.PI / 2;
-    rim.scale.set(this.nest.radius * 0.86, this.nest.radius * 0.58, 1);
+    rim.scale.set(this.nest.radius * 0.86 * NEST_HOLE_DIAMETER_SCALE, this.nest.radius * 0.58 * NEST_HOLE_DIAMETER_SCALE, 1);
     rim.position.y = 0.055;
     rim.castShadow = this.quality.shadowQuality !== "off";
     rim.receiveShadow = this.quality.shadowQuality !== "off";
@@ -3549,13 +3550,13 @@ class AntColony3D {
 
     const shadow = new THREE.Mesh(this.geometries.trailCircle, this.materials.nestDark);
     shadow.rotation.x = config.tilt;
-    shadow.scale.set(config.rx, config.ry, 1);
+    shadow.scale.set(config.rx * NEST_HOLE_DIAMETER_SCALE, config.ry * NEST_HOLE_DIAMETER_SCALE, 1);
     shadow.position.y = 0.008;
     group.add(shadow);
 
     const rim = new THREE.Mesh(this.geometries.nestRim, this.materials.nestRim);
     rim.rotation.x = config.tilt;
-    rim.scale.set(config.rx * 1.1, config.ry * 1.04, 1);
+    rim.scale.set(config.rx * 1.1 * NEST_HOLE_DIAMETER_SCALE, config.ry * 1.04 * NEST_HOLE_DIAMETER_SCALE, 1);
     rim.position.y = 0.045;
     rim.castShadow = this.quality.shadowQuality !== "off";
     rim.receiveShadow = this.quality.shadowQuality !== "off";

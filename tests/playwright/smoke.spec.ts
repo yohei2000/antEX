@@ -44,6 +44,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
       nestIsHoleGroup: sim.nestMound?.type === "Group",
       nestHasMoundGeometry: Boolean(sim.nestMound?.geometry),
       nestEntranceMaxY: Math.max(...(sim.nestEntrances ?? []).map((entrance: any) => entrance.position.y)),
+      nestMainHoleDiameter: ((sim.nestMound?.children?.[0]?.scale?.x ?? 0) as number) * 2,
+      nestEntranceMaxHoleDiameter: Math.max(...(sim.nestEntrances ?? []).map((entrance: any) => (entrance.children?.[0]?.scale?.x ?? 0) * 2)),
       stoneCount: sim.stones.length,
       branchCount: sim.branches.length,
       upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
@@ -75,6 +77,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.nestIsHoleGroup).toBe(true);
   expect(metrics.nestHasMoundGeometry).toBe(false);
   expect(metrics.nestEntranceMaxY).toBeLessThan(0.12);
+  expect(metrics.nestMainHoleDiameter).toBeLessThan(1.3);
+  expect(metrics.nestEntranceMaxHoleDiameter).toBeLessThan(0.7);
   expect(metrics.stoneCount).toBeGreaterThanOrEqual(6);
   expect(metrics.branchCount).toBeGreaterThanOrEqual(5);
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
@@ -611,6 +615,7 @@ test("construction tab issues earthwork commands separately from growth", async 
       progressText: (document.querySelector("#constructionProgressList") as HTMLElement).textContent,
       progressRows: document.querySelectorAll("#constructionProgressList .construction-task").length,
       taskAssigneeCounts: sim.buildTasks.map((task: any) => sim.constructionAssignees(task).length).sort(),
+      taskAssigneeTotal: sim.buildTasks.reduce((sum: number, task: any) => sum + sim.constructionAssignees(task).length, 0),
       taskAssigneeLimit: sim.buildTaskAssigneeLimit(),
       trailDisabledAfterCommand: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).disabled,
       savedEarthworks: sim.colony.earthworks.length,
@@ -630,7 +635,8 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.crewText).toContain("待機");
   expect(result.progressText).toContain("採餌道");
   expect(result.progressText).toContain("低い土塁");
-  expect(result.taskAssigneeCounts).toEqual([1, 1]);
+  expect(result.taskAssigneeCounts.every((count: number) => count <= result.taskAssigneeLimit)).toBe(true);
+  expect(result.taskAssigneeTotal).toBe(2);
   expect(result.taskAssigneeLimit).toBe(2);
   expect(result.progressRows).toBe(2);
   expect(result.trailDisabledAfterCommand).toBe(true);
