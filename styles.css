@@ -583,6 +583,31 @@ button {
   gap: 7px;
 }
 
+.construction-command {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-height: 58px;
+  padding: 8px 7px;
+  text-align: left;
+}
+
+.button-main,
+.button-sub {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.button-main {
+  font-size: 0.78rem;
+}
+
+.button-sub {
+  font-size: 0.64rem;
+  line-height: 1.25;
+  color: rgba(244, 241, 232, 0.72);
+}
+
 .construction-status {
   min-height: 32px;
   padding: 8px;

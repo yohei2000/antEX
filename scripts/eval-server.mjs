@@ -50,7 +50,7 @@ async function start() {
     detached: true,
     stdio: "ignore",
     shell: false,
-    env: { ...process.env, ANTEX_EVAL_SERVER_TTL: process.env.ANTEX_EVAL_SERVER_TTL || "300000" },
+    env: { ...process.env, ANTEX_EVAL_SERVER_TTL: process.env.ANTEX_EVAL_SERVER_TTL || "900000" },
   });
   child.unref();
   writeFileSync(PID_FILE, JSON.stringify({ pid: child.pid, port: PORT, startedAt: Date.now() }, null, 2));
@@ -65,7 +65,7 @@ async function serve() {
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 500).unref();
   };
-  const ttl = Number(process.env.ANTEX_EVAL_SERVER_TTL || 300000);
+  const ttl = Number(process.env.ANTEX_EVAL_SERVER_TTL || 900000);
   setTimeout(shutdown, ttl).unref();
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

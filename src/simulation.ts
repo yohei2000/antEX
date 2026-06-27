@@ -54,7 +54,7 @@ const MAX_FRAME_DELTA = 0.25;
 const MAX_FIXED_STEPS = 5;
 const SAVE_KEY = "ant3d.colonyState";
 const DISPLAY_ANT_CAP = 80;
-const RAID_RIVAL_CAP = 10;
+const RAID_RIVAL_CAP = 40;
 const RIVAL_CONTACT_RADIUS = 4.1;
 const RIVAL_CLASH_DURATION = 2.7;
 const COMBAT_EFFECT_CAP = 96;
@@ -92,6 +92,20 @@ const BUILD_TASK_ASSIGNEE_CAP = 3;
 const BUILDERS_PER_TRAINING = 2;
 const NEST_STAY_SECONDS = 10;
 const NEST_HOLE_DIAMETER_SCALE = 0.1;
+const CONSTRUCTION_DETAILS = {
+  trailReinforce: {
+    label: "採餌道",
+    command: "採餌道を整える",
+    duration: "1匹で約3秒+移動",
+    effect: "味方の移動と採餌効率を少し上げる",
+  },
+  lowBarricade: {
+    label: "低い土塁",
+    command: "低い土塁を築く",
+    duration: "1匹で約4秒+移動",
+    effect: "敵を少し鈍らせ、重兵装の踏ん張りを助ける",
+  },
+};
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
@@ -1216,9 +1230,9 @@ class Ant3D {
   }
 
   updateExplore(dt, sim, steering, sensed) {
+    if (this.variant === "heavySoldier" && this.updateHeavySoldier(dt, sim, steering, sensed)) return;
     if (this.role === "guard" && this.isSortieSoldier && this.updateGuardIntercept(dt, sim, steering)) return;
     if (this.role === "guard" && this.isSortieSoldier && this.updateSortiePatrol(dt, sim, steering)) return;
-    if (this.variant === "heavySoldier" && this.updateHeavySoldier(dt, sim, steering, sensed)) return;
     if (this.variant === "builder" && this.updateBuilder(dt, sim, steering, sensed)) return;
 
     const forageEfficiency = this.variantConfig.forageEfficiency;
@@ -1268,10 +1282,20 @@ class Ant3D {
   }
 
   updateHeavySoldier(dt, sim, steering) {
-    if (this.isSortieSoldier) return false;
-    const threat = sim.findRivalThreat(this.x, this.z, GUARD_INTERCEPT_RANGE);
+    if (this.isSortieSoldier && this.sortieTimer <= 0 && this.state !== "return") {
+      this.setState("return");
+      return true;
+    }
+    const seekRange = this.isSortieSoldier ? SOLDIER_SORTIE_SEEK_RANGE : GUARD_INTERCEPT_RANGE;
+    const threat = sim.findRivalThreat(this.x, this.z, seekRange);
     const raid = sim.ensureRaidState();
     let target = threat;
+    if (!target && this.isSortieSoldier) {
+      target = sim.currentSortieTarget(this.x, this.z);
+      if (!target && this.sortieTargetX != null && this.sortieTargetZ != null) {
+        target = { x: this.sortieTargetX, z: this.sortieTargetZ };
+      }
+    }
     if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) {
       target = sim.raidSignalPoint(raid, 0.78);
     }
@@ -1285,7 +1309,7 @@ class Ant3D {
     const nestDistance = distance2(this.x, this.z, sim.nest.x, sim.nest.z) || 1;
     const targetDistance = distance2(this.x, this.z, target.x, target.z) || 1;
     const maxGuardDistance = sim.nest.radius + 54;
-    if (nestDistance > maxGuardDistance) {
+    if (!this.isSortieSoldier && nestDistance > maxGuardDistance) {
       steering.x += ((sim.nest.x - this.x) / nestDistance) * 2.3;
       steering.z += ((sim.nest.z - this.z) / nestDistance) * 2.3;
       this.lastTacticalAction = "returnGuard";
@@ -1301,7 +1325,7 @@ class Ant3D {
       }
       return true;
     }
-    const pressure = targetDistance > 9 ? 1.5 : 0.72;
+    const pressure = this.isSortieSoldier ? (targetDistance > 18 ? 1.92 : 0.86) : (targetDistance > 9 ? 1.5 : 0.72);
     steering.x += ((target.x - this.x) / targetDistance) * pressure;
     steering.z += ((target.z - this.z) / targetDistance) * pressure;
     this.lastTacticalAction = threat ? "block" : "guardPost";
@@ -1743,6 +1767,10 @@ class RivalAnt3D {
     const spawnDistance = Math.hypot(this.x, this.z);
     if (spawnDistance > sim.worldRadius * 0.99) {
       const limit = (sim.worldRadius * 0.99) / spawnDistance;
+      this.x *= limit;
+      this.z *= limit;
+    } else if (spawnDistance > 0 && spawnDistance < sim.worldRadius * 0.86) {
+      const limit = (sim.worldRadius * 0.86) / spawnDistance;
       this.x *= limit;
       this.z *= limit;
     }
@@ -3887,7 +3915,7 @@ class AntColony3D {
   syncAntPopulation() {
     const d = this.computeDerived();
     const deployed = this.deployedSoldierCount();
-    const homeTarget = Math.floor(clamp(d.workers + d.heavySoldiers + d.builders, 1, Math.max(1, DISPLAY_ANT_CAP - deployed)));
+    const homeTarget = Math.floor(clamp(d.workers + d.builders, 1, Math.max(1, DISPLAY_ANT_CAP - deployed)));
     const target = Math.floor(clamp(homeTarget + deployed, 1, DISPLAY_ANT_CAP));
     for (const ant of this.ants) {
       if (ant.role === "guard" && !ant.isSortieSoldier && ant.variant !== "soldier" && ant.variant !== "heavySoldier") ant.role = "worker";
@@ -3907,17 +3935,17 @@ class AntColony3D {
       this.antRenderer?.releaseRenderObject(removed);
     }
     const counts = {
-      heavySoldier: d.heavySoldiers,
+      heavySoldier: 0,
       soldier: 0,
       builder: d.builders,
-      worker: Math.max(0, homeTarget - d.heavySoldiers - d.builders),
+      worker: Math.max(0, homeTarget - d.builders),
     };
     let homeIndex = 0;
     for (const ant of this.ants) {
-      const nextVariant = ant.isSortieSoldier ? "soldier" : this.variantForIndex(homeIndex, counts);
+      const nextVariant = ant.isSortieSoldier ? ant.variant : this.variantForIndex(homeIndex, counts);
       if (ant.variant === "builder" && nextVariant !== "builder") this.releaseBuildTask(ant);
       if (ant.isSortieSoldier) {
-        ant.setVariant("soldier");
+        ant.role = "guard";
         continue;
       }
       ant.setVariant(nextVariant);
@@ -4112,17 +4140,35 @@ class AntColony3D {
     return this.deployedSoldiers().length;
   }
 
+  deployedSoldierCountByVariant(variant) {
+    return this.deployedSoldiers().filter((ant) => ant.variant === variant).length;
+  }
+
+  sortieSoldierPool(derived = this.computeDerived()) {
+    return Math.max(0, Math.floor((derived.normalSoldiers ?? 0) + (derived.heavySoldiers ?? 0)));
+  }
+
   sortieSoldierLimit(derived = this.computeDerived()) {
-    const total = Math.max(0, Math.floor(derived.normalSoldiers ?? 0));
+    const total = this.sortieSoldierPool(derived);
     return total > 0 ? Math.max(1, Math.ceil(total / 2)) : 0;
   }
 
   availableSortieSoldiers() {
     const d = this.computeDerived();
     const deployed = this.deployedSoldierCount();
-    const healthyNormalSoldiers = Math.floor(Math.min(d.normalSoldiers, d.activeAnts - 1));
-    const roomUnderSortieLimit = this.sortieSoldierLimit(d) - deployed;
-    return Math.max(0, Math.min(healthyNormalSoldiers - deployed, roomUnderSortieLimit));
+    const healthyCombatSoldiers = Math.floor(Math.min(this.sortieSoldierPool(d), Math.max(0, d.activeAnts - 1)));
+    const remainingInNest = Math.max(0, healthyCombatSoldiers - deployed);
+    return Math.max(0, Math.min(remainingInNest, this.sortieSoldierLimit(d)));
+  }
+
+  sortieComposition(count = this.plannedSortieCount()) {
+    const d = this.computeDerived();
+    const desired = Math.max(0, Math.floor(count));
+    const nestHeavy = Math.max(0, Math.floor((d.heavySoldiers ?? 0) - this.deployedSoldierCountByVariant("heavySoldier")));
+    const nestNormal = Math.max(0, Math.floor((d.normalSoldiers ?? 0) - this.deployedSoldierCountByVariant("soldier")));
+    const heavy = Math.min(nestHeavy, desired);
+    const normal = Math.min(nestNormal, desired - heavy);
+    return { heavy, normal, total: heavy + normal };
   }
 
   plannedSortieCount() {
@@ -4158,7 +4204,8 @@ class AntColony3D {
 
   startSoldierSortie() {
     if (this.soldierSortieCooldown > 0) return false;
-    const count = this.plannedSortieCount();
+    const composition = this.sortieComposition();
+    const count = composition.total;
     if (count < 1) {
       this.pushLog("出撃できる兵隊がいない");
       this.updateStats();
@@ -4168,14 +4215,19 @@ class AntColony3D {
     this.makeRoomForSortie(count);
     const sortieTarget = this.currentSortieTarget();
     const targetAngle = sortieTarget ? Math.atan2(sortieTarget.z - this.nest.z, sortieTarget.x - this.nest.x) : null;
+    const variants = [
+      ...Array.from({ length: composition.heavy }, () => "heavySoldier"),
+      ...Array.from({ length: composition.normal }, () => "soldier"),
+    ];
     for (let i = 0; i < count; i += 1) {
       const ant = new Ant3D(this.nextAntId++, this);
+      const variant = variants[i] ?? "soldier";
       const entrance = this.nestEntrances?.[i % Math.max(1, this.nestEntrances.length)];
       const spread = (i - (count - 1) / 2) * 0.14;
       const baseAngle = targetAngle == null ? (entrance?.userData?.angle ?? ((i / count) * Math.PI * 2)) : targetAngle + spread;
       const radius = this.nest.radius * 0.58 + (i % 3) * 0.55;
       ant.role = "guard";
-      ant.setVariant("soldier");
+      ant.setVariant(variant);
       ant.isSortieSoldier = true;
       ant.sortieTimer = SOLDIER_SORTIE_SECONDS;
       ant.sortieIndex = i;
@@ -4199,7 +4251,8 @@ class AntColony3D {
     }
 
     this.soldierSortieCooldown = SOLDIER_SORTIE_COOLDOWN_SECONDS;
-    this.pushLog(`兵隊出撃: ${count}匹が巣口から防衛へ`);
+    const heavyText = composition.heavy > 0 ? ` / 重兵装${composition.heavy}匹` : "";
+    this.pushLog(`兵隊出撃: ${count}匹${heavyText}が巣口から防衛へ`);
     this.updateStats();
     this.saveColony();
     return true;
@@ -4637,7 +4690,13 @@ class AntColony3D {
 
   raidEnemyCount() {
     const d = this.computeDerived();
-    const pressure = this.colony.enemyThreat * 0.42 + this.colony.territory * 0.26 - (d.defensePower - 1) * 0.55;
+    const colonyScalePressure =
+      Math.max(0, d.activeAnts - 24) * 0.055 +
+      Math.max(0, this.colony.nestLevel - 2) * 0.8 +
+      this.colony.territory * 0.35 +
+      (d.normalSoldiers ?? 0) * 0.025 +
+      (d.heavySoldiers ?? 0) * 0.06;
+    const pressure = this.colony.enemyThreat * 0.34 + this.colony.territory * 0.14 + colonyScalePressure - (d.defensePower - 1) * 0.9;
     return Math.floor(clamp(4 + pressure, 4, RAID_RIVAL_CAP));
   }
 
@@ -4864,7 +4923,10 @@ class AntColony3D {
     this.addColonyCorpse(ant);
     this.ants.splice(index, 1);
     this.antRenderer?.releaseRenderObject(ant);
-    if (ant.isSortieSoldier) this.colony.soldierAnts = Math.max(0, Math.floor(this.colony.soldierAnts) - 1);
+    if (ant.isSortieSoldier) {
+      if (ant.variant === "heavySoldier") this.colony.heavySoldierAnts = Math.max(0, Math.floor(this.colony.heavySoldierAnts) - 1);
+      this.colony.soldierAnts = Math.max(0, Math.floor(this.colony.soldierAnts) - 1);
+    }
     this.colony.antPopulation = Math.max(MIN_COLONY_SURVIVORS, Math.floor(this.colony.antPopulation) - 1);
     this.colony.woundedAnts = Math.min(this.colony.woundedAnts, Math.max(0, this.colony.antPopulation - 1));
     this.colony.fallenAnts = Math.floor((this.colony.fallenAnts ?? 0) + 1);
@@ -5435,7 +5497,13 @@ class AntColony3D {
   }
 
   constructionLabel(kind) {
-    return kind === "lowBarricade" ? "低い土塁" : "採餌道";
+    return CONSTRUCTION_DETAILS[kind]?.label ?? "土木";
+  }
+
+  constructionButtonTitle(kind, commandState) {
+    const detail = CONSTRUCTION_DETAILS[kind];
+    if (!detail) return commandState?.reason ?? "";
+    return `${detail.command}: ${detail.duration} / ${detail.effect}${commandState?.reason ? ` / ${commandState.reason}` : ""}`;
   }
 
   constructionAssignees(task) {
@@ -5515,6 +5583,7 @@ class AntColony3D {
     const deployedSoldiers = this.deployedSoldierCount();
     const availableSoldiers = this.availableSortieSoldiers();
     const plannedSortie = this.plannedSortieCount();
+    const sortiePool = this.sortieSoldierPool(d);
     const activeConstruction = this.buildTasks.filter((task) => task.progress < task.maxProgress).length;
     const completeConstruction = this.earthworks.filter((earthwork) => earthwork.strength > 0.95).length;
     const trailCommand = this.canStartConstruction("trailReinforce");
@@ -5548,11 +5617,11 @@ class AntColony3D {
     if (ui.constructionComplete) ui.constructionComplete.textContent = fmt(completeConstruction, 0);
     if (ui.constructionTrailBtn) {
       ui.constructionTrailBtn.disabled = !trailCommand.ok;
-      ui.constructionTrailBtn.title = trailCommand.reason || "採餌道を整える";
+      ui.constructionTrailBtn.title = this.constructionButtonTitle("trailReinforce", trailCommand);
     }
     if (ui.constructionBarricadeBtn) {
       ui.constructionBarricadeBtn.disabled = !barricadeCommand.ok;
-      ui.constructionBarricadeBtn.title = barricadeCommand.reason || "低い土塁を築く";
+      ui.constructionBarricadeBtn.title = this.constructionButtonTitle("lowBarricade", barricadeCommand);
     }
     if (ui.constructionStatus) {
       const activeProgress = this.buildTasks
@@ -5571,7 +5640,7 @@ class AntColony3D {
         `採土 ${fmt(crew.fetching, 0)} / 運搬 ${fmt(crew.carrying, 0)} / 作業 ${fmt(crew.building, 0)} / 退避 ${fmt(crew.retreating, 0)} / 待機 ${fmt(crew.idle, 0)}`;
     }
     if (this.activeTab === "construction") this.renderConstructionProgress();
-    ui.soldierNest.textContent = fmt(Math.max(0, d.normalSoldiers - deployedSoldiers), 0);
+    ui.soldierNest.textContent = fmt(Math.max(0, sortiePool - deployedSoldiers), 0);
     ui.soldierDeployed.textContent = fmt(deployedSoldiers, 0);
     ui.soldierStatus.textContent =
       deployedSoldiers > 0 ? "出撃中" :
