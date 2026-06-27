@@ -1,6 +1,12 @@
 node_modules/
 dist/
 public/
+!public/
+public/*
+!public/assets/
+public/assets/*
+!public/assets/generated/
+!public/assets/generated/*.png
 verification/
 playwright-report/
 test-results/

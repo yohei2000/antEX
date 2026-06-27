@@ -89,6 +89,7 @@ const CAMERA_DISTANCE_MOBILE = 252;
 const CAMERA_DISTANCE_DESKTOP = 238;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const FOOD_INCOME_MULTIPLIER = 3;
+const BUILD_TASK_ASSIGNEE_CAP = 3;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
@@ -650,6 +651,21 @@ function makeGroundTexture() {
   texture.repeat.set(4, 4);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+function roundedRect(context, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
 }
 
 function getMaterialList(material) {
@@ -2282,6 +2298,146 @@ const HEAVY_SOLDIER_SEGMENTS = [
   { kind: "exoskeleton", side: 1, phase: 0, radius: 0.022, from: [0.34, 0.12, 0.42], to: [0.42, 0.05, -0.54] },
 ];
 const ANT_VARIANT_APPENDAGE_CAP = HEAVY_SOLDIER_SEGMENTS.length;
+const ANT_ROLE_LABEL_CONFIG = {
+  soldier: {
+    text: "兵隊",
+    asset: "assets/generated/ant-role-soldier-20260627.png",
+    accent: "#b8873d",
+    band: "#7d5f2d",
+    bg: "rgba(37, 29, 20, 0.84)",
+    iconBg: "rgba(151, 109, 44, 0.34)",
+  },
+  heavySoldier: {
+    text: "重兵装",
+    asset: "assets/generated/ant-role-heavy-soldier-20260627.png",
+    accent: "#9c563e",
+    band: "#693728",
+    bg: "rgba(38, 24, 19, 0.86)",
+    iconBg: "rgba(132, 67, 47, 0.38)",
+  },
+  builder: {
+    text: "土木",
+    asset: "assets/generated/ant-role-builder-20260627.png",
+    accent: "#71804c",
+    band: "#4d5a36",
+    bg: "rgba(28, 33, 24, 0.84)",
+    iconBg: "rgba(99, 112, 67, 0.36)",
+  },
+};
+
+class AntRoleLabelSystem {
+  constructor(sim, capacity) {
+    this.sim = sim;
+    this.capacity = capacity;
+    this.sprites = [];
+    this.textures = new Map();
+    this.materials = [];
+    for (const [variant, config] of Object.entries(ANT_ROLE_LABEL_CONFIG)) {
+      this.textures.set(variant, this.createLabelTexture(config));
+    }
+    for (let i = 0; i < capacity; i += 1) {
+      const material = new THREE.SpriteMaterial({
+        map: this.textures.get("builder"),
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        opacity: 0.94,
+      });
+      const sprite = new THREE.Sprite(material);
+      sprite.visible = false;
+      sprite.renderOrder = 60;
+      sim.scene.add(sprite);
+      this.sprites.push(sprite);
+      this.materials.push(material);
+    }
+  }
+
+  createLabelTexture(config) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 384;
+    canvas.height = 128;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    const draw = (image = null) => {
+      const context = canvas.getContext("2d");
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = config.bg;
+      roundedRect(context, 8, 18, 368, 92, 32);
+      context.fill();
+      context.fillStyle = config.band;
+      roundedRect(context, 12, 23, 32, 82, 26);
+      context.fill();
+      context.strokeStyle = config.accent;
+      context.lineWidth = 5;
+      roundedRect(context, 8, 18, 368, 92, 32);
+      context.stroke();
+      context.fillStyle = config.iconBg;
+      context.beginPath();
+      context.arc(63, 64, 43, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = config.accent;
+      context.globalAlpha = 0.22;
+      context.beginPath();
+      context.moveTo(106, 29);
+      context.lineTo(351, 29);
+      context.lineTo(333, 99);
+      context.lineTo(118, 99);
+      context.closePath();
+      context.fill();
+      context.globalAlpha = 1;
+      if (image) {
+        context.drawImage(image, 22, 25, 78, 78);
+      } else {
+        context.fillStyle = config.accent;
+        context.beginPath();
+        context.arc(61, 64, 26, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.fillStyle = "rgba(255, 248, 225, 0.96)";
+      context.font = "700 42px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      context.textBaseline = "middle";
+      context.fillText(config.text, 116, 64);
+      texture.needsUpdate = true;
+    };
+    draw();
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => draw(image);
+    image.src = config.asset;
+    return texture;
+  }
+
+  render(ants, sim, alpha) {
+    let labelIndex = 0;
+    for (const ant of ants) {
+      if (ant.isRival) continue;
+      const config = ANT_ROLE_LABEL_CONFIG[ant.variant];
+      if (!config || labelIndex >= this.capacity) continue;
+      const sprite = this.sprites[labelIndex];
+      const material = this.materials[labelIndex];
+      const texture = this.textures.get(ant.variant);
+      if (material.map !== texture) {
+        material.map = texture;
+        material.needsUpdate = true;
+      }
+      const state = ant.renderState(sim, alpha);
+      const scale = clamp(sim.cameraDistance / 238, 0.72, 1.28);
+      sprite.visible = true;
+      sprite.position.set(state.x, state.y + 4.6 + state.scale * 0.9, state.z);
+      sprite.scale.set(11.5 * scale, 3.85 * scale, 1);
+      labelIndex += 1;
+    }
+    for (let i = labelIndex; i < this.sprites.length; i += 1) this.sprites[i].visible = false;
+  }
+
+  destroy() {
+    for (const sprite of this.sprites) this.sim.scene.remove(sprite);
+    for (const material of this.materials) material.dispose();
+    for (const texture of this.textures.values()) texture.dispose();
+  }
+}
 
 class AntRenderSystem {
   constructor(sim, capacity) {
@@ -2666,6 +2822,7 @@ class AntColony3D {
     this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP);
+    this.roleLabelSystem = new AntRoleLabelSystem(this, DISPLAY_ANT_CAP + SOLDIER_SORTIE_CAP);
     this.createWorld();
     this.bindEvents();
     this.debugPanel = new DebugPanel(this);
@@ -2960,6 +3117,7 @@ class AntColony3D {
 
   ensureBuildTasks() {
     this.buildTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
+    this.cleanupBuildTaskAssignments();
   }
 
   canStartConstruction(kind) {
@@ -3035,6 +3193,7 @@ class AntColony3D {
       owner: earthwork.owner,
       rotation: earthwork.rotation,
       claimedBy: null,
+      claimedByIds: [],
     };
     this.buildTasks.push(task);
     this.syncEarthworksToColony();
@@ -3117,28 +3276,69 @@ class AntColony3D {
     return details;
   }
 
+  normalizeBuildTaskClaims(task) {
+    if (!task) return [];
+    if (!Array.isArray(task.claimedByIds)) task.claimedByIds = task.claimedBy == null ? [] : [task.claimedBy];
+    task.claimedByIds = task.claimedByIds.filter((id, index, ids) => Number.isFinite(id) && ids.indexOf(id) === index);
+    task.claimedBy = task.claimedByIds[0] ?? null;
+    return task.claimedByIds;
+  }
+
+  buildTaskAssigneeLimit() {
+    const builders = this.computeDerived().builders ?? 0;
+    return Math.max(1, Math.min(BUILD_TASK_ASSIGNEE_CAP, builders || BUILD_TASK_ASSIGNEE_CAP));
+  }
+
+  cleanupBuildTaskAssignments() {
+    const builderTaskIds = new Map();
+    for (const ant of this.ants) {
+      if (ant.variant === "builder" && ant.buildTaskId != null) builderTaskIds.set(ant.id, ant.buildTaskId);
+    }
+    for (const task of this.buildTasks) {
+      const ids = this.normalizeBuildTaskClaims(task);
+      task.claimedByIds = ids.filter((id) => builderTaskIds.get(id) === task.id);
+      task.claimedBy = task.claimedByIds[0] ?? null;
+    }
+  }
+
   releaseBuildTask(ant) {
     const task = this.buildTasks.find((item) => item.id === ant.buildTaskId);
-    if (task && task.claimedBy === ant.id) task.claimedBy = null;
+    if (task) {
+      const ids = this.normalizeBuildTaskClaims(task);
+      task.claimedByIds = ids.filter((id) => id !== ant.id);
+      task.claimedBy = task.claimedByIds[0] ?? null;
+    }
     ant.buildTaskId = null;
     ant.carryingSoil = false;
   }
 
   claimBuildTask(ant) {
+    this.cleanupBuildTaskAssignments();
+    const limit = this.buildTaskAssigneeLimit();
     let task = this.buildTasks.find((item) => item.id === ant.buildTaskId && item.progress < item.maxProgress);
-    if (task && (task.claimedBy == null || task.claimedBy === ant.id)) {
-      task.claimedBy = ant.id;
-      return task;
+    if (task) {
+      const ids = this.normalizeBuildTaskClaims(task);
+      if (!ids.includes(ant.id) && ids.length < limit) ids.push(ant.id);
+      if (ids.includes(ant.id)) {
+        task.claimedBy = ids[0] ?? null;
+        return task;
+      }
+      ant.buildTaskId = null;
     }
-    if (task) ant.buildTaskId = null;
     task = this.buildTasks
-      .filter((item) => item.progress < item.maxProgress && (item.claimedBy == null || item.claimedBy === ant.id))
+      .filter((item) => {
+        if (item.progress >= item.maxProgress) return false;
+        const ids = this.normalizeBuildTaskClaims(item);
+        return ids.includes(ant.id) || ids.length < limit;
+      })
       .sort((a, b) => distance2(ant.x, ant.z, a.x, a.z) - distance2(ant.x, ant.z, b.x, b.z))[0];
     if (!task) {
       ant.buildTaskId = null;
       return null;
     }
-    task.claimedBy = ant.id;
+    const ids = this.normalizeBuildTaskClaims(task);
+    if (!ids.includes(ant.id)) ids.push(ant.id);
+    task.claimedBy = ids[0] ?? null;
     ant.buildTaskId = task.id;
     return task;
   }
@@ -3152,8 +3352,14 @@ class AntColony3D {
       earthwork.strength = clamp(task.progress / task.maxProgress, 0, 1);
     }
     if (task.progress >= task.maxProgress) {
+      task.claimedByIds = [];
       task.claimedBy = null;
-      ant.buildTaskId = null;
+      for (const builder of this.ants) {
+        if (builder.buildTaskId === task.id) {
+          builder.buildTaskId = null;
+          builder.carryingSoil = false;
+        }
+      }
       this.constructionMessage = task.kind === "lowBarricade" ? "低い土塁が完成" : "採餌道整備が完成";
       this.pushLog(task.kind === "lowBarricade" ? "土木アリが低い土塁を固めた" : "土木アリが採餌道を整えた");
     }
@@ -3210,6 +3416,7 @@ class AntColony3D {
           owner: earthwork.owner,
           rotation: earthwork.rotation ?? 0,
           claimedBy: null,
+          claimedByIds: [],
         });
       }
     }
@@ -4106,6 +4313,7 @@ class AntColony3D {
     for (const ant of this.ants) renderAnts.push(ant);
     for (const rival of this.rivalAnts) renderAnts.push(rival);
     this.antRenderer.render(renderAnts, this, alpha);
+    this.roleLabelSystem.render(renderAnts, this, alpha);
     this.renderer.render(this.scene, this.camera);
     window.__ANT_SIM_READY = true;
   }
@@ -4125,6 +4333,7 @@ class AntColony3D {
     window.removeEventListener("pagehide", this.boundPageHide);
     this.clearBranchPreview();
     this.antRenderer?.destroy();
+    this.roleLabelSystem?.destroy();
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.buildTasks, this.earthworks, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
@@ -5094,7 +5303,9 @@ class AntColony3D {
 
   renderConstructionProgress() {
     if (!ui.constructionProgressList) return;
+    this.cleanupBuildTaskAssignments();
     const activeTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
+    const assigneeLimit = this.buildTaskAssigneeLimit();
     ui.constructionProgressList.replaceChildren();
     if (activeTasks.length <= 0) {
       const empty = document.createElement("div");
@@ -5106,7 +5317,7 @@ class AntColony3D {
     for (const task of activeTasks) {
       const progress = clamp(task.progress / Math.max(task.maxProgress, 0.001), 0, 1);
       const percent = Math.round(progress * 100);
-      const assigneeCount = this.constructionAssignees(task).length || (task.claimedBy == null ? 0 : 1);
+      const assigneeCount = Math.max(this.constructionAssignees(task).length, this.normalizeBuildTaskClaims(task).length);
       const row = document.createElement("div");
       row.className = "construction-task";
 
@@ -5127,7 +5338,7 @@ class AntColony3D {
 
       const meta = document.createElement("div");
       meta.className = "construction-task-meta";
-      meta.textContent = `${this.constructionTaskStatus(task)} / 担当 ${fmt(assigneeCount, 0)}/1`;
+      meta.textContent = `${this.constructionTaskStatus(task)} / 担当 ${fmt(assigneeCount, 0)}/${fmt(assigneeLimit, 0)}`;
 
       row.append(header, track, meta);
       ui.constructionProgressList.append(row);

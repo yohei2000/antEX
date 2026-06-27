@@ -51,6 +51,7 @@
 - GitHub Pages は `main` push で `.github/workflows/deploy.yml` が自動デプロイする。
 - main 以外のブランチを一時デプロイする場合は、`github-pages` environment の branch policy を一時追加し、デプロイ後に必ず削除する。
 - main への push はユーザーが明示した場合だけ実行する。
+- ユーザーが実装後のデプロイまで求めている流れでは、明示的な停止指示がない限り、検証後に現在ブランチをpushして一時branch policy経由でデプロイまで進める。
 
 ## Maintenance
 - 作業中に恒久的な注意点、禁止事項、検証手順、リポジトリ運用ルールが増えた場合は、必要に応じてAGENTS.mdを更新する。

@@ -29,7 +29,7 @@ const report = {
   totalBytes,
   assets,
   notes: [
-    "No binary runtime assets are required today; the scene is procedural.",
+    "Runtime binary assets are currently limited to small generated role-label icons.",
     "When GLB assets are introduced, prefer Meshopt first, Draco only for bandwidth-heavy static meshes.",
     "When color textures are introduced, convert large color maps to KTX2/BasisU and keep normal/roughness/metalness linear.",
   ],
