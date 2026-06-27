@@ -203,6 +203,19 @@ const PHEROMONE_PARAMS = {
   waterDecay: 0.14,
 };
 
+const SQUAD_COLORS = [
+  0xf0c65a,
+  0x5fc7ff,
+  0xff7aa8,
+  0x94d76a,
+  0xb58cff,
+  0xff9a55,
+];
+
+function squadColorForId(id) {
+  return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
+}
+
 function closestPointOnSegment(px, pz, ax, az, bx, bz) {
   const vx = bx - ax;
   const vz = bz - az;
@@ -488,6 +501,7 @@ class Ant3D {
     this.squadAnchorZ = null;
     this.squadTargetId = null;
     this.squadCohesion = 0;
+    this.squadColorHex = null;
     this.lastTacticalAction = "idle";
     this.steering = { x: 0, z: 0 };
     this.sensed = {
@@ -1516,6 +1530,7 @@ class Ant3D {
       squadId: this.squadId,
       squadTargetId: this.squadTargetId,
       squadCohesion: this.squadCohesion,
+      squadColorHex: this.squadColorHex,
       gaitPhase: this.gaitPhase,
       renderIndex: this.renderInstanceIndex,
       id: this.id,
@@ -2765,6 +2780,68 @@ class AntRenderSystem {
   }
 }
 
+class SquadRingSystem {
+  constructor(sim, capacity) {
+    this.sim = sim;
+    this.capacity = capacity;
+    this.dummy = new THREE.Object3D();
+    this.hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+    this.color = new THREE.Color();
+    this.white = new THREE.Color(0xffffff);
+    this.material = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.84,
+      depthWrite: false,
+      depthTest: true,
+    });
+    this.mesh = new THREE.InstancedMesh(sim.geometries.impactRing, this.material, capacity);
+    this.mesh.count = capacity;
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 38;
+    sim.scene.add(this.mesh);
+    this.lastVisibleCount = 0;
+    this.lastColors = [];
+  }
+
+  render(ants, sim, alpha) {
+    let index = 0;
+    this.lastColors.length = 0;
+    const pulse = 1 + Math.sin(sim.renderTime * 0.007) * 0.055;
+    for (const ant of ants) {
+      if (index >= this.capacity) break;
+      if (ant.isRival || !ant.squadId || !ant.squadColorHex) continue;
+      const state = ant.renderState(sim, alpha);
+      const isLeader = ant.variant === "captain" && ant.id === ant.squadLeaderId;
+      const baseScale = isLeader ? 3.05 : 2;
+      const cohesionBoost = clamp(ant.squadCohesion ?? 0, 0, 1) * 0.34;
+      this.dummy.position.set(state.x, 0.14 + (isLeader ? 0.018 : 0), state.z);
+      this.dummy.rotation.set(Math.PI / 2, 0, state.angle + sim.renderTime * 0.0005);
+      this.dummy.scale.setScalar((baseScale + cohesionBoost) * pulse);
+      this.dummy.updateMatrix();
+      this.mesh.setMatrixAt(index, this.dummy.matrix);
+      this.color.setHex(ant.squadColorHex);
+      if (isLeader) this.color.lerp(this.white, 0.16);
+      this.mesh.setColorAt(index, this.color);
+      this.lastColors.push(ant.squadColorHex);
+      index += 1;
+    }
+    for (let i = index; i < this.capacity; i += 1) {
+      this.mesh.setMatrixAt(i, this.hiddenMatrix);
+      this.mesh.setColorAt(i, this.color.setHex(0x000000));
+    }
+    this.lastVisibleCount = index;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  destroy() {
+    this.sim.scene.remove(this.mesh);
+    this.material.dispose();
+  }
+}
+
 class AntColony3D {
   constructor() {
     this.loadingScreen = new LoadingScreen({
@@ -2866,6 +2943,7 @@ class AntColony3D {
     this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP);
+    this.squadRingSystem = new SquadRingSystem(this, DISPLAY_ANT_CAP);
     this.roleLabelSystem = new AntRoleLabelSystem(this, DISPLAY_ANT_CAP);
     this.createWorld();
     this.bindEvents();
@@ -2973,7 +3051,7 @@ class AntColony3D {
       acidSpray: new THREE.MeshBasicMaterial({ color: 0xff5a47, transparent: true, opacity: 0.72, depthWrite: false }),
       acidSplash: new THREE.MeshBasicMaterial({ color: 0xff2f5d, transparent: true, opacity: 0.5, depthWrite: false }),
       scoutMark: new THREE.MeshBasicMaterial({ color: 0x69d7c5, transparent: true, opacity: 0.48, depthWrite: false }),
-      captainCommand: new THREE.MeshBasicMaterial({ color: 0xf0c65a, transparent: true, opacity: 0.42, depthWrite: false }),
+      captainCommand: new THREE.MeshBasicMaterial({ color: 0xf0c65a, transparent: true, opacity: 0.68, depthWrite: false }),
       trailFood: new THREE.MeshBasicMaterial({ color: 0xd9a63f, transparent: true, opacity: 0.2, depthWrite: false }),
       trailAlarm: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.24, depthWrite: false }),
       corpseMark: new THREE.MeshBasicMaterial({ color: 0x5b271f, transparent: true, opacity: 0.34, depthWrite: false }),
@@ -4250,6 +4328,7 @@ class AntColony3D {
     ant.squadAnchorZ = null;
     ant.squadTargetId = null;
     ant.squadCohesion = 0;
+    ant.squadColorHex = null;
   }
 
   formSortieSquads(sortieAnts, sortieTarget = null) {
@@ -4259,8 +4338,10 @@ class AntColony3D {
     const created = [];
     for (const leader of captains) {
       const squadMembers = members.splice(0, Math.max(0, CAPTAIN_SQUAD_SIZE - 1));
+      const squadId = this.nextSquadId++;
+      const squadColorHex = squadColorForId(squadId);
       const squad = {
-        id: this.nextSquadId++,
+        id: squadId,
         leaderId: leader.id,
         memberIds: squadMembers.map((ant) => ant.id),
         objective: "intercept",
@@ -4268,18 +4349,21 @@ class AntColony3D {
         rallyX: sortieTarget?.x ?? leader.x,
         rallyZ: sortieTarget?.z ?? leader.z,
         cohesion: 0,
+        colorHex: squadColorHex,
       };
       leader.squadId = squad.id;
       leader.squadLeaderId = leader.id;
       leader.squadSlot = 0;
       leader.squadTargetId = null;
       leader.squadCohesion = 1;
+      leader.squadColorHex = squadColorHex;
       for (const [index, ant] of squadMembers.entries()) {
         ant.squadId = squad.id;
         ant.squadLeaderId = leader.id;
         ant.squadSlot = index + 1;
         ant.squadTargetId = null;
         ant.squadCohesion = 0;
+        ant.squadColorHex = squadColorHex;
       }
       this.squads.push(squad);
       created.push(squad);
@@ -4319,10 +4403,11 @@ class AntColony3D {
     squad.rallyZ = target.z;
     squad.objective = threat ? "markedTarget" : "intercept";
     leader.squadTargetId = squad.targetRivalId;
+    leader.squadColorHex = squad.colorHex;
     leader.commandPulse = 1;
     if (leader.commandEffectCooldown <= 0) {
-      this.addCaptainCommandEffect(leader.x, leader.z, squad.memberIds.length + 1, squad.cohesion);
-      leader.commandEffectCooldown = 0.72;
+      this.addCaptainCommandEffect(leader.x, leader.z, squad.memberIds.length + 1, squad.cohesion, squad.colorHex);
+      leader.commandEffectCooldown = 0.5;
     }
   }
 
@@ -4336,10 +4421,16 @@ class AntColony3D {
         continue;
       }
 
+      const previousMemberIds = [...squad.memberIds];
       const members = squad.memberIds
         .map((id) => this.getAntById(id))
         .filter((ant) => ant && ant.isSortieSoldier && ant.state !== "return" && ant.state !== "flee");
       squad.memberIds = members.map((ant) => ant.id);
+      const activeMemberIds = new Set(squad.memberIds);
+      for (const id of previousMemberIds) {
+        if (!activeMemberIds.has(id)) this.clearSquadAssignment(this.getAntById(id));
+      }
+      leader.squadColorHex = squad.colorHex;
       const existingTarget = this.liveSquadTarget(squad);
       const threat = existingTarget ?? this.findRivalThreat(leader.x, leader.z, SOLDIER_SORTIE_SEEK_RANGE, squad.targetRivalId);
       const target = threat ?? this.currentSortieTarget(leader.x, leader.z) ?? { x: squad.rallyX, z: squad.rallyZ, kind: "rally" };
@@ -4369,6 +4460,7 @@ class AntColony3D {
         ant.squadAnchorX = leader.x + fx * roleOffset + sx * sideOffset;
         ant.squadAnchorZ = leader.z + fz * roleOffset + sz * sideOffset;
         ant.squadTargetId = squad.targetRivalId;
+        ant.squadColorHex = squad.colorHex;
         ant.sortieTargetX = target.x;
         ant.sortieTargetZ = target.z;
         const d = distance2(ant.x, ant.z, ant.squadAnchorX, ant.squadAnchorZ);
@@ -4807,6 +4899,7 @@ class AntColony3D {
     }
     for (const rival of this.rivalAnts) renderAnts.push(rival);
     this.antRenderer.render(renderAnts, this, alpha);
+    this.squadRingSystem.render(renderAnts, this, alpha);
     this.roleLabelSystem.render(renderAnts, this, alpha);
     this.renderer.render(this.scene, this.camera);
     window.__ANT_SIM_READY = true;
@@ -4827,6 +4920,7 @@ class AntColony3D {
     window.removeEventListener("pagehide", this.boundPageHide);
     this.clearBranchPreview();
     this.antRenderer?.destroy();
+    this.squadRingSystem?.destroy();
     this.roleLabelSystem?.destroy();
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.buildTasks, this.earthworks, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses]) {
       for (const item of list) this.disposeDynamicItem(item);
@@ -5738,29 +5832,31 @@ class AntColony3D {
     }
   }
 
-  addCaptainCommandEffect(x, z, members = 1, cohesion = 0) {
+  addCaptainCommandEffect(x, z, members = 1, cohesion = 0, colorHex = 0xf0c65a) {
     const quality = this.quality.effectsQuality ?? 1;
     if (quality <= 0) return;
     const group = new THREE.Group();
     group.position.set(x, 0, z);
 
     const commandMaterial = this.materials.captainCommand.clone();
+    commandMaterial.color.setHex(colorHex);
     const ring = new THREE.Mesh(this.geometries.impactRing, commandMaterial);
     ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.11;
-    ring.scale.setScalar(1.5 + Math.min(6, members) * 0.22);
+    ring.position.y = 0.135;
+    ring.scale.setScalar(2.15 + Math.min(6, members) * 0.36);
     group.add(ring);
 
     const spokeMaterial = this.materials.captainCommand.clone();
+    spokeMaterial.color.setHex(colorHex);
     const spokes = [];
-    const spokeCount = Math.floor(clamp(2 + members, 3, 7) * quality);
+    const spokeCount = Math.floor(clamp(3 + members, 4, 9) * quality);
     for (let i = 0; i < spokeCount; i += 1) {
       const spoke = new THREE.Mesh(this.geometries.combatSlash, spokeMaterial);
       const angle = (i / Math.max(1, spokeCount)) * Math.PI * 2;
       const direction = new THREE.Vector3(Math.sin(angle), 0.08, Math.cos(angle)).normalize();
       spoke.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
-      spoke.position.set(Math.sin(angle) * 0.62, 0.18, Math.cos(angle) * 0.62);
-      spoke.scale.set(0.028, 0.92 + cohesion * 0.4, 0.028);
+      spoke.position.set(Math.sin(angle) * 0.9, 0.2, Math.cos(angle) * 0.9);
+      spoke.scale.set(0.04, 1.3 + cohesion * 0.55, 0.04);
       group.add(spoke);
       spokes.push({ mesh: spoke, angle });
     }
@@ -5770,9 +5866,9 @@ class AntColony3D {
     this.combatEffects.push({
       type: "captainCommand",
       age: 0,
-      life: 0.72,
-      strength: clamp(0.55 + cohesion * 0.45, 0.55, 1),
-      radius: 1.6 + Math.min(6, members) * 0.28,
+      life: 1.05,
+      strength: clamp(0.72 + cohesion * 0.45, 0.72, 1.12),
+      radius: 2.35 + Math.min(6, members) * 0.42,
       group,
       ring,
       commandMaterial,

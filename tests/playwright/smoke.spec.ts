@@ -1026,6 +1026,11 @@ test("captain ants form temporary squads and align members on one target", async
     acid.update(1 / 60, sim);
     const captainRender = captain.renderState(sim, 1);
     sim.renderGame(1);
+    const commandEffect = sim.combatEffects.find((effect: any) => effect.type === "captainCommand");
+    const squadMembers = (squad?.memberIds ?? [])
+      .map((id: number) => sim.getAntById(id))
+      .filter(Boolean);
+    const squadRingColors = [...new Set((sim.squadRingSystem?.lastColors ?? []).map((color: number) => color))];
 
     return {
       sortieStarted,
@@ -1040,6 +1045,9 @@ test("captain ants form temporary squads and align members on one target", async
       memberCount: squad?.memberIds?.length ?? 0,
       acidSquadId: acid.squadId,
       captainSquadId: captain.squadId,
+      squadColorHex: squad?.colorHex ?? null,
+      captainColorHex: captain.squadColorHex,
+      membersShareSquadColor: squadMembers.every((ant: any) => ant.squadColorHex === squad?.colorHex),
       captainHandled,
       captainAction: captain.lastTacticalAction,
       captainPose: captainRender.commandPose,
@@ -1056,6 +1064,11 @@ test("captain ants form temporary squads and align members on one target", async
       squadPullMagnitude: Math.hypot(squadSteering.x, squadSteering.z),
       squadCohesion: squad?.cohesion ?? 0,
       commandEffects: sim.combatEffects.filter((effect: any) => effect.type === "captainCommand").length,
+      commandEffectColor: commandEffect?.commandMaterial?.color?.getHex?.() ?? null,
+      commandEffectLife: commandEffect?.life ?? 0,
+      commandEffectRadius: commandEffect?.radius ?? 0,
+      squadRingVisibleCount: sim.squadRingSystem?.lastVisibleCount ?? 0,
+      squadRingColors,
       captainRoleLabel: sim.roleLabelSystem.textures.has("captain"),
     };
   });
@@ -1070,6 +1083,9 @@ test("captain ants form temporary squads and align members on one target", async
   expect(result.squadLeaderId).toBe(result.captainId);
   expect(result.memberCount).toBeGreaterThanOrEqual(3);
   expect(result.acidSquadId).toBe(result.captainSquadId);
+  expect(result.squadColorHex).toBeTruthy();
+  expect(result.captainColorHex).toBe(result.squadColorHex);
+  expect(result.membersShareSquadColor).toBe(true);
   expect(result.captainHandled).toBe(true);
   expect(["captainAdvance", "captainCommand", "captainRally", "captainHold"]).toContain(result.captainAction);
   expect(result.captainPose).toBeGreaterThan(0.6);
@@ -1084,7 +1100,76 @@ test("captain ants form temporary squads and align members on one target", async
   expect(result.squadPullMagnitude).toBeGreaterThan(0);
   expect(result.squadCohesion).toBeGreaterThan(0);
   expect(result.commandEffects).toBeGreaterThanOrEqual(1);
+  expect(result.commandEffectColor).toBe(result.squadColorHex);
+  expect(result.commandEffectLife).toBeGreaterThanOrEqual(1);
+  expect(result.commandEffectRadius).toBeGreaterThan(3);
+  expect(result.squadRingVisibleCount).toBeGreaterThanOrEqual(result.memberCount + 1);
+  expect(result.squadRingColors).toEqual([result.squadColorHex]);
   expect(result.captainRoleLabel).toBe(true);
+});
+
+test("captain squads use distinct command ring colors per squad", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 60;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 16;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.shieldHeadAnts = 0;
+    sim.colony.acidShooterAnts = 0;
+    sim.colony.scoutAnts = 0;
+    sim.colony.captainAnts = 2;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.captainBrood = 2;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    sim.updateSquads(1 / 60);
+    sim.renderGame(1);
+
+    const squads = sim.squads.map((squad: any) => {
+      const leader = sim.getAntById(squad.leaderId);
+      const members = squad.memberIds.map((id: number) => sim.getAntById(id)).filter(Boolean);
+      return {
+        id: squad.id,
+        colorHex: squad.colorHex,
+        leaderColorHex: leader?.squadColorHex ?? null,
+        memberCount: members.length,
+        memberColors: members.map((ant: any) => ant.squadColorHex),
+        allMembersShareColor: members.every((ant: any) => ant.squadColorHex === squad.colorHex),
+      };
+    });
+    const ringColors = [...new Set((sim.squadRingSystem?.lastColors ?? []).map((color: number) => color))];
+
+    return {
+      sortieStarted,
+      squadCount: sim.squads.length,
+      squads,
+      distinctSquadColors: new Set(squads.map((squad: any) => squad.colorHex)).size,
+      ringVisibleCount: sim.squadRingSystem?.lastVisibleCount ?? 0,
+      ringColors,
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.squadCount).toBe(2);
+  expect(result.distinctSquadColors).toBe(2);
+  expect(result.squads.every((squad: any) => squad.leaderColorHex === squad.colorHex)).toBe(true);
+  expect(result.squads.every((squad: any) => squad.allMembersShareColor)).toBe(true);
+  expect(result.squads.every((squad: any) => squad.memberCount > 0)).toBe(true);
+  expect(result.ringVisibleCount).toBeGreaterThanOrEqual(
+    result.squads.reduce((sum: number, squad: any) => sum + squad.memberCount + 1, 0),
+  );
+  expect(new Set(result.ringColors).size).toBe(2);
+  expect(result.squads.every((squad: any) => result.ringColors.includes(squad.colorHex))).toBe(true);
 });
 
 test("shield head ants advance to the front line and tank for allies", async ({ page }) => {
