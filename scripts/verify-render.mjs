@@ -312,7 +312,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.nestEntranceCount < 4 ||
       metrics.nestSpoilCount < 24 ||
       metrics.stoneCount < 6 ||
-      metrics.branchCount < 5 ||
+      metrics.branchCount !== 0 ||
       metrics.toolButtons !== 0 ||
       metrics.upgradeButtons < 15 ||
       metrics.foodRate <= 0

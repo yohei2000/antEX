@@ -1,6 +1,6 @@
 # Asset Pipeline
 
-Current runtime assets are procedural: ant meshes, food, stones, branches, water, and the ground texture are generated at startup. There are no GLB/KTX2/HDR files in the shipping path yet.
+Current runtime assets are procedural: ant meshes, food, stones, water, and the ground texture are generated at startup. Branch obstacle meshes exist in legacy code but are not placed in the normal map because they can snag ant movement. There are no GLB/KTX2/HDR files in the shipping path yet.
 
 ## When Adding Assets
 

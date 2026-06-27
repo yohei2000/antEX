@@ -80,7 +80,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.nestMainHoleDiameter).toBeLessThan(1.3);
   expect(metrics.nestEntranceMaxHoleDiameter).toBeLessThan(0.7);
   expect(metrics.stoneCount).toBeGreaterThanOrEqual(6);
-  expect(metrics.branchCount).toBeGreaterThanOrEqual(5);
+  expect(metrics.branchCount).toBe(0);
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
   expect(metrics.calls).toBeGreaterThan(0);
   expect(metrics.triangles).toBeGreaterThan(0);

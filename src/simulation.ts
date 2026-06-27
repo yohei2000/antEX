@@ -4654,15 +4654,6 @@ class AntColony3D {
       { x: 92, z: 12, radius: 2.8, scaleY: 0.46, rotation: -1.1 },
     ];
     for (const stone of stones) this.addNaturalStone(stone);
-
-    const branches = [
-      { x1: -4, z1: 62, x2: 22, z2: 76, width: 0.9 },
-      { x1: 44, z1: -8, x2: 70, z2: -2, width: 0.82 },
-      { x1: -88, z1: -18, x2: -68, z2: -34, width: 0.86 },
-      { x1: 2, z1: -60, x2: 28, z2: -72, width: 0.78 },
-      { x1: -34, z1: 34, x2: -20, z2: 22, width: 0.72 },
-    ];
-    for (const branch of branches) this.addBranch(branch);
   }
 
   ensureRaidState() {
