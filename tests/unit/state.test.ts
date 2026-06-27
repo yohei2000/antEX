@@ -36,7 +36,7 @@ describe("colony state modules", () => {
       earthworks: [
         {
           id: 3,
-          kind: "lowBarricade",
+          kind: "earthWall",
           x: 999,
           z: -999,
           radius: 100,
@@ -74,7 +74,7 @@ describe("colony state modules", () => {
     expect(colony.earthworks).toEqual([
       {
         id: 3,
-        kind: "lowBarricade",
+        kind: "earthWall",
         x: 180,
         z: -180,
         radius: 24,

@@ -607,13 +607,13 @@ test("construction tab issues earthwork commands separately from growth", async 
     sim.colony.woundedAnts = 0;
     sim.colony.soldierAnts = 6;
     sim.colony.heavySoldierAnts = 1;
-    sim.colony.builderAnts = 2;
+    sim.colony.builderAnts = 3;
     sim.colony.nestLevel = 3;
     sim.colony.territory = 4;
     sim.colony.upgrades.soldierTraining = 1;
     sim.colony.upgrades.heavySoldierBrood = 1;
     sim.colony.upgrades.chamberExcavation = 1;
-    sim.colony.upgrades.builderTraining = 1;
+    sim.colony.upgrades.builderTraining = 2;
     sim.computeDerived();
     sim.syncAntPopulation();
     sim.setPanelCompact(false, false);
@@ -623,6 +623,7 @@ test("construction tab issues earthwork commands separately from growth", async 
 
   await page.locator("#constructionTrailBtn").click();
   await page.locator("#constructionBarricadeBtn").click();
+  await page.locator("#constructionWallBtn").click();
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
@@ -645,8 +646,10 @@ test("construction tab issues earthwork commands separately from growth", async 
       taskAssigneeLimit: sim.buildTaskAssigneeLimit(),
       trailButtonText: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).textContent,
       barricadeButtonText: (document.querySelector("#constructionBarricadeBtn") as HTMLButtonElement).textContent,
+      wallButtonText: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).textContent,
       trailButtonTitle: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).title,
       barricadeButtonTitle: (document.querySelector("#constructionBarricadeBtn") as HTMLButtonElement).title,
+      wallButtonTitle: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).title,
       trailDisabledAfterCommand: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).disabled,
       savedEarthworks: sim.colony.earthworks.length,
     };
@@ -656,29 +659,38 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.tabText).toContain("土木");
   expect(result.growthActive).toBe(false);
   expect(result.constructionActive).toBe(true);
-  expect(result.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
-  expect(result.earthworkKinds).toEqual(["lowBarricade", "trailReinforce"]);
-  expect(result.builderCountText).toBe("2");
-  expect(result.activeCountText).toBe("2");
+  expect(result.taskKinds).toEqual(["earthWall", "lowBarricade", "trailReinforce"]);
+  expect(result.earthworkKinds).toEqual(["earthWall", "lowBarricade", "trailReinforce"]);
+  expect(result.builderCountText).toBe("4");
+  expect(result.activeCountText).toBe("3");
   expect(result.statusText).toContain("作業中");
   expect(result.statusText).toContain("平均");
   expect(result.crewText).toContain("待機");
   expect(result.progressText).toContain("採餌道");
   expect(result.progressText).toContain("低い土塁");
-  expect(result.trailButtonText).toContain("採土・往復あり");
+  expect(result.progressText).toContain("大きな土壁");
+  expect(result.progressText).toContain("工数");
+  expect(result.progressText).toContain("目安");
+  expect(result.trailButtonText).toContain("工数2.8");
   expect(result.trailButtonText).toContain("採餌効率");
-  expect(result.barricadeButtonText).toContain("採土・往復あり");
+  expect(result.barricadeButtonText).toContain("工数3.6");
   expect(result.barricadeButtonText).toContain("敵減速");
+  expect(result.wallButtonText).toContain("工数7.2");
+  expect(result.wallButtonText).toContain("踏ん張り");
   expect(result.trailButtonTitle).toContain("距離・担当数で変動");
+  expect(result.trailButtonTitle).toContain("工数 2.8");
   expect(result.trailButtonTitle).toContain("味方の移動");
   expect(result.barricadeButtonTitle).toContain("距離・担当数で変動");
   expect(result.barricadeButtonTitle).toContain("重兵装");
+  expect(result.wallButtonTitle).toContain("工数 7.2");
+  expect(result.wallButtonTitle).toContain("長め");
+  expect(result.wallButtonTitle).toContain("大きく助ける");
   expect(result.taskAssigneeCounts.every((count: number) => count <= result.taskAssigneeLimit)).toBe(true);
-  expect(result.taskAssigneeTotal).toBe(2);
-  expect(result.taskAssigneeLimit).toBe(2);
-  expect(result.progressRows).toBe(2);
+  expect(result.taskAssigneeTotal).toBe(4);
+  expect(result.taskAssigneeLimit).toBe(3);
+  expect(result.progressRows).toBe(3);
   expect(result.trailDisabledAfterCommand).toBe(true);
-  expect(result.savedEarthworks).toBe(2);
+  expect(result.savedEarthworks).toBe(3);
 });
 
 test("multiple builders can share one construction task", async ({ page }) => {

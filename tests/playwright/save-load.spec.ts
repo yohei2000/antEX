@@ -30,12 +30,12 @@ test("persists colony state through localStorage", async ({ page }) => {
     };
     sim.addEarthwork({
       id: sim.colony.nextEarthworkId++,
-      kind: "trailReinforce",
+      kind: "earthWall",
       x: sim.nest.x + 12,
       z: sim.nest.z + 5,
-      radius: 13,
-      progress: 2.8,
-      maxProgress: 2.8,
+      radius: 14,
+      progress: 7.2,
+      maxProgress: 7.2,
       rotation: 0.2,
       owner: "colony",
     });
@@ -91,7 +91,7 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.raidEnemyCasualties).toBe(0);
   expect(restored.earthworks).toBe(1);
   expect(restored.liveEarthworks).toBe(1);
-  expect(restored.earthworkKind).toBe("trailReinforce");
+  expect(restored.earthworkKind).toBe("earthWall");
   expect(restored.earthworkStrength).toBeGreaterThan(0.95);
 });
 
