@@ -25,7 +25,7 @@ test("persists colony state through localStorage", async ({ page }) => {
       queenCare: 0,
       soldierTraining: 1,
       heavySoldierBrood: 1,
-      builderTraining: 2,
+      builderTraining: 1,
       nestGuard: 0,
     };
     sim.addEarthwork({
@@ -82,7 +82,7 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.storageChambers).toBe(2);
   expect(restored.chamberExcavation).toBe(1);
   expect(restored.heavySoldierBrood).toBe(1);
-  expect(restored.builderTraining).toBe(2);
+  expect(restored.builderTraining).toBe(1);
   expect(restored.trailPheromones).toBe(0);
   expect(restored.fallenAnts).toBe(0);
   expect(restored.raidPhase).toBe("calm");

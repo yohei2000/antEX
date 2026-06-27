@@ -458,12 +458,15 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
     sim.computeDerived();
     sim.syncAntPopulation();
     sim.renderGame(1);
+    const builders = sim.ants.filter((ant: any) => ant.variant === "builder");
     const counts = sim.ants.reduce((acc: Record<string, number>, ant: any) => {
       acc[ant.variant] = (acc[ant.variant] ?? 0) + 1;
       return acc;
     }, {});
     const visibleRoleLabels = sim.roleLabelSystem.sprites.filter((sprite: any) => sprite.visible).length;
-    const expectedRoleLabels = sim.ants.filter((ant: any) => !ant.isRival && ["soldier", "heavySoldier", "builder"].includes(ant.variant)).length;
+    const expectedRoleLabels = sim.ants.filter((ant: any) =>
+      sim.shouldRenderAnt(ant) && !ant.isRival && ["soldier", "heavySoldier", "builder"].includes(ant.variant),
+    ).length;
     const roleLabelBands = [...sim.roleLabelSystem.textures.entries()].map(([, texture]: any) => {
       const sample = texture.image.getContext("2d").getImageData(24, 64, 1, 1).data;
       return `${sample[0]},${sample[1]},${sample[2]}`;
@@ -479,6 +482,9 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
       counts,
       heavyCount: sim.colony.heavySoldierAnts,
       builderCount: sim.colony.builderAnts,
+      builderTarget: sim.computeDerived().builderTarget,
+      idleBuildersInNest: builders.every((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z) < sim.nest.radius * 0.6),
+      surfaceBuilders: sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length,
       normalSoldiers: sim.computeDerived().normalSoldiers,
       availableSortie: sim.availableSortieSoldiers(),
       heavyConfig: sim.getAntVariantConfig("heavySoldier"),
@@ -501,7 +507,10 @@ test("heavy soldiers and builders unlock without replacing existing ants", async
   expect(result.counts.heavySoldier).toBeGreaterThanOrEqual(1);
   expect(result.counts.builder).toBeGreaterThanOrEqual(1);
   expect(result.heavyCount).toBeGreaterThanOrEqual(1);
-  expect(result.builderCount).toBeGreaterThanOrEqual(1);
+  expect(result.builderCount).toBe(2);
+  expect(result.builderTarget).toBe(2);
+  expect(result.idleBuildersInNest).toBe(true);
+  expect(result.surfaceBuilders).toBe(0);
   expect(result.availableSortie).toBe(result.normalSoldiers);
   expect(result.heavyConfig.speed).toBeLessThan(result.workerConfig.speed);
   expect(result.heavyConfig.hp).toBeGreaterThan(result.soldierConfig.hp);
@@ -524,7 +533,7 @@ test("construction tab issues earthwork commands separately from growth", async 
     sim.colony.woundedAnts = 0;
     sim.colony.soldierAnts = 6;
     sim.colony.heavySoldierAnts = 1;
-    sim.colony.builderAnts = 1;
+    sim.colony.builderAnts = 2;
     sim.colony.nestLevel = 3;
     sim.colony.territory = 4;
     sim.colony.upgrades.soldierTraining = 1;
@@ -568,14 +577,14 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.constructionActive).toBe(true);
   expect(result.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
   expect(result.earthworkKinds).toEqual(["lowBarricade", "trailReinforce"]);
-  expect(result.builderCountText).toBe("1");
+  expect(result.builderCountText).toBe("2");
   expect(result.activeCountText).toBe("2");
   expect(result.statusText).toContain("作業中");
   expect(result.statusText).toContain("平均");
   expect(result.crewText).toContain("待機");
   expect(result.progressText).toContain("採餌道");
   expect(result.progressText).toContain("低い土塁");
-  expect(result.progressText).toContain("担当 0/1");
+  expect(result.progressText.match(/担当 1\/2/g)).toHaveLength(2);
   expect(result.progressRows).toBe(2);
   expect(result.trailDisabledAfterCommand).toBe(true);
   expect(result.savedEarthworks).toBe(2);
@@ -629,6 +638,65 @@ test("multiple builders can share one construction task", async ({ page }) => {
   expect(result.progressGain).toBeCloseTo(1.2, 5);
   expect(result.progressText).toContain("担当 3/3");
   expect(result.crewText).toContain("待機");
+});
+
+test("builders stay in the nest until assigned and spread across construction types", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 44;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 6;
+    sim.colony.heavySoldierAnts = 1;
+    sim.colony.builderAnts = 4;
+    sim.colony.nestLevel = 3;
+    sim.colony.territory = 4;
+    sim.colony.upgrades.soldierTraining = 1;
+    sim.colony.upgrades.heavySoldierBrood = 1;
+    sim.colony.upgrades.chamberExcavation = 1;
+    sim.colony.upgrades.builderTraining = 2;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.buildTasks = [];
+    for (const item of [...sim.earthworks]) sim.disposeDynamicItem(item);
+    sim.earthworks = [];
+    sim.renderGame(1);
+
+    const builders = sim.ants.filter((ant: any) => ant.variant === "builder");
+    const surfaceBuildersBefore = sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length;
+    const idleBuildersInNest = builders.every((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z) < sim.nest.radius * 0.6);
+
+    const trail = sim.createBuildTask("trailReinforce", sim.nest.x + 18, sim.nest.z + 4, { radius: 13, maxProgress: 4 });
+    const barricade = sim.createBuildTask("lowBarricade", sim.nest.x + 12, sim.nest.z - 10, { radius: 10, maxProgress: 4 });
+    const claimedTaskIds = builders.map((builder: any) => sim.claimBuildTask(builder)?.id ?? null);
+    sim.renderGame(1);
+
+    return {
+      builderTarget: sim.computeDerived().builderTarget,
+      builderCount: sim.colony.builderAnts,
+      surfaceBuildersBefore,
+      idleBuildersInNest,
+      claimedTaskIds,
+      trailClaims: trail.claimedByIds.length,
+      barricadeClaims: barricade.claimedByIds.length,
+      surfaceBuildersAfter: sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length,
+      visibleBuilderLabels: sim.roleLabelSystem.sprites.filter((sprite: any) => sprite.visible && sprite.material.map === sim.roleLabelSystem.textures.get("builder")).length,
+    };
+  });
+
+  expect(result.builderTarget).toBe(4);
+  expect(result.builderCount).toBe(4);
+  expect(result.surfaceBuildersBefore).toBe(0);
+  expect(result.idleBuildersInNest).toBe(true);
+  expect(result.claimedTaskIds.every((id: number | null) => id != null)).toBe(true);
+  expect(new Set(result.claimedTaskIds).size).toBe(2);
+  expect(result.trailClaims).toBeGreaterThanOrEqual(1);
+  expect(result.barricadeClaims).toBeGreaterThanOrEqual(1);
+  expect(result.surfaceBuildersAfter).toBe(4);
+  expect(result.visibleBuilderLabels).toBe(4);
 });
 
 test("heavy soldiers brace while builders complete earthworks and retreat", async ({ page }) => {

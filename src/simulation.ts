@@ -90,6 +90,7 @@ const CAMERA_DISTANCE_DESKTOP = 238;
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60;
 const FOOD_INCOME_MULTIPLIER = 3;
 const BUILD_TASK_ASSIGNEE_CAP = 3;
+const BUILDERS_PER_TRAINING = 2;
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
@@ -323,7 +324,7 @@ const UPGRADE_DEFS = [
     branch: "architecture",
     name: "土木アリを育てる",
     desc: "土粒を運ぶ作業アリを育て、採餌道と巣口を整える",
-    effect: "土木アリと簡易土木効果を増やす",
+    effect: "土木アリを2匹ずつ増やし、簡易土木効果を増やす",
     max: 5,
     baseCost: 150,
     costScale: 1.75,
@@ -953,6 +954,7 @@ class Ant3D {
     this.braceIntent = Math.max(0, this.braceIntent - dt * 1.4);
     this.energy = clamp(this.energy + dt * 0.012 * this.variantConfig.staminaRecovery, 0, 1);
     this.lastTrail += dt;
+    this.skipMoveThisFrame = false;
     if (this.isSortieSoldier) this.sortieTimer = Math.max(0, this.sortieTimer - dt);
 
     if (this.clashTimer > 0 || this.state === "clash") {
@@ -1026,6 +1028,11 @@ class Ant3D {
     else if (this.state === "rescue") this.updateRescue(dt, sim, steering);
     else this.updateExplore(dt, sim, steering, sensed);
 
+    if (this.skipMoveThisFrame) {
+      this.vx = 0;
+      this.vz = 0;
+      return;
+    }
     this.move(dt, sim, steering);
     this.leaveTrail(sim);
   }
@@ -1312,8 +1319,8 @@ class Ant3D {
 
     const task = sim.claimBuildTask(this);
     if (!task) {
-      this.lastTacticalAction = "searchBuildTask";
-      return false;
+      sim.dockBuilderInNest(this);
+      return true;
     }
     const taskDistance = distance2(this.x, this.z, task.x, task.z) || 1;
     if (!this.carryingSoil) {
@@ -1477,6 +1484,7 @@ class Ant3D {
     let count = 0;
     for (const other of sim.ants) {
       if (other === this) continue;
+      if (!sim.shouldRenderAnt(other)) continue;
       const d = distance2(this.x, this.z, other.x, other.z);
       if (d > 0 && d < 2.2) {
         sx += (this.x - other.x) / d;
@@ -1842,6 +1850,7 @@ class RivalAnt3D {
     const range = this.isRaidRival ? RAID_HARASSMENT_RANGE : RIVAL_HARASSMENT_RANGE;
     const baseScore = this.isRaidRival ? 42 : 30;
     for (const ant of sim.ants) {
+      if (!sim.shouldRenderAnt(ant)) continue;
       if (ant.state === "stunned" || ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0) continue;
       const d = distance2(this.x, this.z, ant.x, ant.z);
       if (d > range) continue;
@@ -3120,6 +3129,16 @@ class AntColony3D {
     this.cleanupBuildTaskAssignments();
   }
 
+  activeBuildTasks() {
+    return this.buildTasks.filter((task) => task.progress < task.maxProgress);
+  }
+
+  availableBuilderSlotsForNewConstruction() {
+    const builders = this.computeDerived().builders ?? 0;
+    const activeTasks = this.activeBuildTasks();
+    return Math.max(0, builders - activeTasks.length);
+  }
+
   canStartConstruction(kind) {
     const d = this.computeDerived();
     if ((d.builders ?? 0) <= 0) return { ok: false, reason: "土木アリがいない" };
@@ -3130,6 +3149,7 @@ class AntColony3D {
     const limit = kind === "lowBarricade" ? 3 : 4;
     if (completedSameKind >= limit) return { ok: false, reason: "作れる場所が埋まっている" };
     if (kind === "lowBarricade" && (d.heavySoldiers ?? 0) <= 0) return { ok: false, reason: "重兵装アリがいない" };
+    if (this.availableBuilderSlotsForNewConstruction() <= 0) return { ok: false, reason: "待機中の土木アリがいない" };
     return { ok: true, reason: "" };
   }
 
@@ -3318,7 +3338,22 @@ class AntColony3D {
     let task = this.buildTasks.find((item) => item.id === ant.buildTaskId && item.progress < item.maxProgress);
     if (task) {
       const ids = this.normalizeBuildTaskClaims(task);
-      if (!ids.includes(ant.id) && ids.length < limit) ids.push(ant.id);
+      const underfilled = this.buildTasks
+        .filter((item) => item !== task && item.progress < item.maxProgress)
+        .map((item) => ({ task: item, ids: this.normalizeBuildTaskClaims(item) }))
+        .filter((item) => item.ids.length < Math.min(limit, ids.length - 1))
+        .sort((a, b) => a.ids.length - b.ids.length)[0];
+      if (underfilled && ids.includes(ant.id)) {
+        task.claimedByIds = ids.filter((id) => id !== ant.id);
+        task.claimedBy = task.claimedByIds[0] ?? null;
+        ant.buildTaskId = null;
+        task = null;
+      } else if (!ids.includes(ant.id) && ids.length < limit) {
+        ids.push(ant.id);
+      }
+    }
+    if (task) {
+      const ids = this.normalizeBuildTaskClaims(task);
       if (ids.includes(ant.id)) {
         task.claimedBy = ids[0] ?? null;
         return task;
@@ -3331,7 +3366,13 @@ class AntColony3D {
         const ids = this.normalizeBuildTaskClaims(item);
         return ids.includes(ant.id) || ids.length < limit;
       })
-      .sort((a, b) => distance2(ant.x, ant.z, a.x, a.z) - distance2(ant.x, ant.z, b.x, b.z))[0];
+      .sort((a, b) => {
+        const aIds = this.normalizeBuildTaskClaims(a);
+        const bIds = this.normalizeBuildTaskClaims(b);
+        const assigneeDelta = aIds.length - bIds.length;
+        if (assigneeDelta) return assigneeDelta;
+        return distance2(ant.x, ant.z, a.x, a.z) - distance2(ant.x, ant.z, b.x, b.z);
+      })[0];
     if (!task) {
       ant.buildTaskId = null;
       return null;
@@ -3700,7 +3741,7 @@ class AntColony3D {
     const heavyTarget = Math.min(this.colony.soldierAnts, heavySoldierBrood);
     this.colony.heavySoldierAnts = Math.floor(clamp(this.colony.heavySoldierAnts, 0, heavyTarget));
     const availableWorkers = Math.max(0, activeAnts - this.colony.soldierAnts);
-    const builderTarget = Math.min(availableWorkers, builderTraining);
+    const builderTarget = Math.min(availableWorkers, builderTraining * BUILDERS_PER_TRAINING);
     this.colony.builderAnts = Math.floor(clamp(this.colony.builderAnts, 0, builderTarget));
     const heavySoldiers = this.colony.heavySoldierAnts;
     const normalSoldiers = Math.max(0, this.colony.soldierAnts - heavySoldiers);
@@ -3858,8 +3899,37 @@ class AntColony3D {
         continue;
       }
       ant.setVariant(nextVariant);
+      if (nextVariant === "builder" && ant.buildTaskId == null && !ant.carryingSoil) this.dockBuilderInNest(ant);
       homeIndex += 1;
     }
+  }
+
+  dockBuilderInNest(ant) {
+    if (!ant || ant.variant !== "builder") return;
+    this.releaseBuildTask(ant);
+    const angle = (ant.id * 2.399 + this.colony.nestLevel * 0.31) % (Math.PI * 2);
+    const radius = this.nest.radius * (0.18 + (ant.id % 5) * 0.045);
+    const x = this.nest.x + Math.cos(angle) * radius;
+    const z = this.nest.z + Math.sin(angle) * radius;
+    ant.x = x;
+    ant.z = z;
+    ant.prevX = x;
+    ant.prevZ = z;
+    ant.vx = 0;
+    ant.vz = 0;
+    ant.carrying = 0;
+    ant.carryingSoil = false;
+    ant.foodSourceId = null;
+    ant.lastTacticalAction = "idleInNest";
+    ant.homeTimer = 0;
+    ant.energy = Math.min(1, ant.energy + 0.02);
+    ant.skipMoveThisFrame = true;
+    if (ant.state !== "explore") ant.setState("explore");
+  }
+
+  shouldRenderAnt(ant) {
+    if (ant.variant === "builder" && ant.buildTaskId == null && !ant.carryingSoil) return false;
+    return true;
   }
 
   variantForIndex(index, counts) {
@@ -3941,7 +4011,7 @@ class AntColony3D {
       this.colony.heavySoldierAnts = Math.min(this.colony.soldierAnts, this.colony.heavySoldierAnts + 1);
     } else if (id === "builderTraining") {
       const availableWorkers = Math.max(0, this.colony.antPopulation - this.colony.woundedAnts - this.colony.soldierAnts);
-      this.colony.builderAnts = Math.min(availableWorkers, this.colony.builderAnts + 1);
+      this.colony.builderAnts = Math.min(availableWorkers, this.colony.builderAnts + BUILDERS_PER_TRAINING);
     }
     this.pushLog(`${upgrade.name} Lv${level + 1} を強化`);
     this.computeDerived();
@@ -4310,7 +4380,9 @@ class AntColony3D {
     this.updateCamera();
     const renderAnts = this.renderAntBuffer;
     renderAnts.length = 0;
-    for (const ant of this.ants) renderAnts.push(ant);
+    for (const ant of this.ants) {
+      if (this.shouldRenderAnt(ant)) renderAnts.push(ant);
+    }
     for (const rival of this.rivalAnts) renderAnts.push(rival);
     this.antRenderer.render(renderAnts, this, alpha);
     this.roleLabelSystem.render(renderAnts, this, alpha);
@@ -5259,6 +5331,7 @@ class AntColony3D {
     let best = null;
     let bestDistance = 5;
     for (const ant of this.ants) {
+      if (!this.shouldRenderAnt(ant)) continue;
       const d = distance2(x, z, ant.x, ant.z);
       if (d < bestDistance) {
         best = ant;
