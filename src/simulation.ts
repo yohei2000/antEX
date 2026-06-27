@@ -685,7 +685,12 @@ class Ant3D {
     steering.z = 0;
     this.addSeparation(steering, sim);
     this.addObstacleAvoidance(steering, sim);
-    const hazardResponse = this.variant === "heavySoldier" || this.variant === "shieldHead" ? 0.22 : this.variant === "captain" ? 0.62 + this.traits.caution * 0.45 : this.variant === "scout" ? 1.48 + this.traits.caution : 1.2 + this.traits.caution;
+    const hazardResponse =
+      this.variant === "heavySoldier" || this.variant === "shieldHead" ? 0.22 :
+      this.variant === "captain" ? 0.62 + this.traits.caution * 0.45 :
+      this.variant === "scout" && this.isSortieSoldier ? 0.78 + this.traits.caution * 0.38 :
+      this.variant === "scout" ? 1.48 + this.traits.caution :
+      1.2 + this.traits.caution;
     steering.x += sensed.hazard.x * hazardResponse;
     steering.z += sensed.hazard.z * hazardResponse;
     if (this.isSortieSoldier && this.variant !== "captain") sim.applySquadSteering(this, steering);
@@ -1098,6 +1103,8 @@ class Ant3D {
     if (!target) return false;
 
     const targetDistance = distance2(this.x, this.z, target.x, target.z) || 1;
+    const hasSquadAnchor = this.squadAnchorX != null && this.squadAnchorZ != null;
+    const anchorDistance = hasSquadAnchor ? distance2(this.x, this.z, this.squadAnchorX, this.squadAnchorZ) : 0;
     this.sortieTargetX = target.x;
     this.sortieTargetZ = target.z;
     if (threat && targetDistance <= SCOUT_MARK_RANGE) {
@@ -1105,19 +1112,32 @@ class Ant3D {
       sim.markRivalByScout(this, threat, targetDistance);
       this.energy = clamp(this.energy - dt * 0.008, 0, 1);
       if (targetDistance < SCOUT_MARK_STANDOFF) {
-        const retreatPressure = 1.2 + (1 - targetDistance / SCOUT_MARK_STANDOFF) * 1.6;
+        const retreatPressure = 0.95 + (1 - targetDistance / SCOUT_MARK_STANDOFF) * 1.35;
         steering.x += ((this.x - threat.x) / targetDistance) * retreatPressure;
         steering.z += ((this.z - threat.z) / targetDistance) * retreatPressure;
         this.lastTacticalAction = "scoutEvade";
         return true;
       }
+      const frontlineDistance = Math.max(SCOUT_MARK_STANDOFF + 5, SCOUT_MARK_RANGE * 0.54);
+      if (targetDistance > frontlineDistance) {
+        const closePressure = 0.92 + clamp((targetDistance - frontlineDistance) / Math.max(1, SCOUT_MARK_RANGE - frontlineDistance), 0, 1) * 1.15;
+        steering.x += ((target.x - this.x) / targetDistance) * closePressure;
+        steering.z += ((target.z - this.z) / targetDistance) * closePressure;
+      }
+      if (hasSquadAnchor && anchorDistance > 2.1) {
+        const anchorPressure = clamp((anchorDistance - 2.1) / Math.max(1, CAPTAIN_COHESION_RADIUS * 0.72), 0.32, 1.35);
+        steering.x += ((this.squadAnchorX - this.x) / anchorDistance) * anchorPressure;
+        steering.z += ((this.squadAnchorZ - this.z) / anchorDistance) * anchorPressure;
+      }
       this.lastTacticalAction = "scoutMark";
-      this.skipMoveThisFrame = true;
+      if (targetDistance <= frontlineDistance + 1.5 && (!hasSquadAnchor || anchorDistance <= 2.8)) {
+        this.skipMoveThisFrame = true;
+      }
       return true;
     }
 
-    const desiredDistance = threat ? SCOUT_MARK_RANGE * 0.72 : 20;
-    const pressure = targetDistance > desiredDistance ? 2.35 : 0.86;
+    const desiredDistance = threat ? Math.max(SCOUT_MARK_STANDOFF + 5, SCOUT_MARK_RANGE * 0.54) : 20;
+    const pressure = targetDistance > desiredDistance ? 2.75 : 0.72;
     steering.x += ((target.x - this.x) / targetDistance) * pressure;
     steering.z += ((target.z - this.z) / targetDistance) * pressure;
     this.energy = clamp(this.energy - dt * 0.006, 0, 1);
@@ -4450,13 +4470,13 @@ class AntColony3D {
       for (const [index, ant] of members.entries()) {
         const lane = Math.floor(index / 2);
         const side = index % 2 === 0 ? -1 : 1;
-        const sideOffset = side * (2.7 + lane * 1.35);
+        const sideOffset = side * (2.05 + lane * 0.95);
         const roleOffset =
-          ant.variant === "shieldHead" ? 7.2 :
-          ant.variant === "heavySoldier" ? 3.4 :
-          ant.variant === "acidShooter" ? -7.4 :
-          ant.variant === "scout" ? -5.2 :
-          1.2 + lane * 0.45;
+          ant.variant === "shieldHead" ? 5.8 :
+          ant.variant === "heavySoldier" ? 2.9 :
+          ant.variant === "acidShooter" ? -5.1 :
+          ant.variant === "scout" ? 2.1 :
+          0.85 + lane * 0.28;
         ant.squadAnchorX = leader.x + fx * roleOffset + sx * sideOffset;
         ant.squadAnchorZ = leader.z + fz * roleOffset + sz * sideOffset;
         ant.squadTargetId = squad.targetRivalId;
@@ -4480,13 +4500,14 @@ class AntColony3D {
     if (!ant?.isSortieSoldier || !ant.squadId || ant.squadAnchorX == null || ant.squadAnchorZ == null) return false;
     if (ant.state === "clash" || ant.state === "return" || ant.state === "flee") return false;
     const d = distance2(ant.x, ant.z, ant.squadAnchorX, ant.squadAnchorZ) || 1;
-    if (d <= 2.2) return false;
+    if (d <= 1.35) return false;
     const roleFactor =
-      ant.variant === "shieldHead" ? 0.66 :
-      ant.variant === "acidShooter" ? 0.82 :
-      ant.variant === "scout" ? 1.08 :
-      1;
-    const pressure = clamp((d - 2.2) / Math.max(1, CAPTAIN_COHESION_RADIUS), 0.18, 1.55) * roleFactor;
+      ant.variant === "shieldHead" ? 0.84 :
+      ant.variant === "acidShooter" ? 1.04 :
+      ant.variant === "scout" ? 1.46 :
+      ant.variant === "heavySoldier" ? 1.08 :
+      1.14;
+    const pressure = clamp((d - 1.35) / Math.max(1, CAPTAIN_COHESION_RADIUS * 0.72), 0.34, 2.35) * roleFactor;
     steering.x += ((ant.squadAnchorX - ant.x) / d) * pressure;
     steering.z += ((ant.squadAnchorZ - ant.z) / d) * pressure;
     if (d > CAPTAIN_COHESION_RADIUS && !ant.lastTacticalAction?.startsWith?.("acid") && !ant.lastTacticalAction?.startsWith?.("scout")) {

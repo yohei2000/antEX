@@ -915,6 +915,100 @@ test("scout ants mark enemies so sortie ants prioritize the same target", async 
   expect(result.scoutInClash).toBe(false);
 });
 
+test("scout ants move into the frontline while marking enemies", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 36;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 4;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.shieldHeadAnts = 0;
+    sim.colony.acidShooterAnts = 0;
+    sim.colony.scoutAnts = 1;
+    sim.colony.captainAnts = 0;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 1;
+    sim.colony.upgrades.scoutBrood = 1;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 2,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const scout = sim.deployedSoldiers().find((ant: any) => ant.variant === "scout");
+    if (!scout || !rival) {
+      return { sortieStarted, scoutFound: Boolean(scout), rivalFound: Boolean(rival) };
+    }
+
+    scout.x = 60;
+    scout.z = 0;
+    scout.prevX = scout.x;
+    scout.prevZ = scout.z;
+    scout.state = "explore";
+    scout.sortieTimer = 30;
+    scout.scoutMarkCooldown = 0;
+    scout.skipMoveThisFrame = false;
+    rival.x = 22;
+    rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.scoutMarkTimer = 0;
+    rival.scoutMarkStrength = 0;
+    rival.scoutMarkedById = null;
+
+    const steering = { x: 0, z: 0 };
+    const handled = scout.updateScout(1 / 60, sim, steering);
+    return {
+      sortieStarted,
+      scoutFound: true,
+      rivalFound: true,
+      handled,
+      action: scout.lastTacticalAction,
+      markedBy: rival.scoutMarkedById,
+      markedTimer: rival.scoutMarkTimer,
+      steeringX: steering.x,
+      steeringMagnitude: Math.hypot(steering.x, steering.z),
+      skipMoveThisFrame: scout.skipMoveThisFrame,
+      distanceToRival: Math.hypot(scout.x - rival.x, scout.z - rival.z),
+      scoutInClash: Boolean(scout.state === "clash" || rival.clash?.ants?.includes(scout)),
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.scoutFound).toBe(true);
+  expect(result.rivalFound).toBe(true);
+  expect(result.handled).toBe(true);
+  expect(result.action).toBe("scoutMark");
+  expect(result.markedBy).toBeTruthy();
+  expect(result.markedTimer).toBeGreaterThan(0);
+  expect(result.distanceToRival).toBeGreaterThan(30);
+  expect(result.steeringX).toBeLessThan(-0.5);
+  expect(result.steeringMagnitude).toBeGreaterThan(0.5);
+  expect(result.skipMoveThisFrame).toBe(false);
+  expect(result.scoutInClash).toBe(false);
+});
+
 test("captain ants form temporary squads and align members on one target", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -1097,7 +1191,7 @@ test("captain ants form temporary squads and align members on one target", async
   expect(result.acidSprayTarget).toBe(result.markedId);
   expect(result.acidAnchorSet).toBe(true);
   expect(result.squadPull).toBe(true);
-  expect(result.squadPullMagnitude).toBeGreaterThan(0);
+  expect(result.squadPullMagnitude).toBeGreaterThan(1);
   expect(result.squadCohesion).toBeGreaterThan(0);
   expect(result.commandEffects).toBeGreaterThanOrEqual(1);
   expect(result.commandEffectColor).toBe(result.squadColorHex);
@@ -1170,6 +1264,113 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
   );
   expect(new Set(result.ringColors).size).toBe(2);
   expect(result.squads.every((squad: any) => result.ringColors.includes(squad.colorHex))).toBe(true);
+});
+
+test("captain squads keep scouts near the frontline", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 50;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 8;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.shieldHeadAnts = 0;
+    sim.colony.acidShooterAnts = 0;
+    sim.colony.scoutAnts = 1;
+    sim.colony.captainAnts = 1;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.scoutBrood = 1;
+    sim.colony.upgrades.captainBrood = 1;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 2,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const captain = sim.deployedSoldiers().find((ant: any) => ant.variant === "captain");
+    const scout = sim.deployedSoldiers().find((ant: any) => ant.variant === "scout");
+    if (!captain || !scout || !rival) {
+      return { sortieStarted, captainFound: Boolean(captain), scoutFound: Boolean(scout), rivalFound: Boolean(rival) };
+    }
+
+    captain.x = 10;
+    captain.z = 0;
+    captain.prevX = captain.x;
+    captain.prevZ = captain.z;
+    captain.state = "explore";
+    captain.sortieTimer = 30;
+    scout.x = -18;
+    scout.z = -8;
+    scout.prevX = scout.x;
+    scout.prevZ = scout.z;
+    scout.state = "explore";
+    scout.sortieTimer = 30;
+    scout.scoutMarkCooldown = 0;
+    rival.x = 40;
+    rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+
+    sim.updateSquads(1 / 60);
+    const steering = { x: 0, z: 0 };
+    const squadPull = sim.applySquadSteering(scout, steering);
+    const leaderDistanceToRival = Math.hypot(captain.x - rival.x, captain.z - rival.z);
+    const scoutAnchorDistanceToRival = Math.hypot(scout.squadAnchorX - rival.x, scout.squadAnchorZ - rival.z);
+    const anchorDistance = Math.hypot(scout.x - scout.squadAnchorX, scout.z - scout.squadAnchorZ);
+    const pullTowardAnchor =
+      ((scout.squadAnchorX - scout.x) * steering.x + (scout.squadAnchorZ - scout.z) * steering.z) > 0;
+
+    return {
+      sortieStarted,
+      captainFound: true,
+      scoutFound: true,
+      rivalFound: true,
+      squadCount: sim.squads.length,
+      scoutSquadId: scout.squadId,
+      captainSquadId: captain.squadId,
+      anchorAheadOfCaptain: scout.squadAnchorX > captain.x,
+      leaderDistanceToRival,
+      scoutAnchorDistanceToRival,
+      anchorDistance,
+      squadPull,
+      pullMagnitude: Math.hypot(steering.x, steering.z),
+      pullTowardAnchor,
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.captainFound).toBe(true);
+  expect(result.scoutFound).toBe(true);
+  expect(result.rivalFound).toBe(true);
+  expect(result.squadCount).toBe(1);
+  expect(result.scoutSquadId).toBe(result.captainSquadId);
+  expect(result.anchorAheadOfCaptain).toBe(true);
+  expect(result.scoutAnchorDistanceToRival).toBeLessThan(result.leaderDistanceToRival);
+  expect(result.anchorDistance).toBeGreaterThan(10);
+  expect(result.squadPull).toBe(true);
+  expect(result.pullMagnitude).toBeGreaterThan(1.2);
+  expect(result.pullTowardAnchor).toBe(true);
 });
 
 test("shield head ants advance to the front line and tank for allies", async ({ page }) => {
