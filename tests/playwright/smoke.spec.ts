@@ -1280,6 +1280,10 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
       distinctSquadColors: new Set(squads.map((squad: any) => squad.colorHex)).size,
       ringVisibleCount: sim.squadRingSystem?.lastVisibleCount ?? 0,
       ringColors,
+      ringOpacity: sim.squadRingSystem?.material?.opacity ?? 0,
+      ringDepthTest: sim.squadRingSystem?.material?.depthTest ?? true,
+      ringInnerRadius: sim.squadRingSystem?.geometry?.parameters?.innerRadius ?? 0,
+      ringOuterRadius: sim.squadRingSystem?.geometry?.parameters?.outerRadius ?? 0,
     };
   });
 
@@ -1294,6 +1298,10 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
   expect(result.ringVisibleCount).toBeGreaterThanOrEqual(
     result.squads.reduce((sum: number, squad: any) => sum + squad.memberCount + 1, 0),
   );
+  expect(result.ringOpacity).toBeGreaterThan(0.9);
+  expect(result.ringDepthTest).toBe(false);
+  expect(result.ringInnerRadius).toBeGreaterThan(0.7);
+  expect(result.ringOuterRadius).toBe(1);
   expect(new Set(result.ringColors).size).toBe(2);
   expect(result.captainColors.every((color: number) => result.ringColors.includes(color))).toBe(true);
   expect(result.squads.every((squad: any) => result.ringColors.includes(squad.colorHex))).toBe(true);

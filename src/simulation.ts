@@ -2813,60 +2813,63 @@ class SquadRingSystem {
     this.sim = sim;
     this.capacity = capacity;
     this.dummy = new THREE.Object3D();
-    this.hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
-    this.color = new THREE.Color();
-    this.white = new THREE.Color(0xffffff);
-    this.material = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      vertexColors: true,
+    this.geometry = new THREE.RingGeometry(0.72, 1, 96);
+    this.colorToIndex = new Map(SQUAD_COLORS.map((color, index) => [color, index]));
+    this.materials = SQUAD_COLORS.map((color) => new THREE.MeshBasicMaterial({
+      color,
       transparent: true,
-      opacity: 0.84,
+      opacity: 0.94,
       depthWrite: false,
-      depthTest: true,
+      depthTest: false,
+      side: THREE.DoubleSide,
+    }));
+    this.material = this.materials[0];
+    this.meshes = this.materials.map((material, index) => {
+      const mesh = new THREE.InstancedMesh(this.geometry, material, capacity);
+      mesh.count = 0;
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 38 + index * 0.01;
+      sim.scene.add(mesh);
+      return mesh;
     });
-    this.mesh = new THREE.InstancedMesh(sim.geometries.impactRing, this.material, capacity);
-    this.mesh.count = capacity;
-    this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 38;
-    sim.scene.add(this.mesh);
     this.lastVisibleCount = 0;
     this.lastColors = [];
   }
 
   render(ants, sim, alpha) {
-    let index = 0;
+    const counts = new Array(this.meshes.length).fill(0);
     this.lastColors.length = 0;
     const pulse = 1 + Math.sin(sim.renderTime * 0.007) * 0.055;
     for (const ant of ants) {
-      if (index >= this.capacity) break;
       if (ant.isRival || !ant.squadId || !ant.squadColorHex) continue;
+      const colorIndex = this.colorToIndex.get(ant.squadColorHex) ?? 0;
+      const index = counts[colorIndex];
+      if (index >= this.capacity) continue;
       const state = ant.renderState(sim, alpha);
       const isLeader = ant.variant === "captain" && ant.id === ant.squadLeaderId;
-      const baseScale = isLeader ? 3.05 : 2;
-      const cohesionBoost = clamp(ant.squadCohesion ?? 0, 0, 1) * 0.34;
-      this.dummy.position.set(state.x, 0.14 + (isLeader ? 0.018 : 0), state.z);
+      const baseScale = isLeader ? 5.3 : 3.55;
+      const cohesionBoost = clamp(ant.squadCohesion ?? 0, 0, 1) * 0.5;
+      this.dummy.position.set(state.x, 0.22 + (isLeader ? 0.026 : 0), state.z);
       this.dummy.rotation.set(Math.PI / 2, 0, state.angle + sim.renderTime * 0.0005);
       this.dummy.scale.setScalar((baseScale + cohesionBoost) * pulse);
       this.dummy.updateMatrix();
-      this.mesh.setMatrixAt(index, this.dummy.matrix);
-      this.color.setHex(ant.squadColorHex);
-      if (isLeader) this.color.lerp(this.white, 0.08);
-      this.mesh.setColorAt(index, this.color);
+      this.meshes[colorIndex].setMatrixAt(index, this.dummy.matrix);
       this.lastColors.push(ant.squadColorHex);
-      index += 1;
+      counts[colorIndex] += 1;
     }
-    for (let i = index; i < this.capacity; i += 1) {
-      this.mesh.setMatrixAt(i, this.hiddenMatrix);
-      this.mesh.setColorAt(i, this.color.setHex(0x000000));
+    let total = 0;
+    for (const [index, mesh] of this.meshes.entries()) {
+      mesh.count = counts[index];
+      total += counts[index];
+      mesh.instanceMatrix.needsUpdate = true;
     }
-    this.lastVisibleCount = index;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.lastVisibleCount = total;
   }
 
   destroy() {
-    this.sim.scene.remove(this.mesh);
-    this.material.dispose();
+    for (const mesh of this.meshes) this.sim.scene.remove(mesh);
+    this.geometry.dispose();
+    for (const material of this.materials) material.dispose();
   }
 }
 
