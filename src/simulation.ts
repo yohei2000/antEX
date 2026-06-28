@@ -1176,15 +1176,23 @@ class Ant3D {
       this.lastTrail = 0;
     }
 
-    const desiredDistance = threat ? CAPTAIN_COMMAND_RANGE * 0.46 : 18;
-    if (targetDistance > desiredDistance) {
-      steering.x += ((target.x - this.x) / targetDistance) * (targetDistance > 34 ? 2.05 : 1.18);
-      steering.z += ((target.z - this.z) / targetDistance) * (targetDistance > 34 ? 2.05 : 1.18);
-      this.lastTacticalAction = threat ? "captainAdvance" : "captainRally";
+    const desiredDistance = threat ? CAPTAIN_COMMAND_RANGE * 0.62 : 18;
+    const tooCloseDistance = threat ? CAPTAIN_COMMAND_RANGE * 0.42 : 0;
+    if (threat && targetDistance < tooCloseDistance) {
+      const pressure = 0.55 + (1 - targetDistance / Math.max(1, tooCloseDistance)) * 0.9;
+      steering.x += ((this.x - target.x) / targetDistance) * pressure;
+      steering.z += ((this.z - target.z) / targetDistance) * pressure;
+      this.lastTacticalAction = "captainFallBack";
+    } else if (targetDistance > desiredDistance) {
+      const cohesionGate = squad?.memberIds?.length ? clamp(0.35 + (squad.cohesion ?? 0) * 0.65, 0.35, 1) : 1;
+      const pressure = (targetDistance > 48 ? 1.35 : 0.82) * cohesionGate;
+      steering.x += ((target.x - this.x) / targetDistance) * pressure;
+      steering.z += ((target.z - this.z) / targetDistance) * pressure;
+      this.lastTacticalAction = threat && cohesionGate > 0.58 ? "captainAdvance" : threat ? "captainWaitSquad" : "captainRally";
     } else {
       this.angle = Math.atan2(target.x - this.x, target.z - this.z);
-      steering.x += ((target.x - this.x) / targetDistance) * 0.36;
-      steering.z += ((target.z - this.z) / targetDistance) * 0.36;
+      steering.x += ((target.x - this.x) / targetDistance) * 0.18;
+      steering.z += ((target.z - this.z) / targetDistance) * 0.18;
       this.lastTacticalAction = threat ? "captainCommand" : "captainHold";
     }
     this.energy = clamp(this.energy - dt * 0.011, 0, 1);
@@ -4470,13 +4478,13 @@ class AntColony3D {
       for (const [index, ant] of members.entries()) {
         const lane = Math.floor(index / 2);
         const side = index % 2 === 0 ? -1 : 1;
-        const sideOffset = side * (2.05 + lane * 0.95);
+        const sideOffset = side * (1.85 + lane * 0.82);
         const roleOffset =
-          ant.variant === "shieldHead" ? 5.8 :
-          ant.variant === "heavySoldier" ? 2.9 :
-          ant.variant === "acidShooter" ? -5.1 :
-          ant.variant === "scout" ? 2.1 :
-          0.85 + lane * 0.28;
+          ant.variant === "shieldHead" ? 4.25 :
+          ant.variant === "heavySoldier" ? 2.45 :
+          ant.variant === "acidShooter" ? -3.65 :
+          ant.variant === "scout" ? 1.65 :
+          lane % 2 === 0 ? 0.75 : -1.35;
         ant.squadAnchorX = leader.x + fx * roleOffset + sx * sideOffset;
         ant.squadAnchorZ = leader.z + fz * roleOffset + sz * sideOffset;
         ant.squadTargetId = squad.targetRivalId;

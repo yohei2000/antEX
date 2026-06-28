@@ -1124,6 +1124,12 @@ test("captain ants form temporary squads and align members on one target", async
     const squadMembers = (squad?.memberIds ?? [])
       .map((id: number) => sim.getAntById(id))
       .filter(Boolean);
+    const targetDx = (squad?.rallyX ?? marked.x) - captain.x;
+    const targetDz = (squad?.rallyZ ?? marked.z) - captain.z;
+    const targetLength = Math.hypot(targetDx, targetDz) || 1;
+    const forwardX = targetDx / targetLength;
+    const forwardZ = targetDz / targetLength;
+    const memberForwardOffsets = squadMembers.map((ant: any) => ((ant.squadAnchorX - captain.x) * forwardX) + ((ant.squadAnchorZ - captain.z) * forwardZ));
     const squadRingColors = [...new Set((sim.squadRingSystem?.lastColors ?? []).map((color: number) => color))];
 
     return {
@@ -1142,6 +1148,8 @@ test("captain ants form temporary squads and align members on one target", async
       squadColorHex: squad?.colorHex ?? null,
       captainColorHex: captain.squadColorHex,
       membersShareSquadColor: squadMembers.every((ant: any) => ant.squadColorHex === squad?.colorHex),
+      memberForwardMin: Math.min(...memberForwardOffsets),
+      memberForwardMax: Math.max(...memberForwardOffsets),
       captainHandled,
       captainAction: captain.lastTacticalAction,
       captainPose: captainRender.commandPose,
@@ -1180,8 +1188,10 @@ test("captain ants form temporary squads and align members on one target", async
   expect(result.squadColorHex).toBeTruthy();
   expect(result.captainColorHex).toBe(result.squadColorHex);
   expect(result.membersShareSquadColor).toBe(true);
+  expect(result.memberForwardMin).toBeLessThan(-2);
+  expect(result.memberForwardMax).toBeGreaterThan(2);
   expect(result.captainHandled).toBe(true);
-  expect(["captainAdvance", "captainCommand", "captainRally", "captainHold"]).toContain(result.captainAction);
+  expect(["captainAdvance", "captainCommand", "captainFallBack", "captainHold", "captainRally", "captainWaitSquad"]).toContain(result.captainAction);
   expect(result.captainPose).toBeGreaterThan(0.6);
   expect(result.squadTargetId).toBe(result.markedId);
   expect(result.acidTargetId).toBe(result.markedId);
@@ -1229,6 +1239,7 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
     sim.updateSquads(1 / 60);
     sim.renderGame(1);
 
+    const captains = sim.deployedSoldiers().filter((ant: any) => ant.variant === "captain");
     const squads = sim.squads.map((squad: any) => {
       const leader = sim.getAntById(squad.leaderId);
       const members = squad.memberIds.map((id: number) => sim.getAntById(id)).filter(Boolean);
@@ -1247,6 +1258,8 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
       sortieStarted,
       squadCount: sim.squads.length,
       squads,
+      captainColors: captains.map((ant: any) => ant.squadColorHex),
+      distinctCaptainColors: new Set(captains.map((ant: any) => ant.squadColorHex)).size,
       distinctSquadColors: new Set(squads.map((squad: any) => squad.colorHex)).size,
       ringVisibleCount: sim.squadRingSystem?.lastVisibleCount ?? 0,
       ringColors,
@@ -1255,6 +1268,7 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
 
   expect(result.sortieStarted).toBe(true);
   expect(result.squadCount).toBe(2);
+  expect(result.distinctCaptainColors).toBe(2);
   expect(result.distinctSquadColors).toBe(2);
   expect(result.squads.every((squad: any) => squad.leaderColorHex === squad.colorHex)).toBe(true);
   expect(result.squads.every((squad: any) => squad.allMembersShareColor)).toBe(true);
@@ -1263,7 +1277,113 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
     result.squads.reduce((sum: number, squad: any) => sum + squad.memberCount + 1, 0),
   );
   expect(new Set(result.ringColors).size).toBe(2);
+  expect(result.captainColors.every((color: number) => result.ringColors.includes(color))).toBe(true);
   expect(result.squads.every((squad: any) => result.ringColors.includes(squad.colorHex))).toBe(true);
+});
+
+test("captain ants stay inside the squad instead of rushing ahead", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 52;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 9;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.shieldHeadAnts = 1;
+    sim.colony.acidShooterAnts = 1;
+    sim.colony.scoutAnts = 0;
+    sim.colony.captainAnts = 1;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.shieldHeadBrood = 1;
+    sim.colony.upgrades.acidShooterBrood = 1;
+    sim.colony.upgrades.captainBrood = 1;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 2,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const captain = sim.deployedSoldiers().find((ant: any) => ant.variant === "captain");
+    if (!captain || !rival) return { sortieStarted, captainFound: Boolean(captain), rivalFound: Boolean(rival) };
+
+    captain.x = 0;
+    captain.z = 0;
+    captain.prevX = captain.x;
+    captain.prevZ = captain.z;
+    captain.state = "explore";
+    captain.sortieTimer = 30;
+    rival.x = 70;
+    rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+
+    const squad = sim.squadForLeader(captain);
+    const members = (squad?.memberIds ?? []).map((id: number) => sim.getAntById(id)).filter(Boolean);
+    for (const [index, ant] of members.entries()) {
+      ant.x = -28 - index * 1.6;
+      ant.z = (index % 2 === 0 ? -1 : 1) * (5 + index);
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.state = "explore";
+      ant.sortieTimer = 30;
+    }
+
+    sim.updateSquads(1 / 60);
+    const updatedSquad = sim.squadForLeader(captain);
+    const targetDx = (updatedSquad?.rallyX ?? rival.x) - captain.x;
+    const targetDz = (updatedSquad?.rallyZ ?? rival.z) - captain.z;
+    const targetLength = Math.hypot(targetDx, targetDz) || 1;
+    const forwardX = targetDx / targetLength;
+    const forwardZ = targetDz / targetLength;
+    const memberForwardOffsets = members.map((ant: any) => ((ant.squadAnchorX - captain.x) * forwardX) + ((ant.squadAnchorZ - captain.z) * forwardZ));
+    const steering = { x: 0, z: 0 };
+    const handled = captain.updateCaptain(1 / 60, sim, steering);
+
+    return {
+      sortieStarted,
+      captainFound: true,
+      rivalFound: true,
+      memberCount: members.length,
+      handled,
+      captainAction: captain.lastTacticalAction,
+      captainAdvanceMagnitude: Math.hypot(steering.x, steering.z),
+      squadCohesion: updatedSquad?.cohesion ?? 0,
+      frontMemberCount: memberForwardOffsets.filter((offset: number) => offset > 2).length,
+      rearMemberCount: memberForwardOffsets.filter((offset: number) => offset < -2).length,
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.captainFound).toBe(true);
+  expect(result.rivalFound).toBe(true);
+  expect(result.memberCount).toBeGreaterThanOrEqual(3);
+  expect(result.frontMemberCount).toBeGreaterThan(0);
+  expect(result.rearMemberCount).toBeGreaterThan(0);
+  expect(result.squadCohesion).toBeLessThan(0.5);
+  expect(result.handled).toBe(true);
+  expect(result.captainAction).toBe("captainWaitSquad");
+  expect(result.captainAdvanceMagnitude).toBeLessThan(0.7);
 });
 
 test("captain squads keep scouts near the frontline", async ({ page }) => {
