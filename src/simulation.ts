@@ -89,6 +89,8 @@ const ui = {
   constructionComplete: document.querySelector("#constructionComplete"),
   constructionTrailBtn: document.querySelector("#constructionTrailBtn"),
   constructionBarricadeBtn: document.querySelector("#constructionBarricadeBtn"),
+  constructionWallBtn: document.querySelector("#constructionWallBtn"),
+  constructionSentryBtn: document.querySelector("#constructionSentryBtn"),
   constructionStatus: document.querySelector("#constructionStatus"),
   constructionCrew: document.querySelector("#constructionCrew"),
   constructionProgressList: document.querySelector("#constructionProgressList"),
@@ -954,7 +956,10 @@ class Ant3D {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
     }
-    if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) {
+    if (!target && raid.phase === "warning" && this.isSortieSoldier && sim.hasRaidDirectionIntel()) {
+      target = sim.raidFormationPointForAnt(this, raid);
+    }
+    if (!target && (raid.phase === "active" || raid.phase === "retreating" || (this.isSortieSoldier && raid.phase === "warning" && sim.hasRaidDirectionIntel()))) {
       target = sim.raidSignalPoint(raid, 0.78);
     }
     if (!target) {
@@ -963,6 +968,10 @@ class Ant3D {
         x: sim.nest.x + Math.cos(guardAngle) * (sim.nest.radius + 8),
         z: sim.nest.z + Math.sin(guardAngle) * (sim.nest.radius + 8),
       };
+    }
+    if (target.kind === "raid-formation") {
+      this.sortieTargetX = target.x;
+      this.sortieTargetZ = target.z;
     }
     const nestDistance = distance2(this.x, this.z, sim.nest.x, sim.nest.z) || 1;
     const targetDistance = distance2(this.x, this.z, target.x, target.z) || 1;
@@ -1038,7 +1047,7 @@ class Ant3D {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
     }
-    if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) {
+    if (!target && (raid.phase === "active" || raid.phase === "retreating" || (raid.phase === "warning" && sim.hasRaidDirectionIntel()))) {
       target = sim.raidSignalPoint(raid, 0.78);
     }
     if (!target) return false;
@@ -1103,7 +1112,7 @@ class Ant3D {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
     }
-    if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) {
+    if (!target && (raid.phase === "active" || raid.phase === "retreating" || (raid.phase === "warning" && sim.hasRaidDirectionIntel()))) {
       target = sim.raidSignalPoint(raid, 0.78);
     }
     if (!target) return false;
@@ -1168,7 +1177,7 @@ class Ant3D {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
     }
-    if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) {
+    if (!target && (raid.phase === "active" || raid.phase === "retreating" || (raid.phase === "warning" && sim.hasRaidDirectionIntel()))) {
       target = sim.raidSignalPoint(raid, 0.78);
     }
     if (!target) return false;
@@ -1288,7 +1297,10 @@ class Ant3D {
       this.setState("return");
       return true;
     }
-    const target = sim.currentSortieTarget(this.x, this.z);
+    const raid = sim.ensureRaidState();
+    const target = raid.phase === "warning" && sim.hasRaidDirectionIntel()
+      ? sim.raidFormationPointForAnt(this, raid)
+      : sim.currentSortieTarget(this.x, this.z);
     if (target) {
       this.sortieTargetX = target.x;
       this.sortieTargetZ = target.z;
@@ -1553,7 +1565,7 @@ class Ant3D {
       x: this.prevX + (this.x - this.prevX) * alpha,
       z: this.prevZ + (this.z - this.prevZ) * alpha,
       angle: this.prevAngle + normAngle(this.angle - this.prevAngle) * alpha,
-      y: 0.2 + Math.sin(this.gaitPhase + this.animationSeed * 0.000001) * 0.012,
+      y: 0.2 + (sim.wallTopElevationAt?.(this.x, this.z) ?? 0) + Math.sin(this.gaitPhase + this.animationSeed * 0.000001) * 0.012,
       scale: (this.state === "stunned" ? 0.82 : this.state === "clash" ? 1.06 : 1) * this.bodyScale * this.variantConfig.bodyScale,
       state: this.state,
       carrying: this.carrying,
@@ -1869,6 +1881,7 @@ class RivalAnt3D {
     const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
     const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
     const braceBonus = ant.braceIntent > 0 ? variant.brace * 0.34 + (sim?.braceBonusAt(ant.x, ant.z) ?? 0) : 0;
+    const wallAttackBonus = sim?.wallAttackBonusAt?.(ant.x, ant.z) ?? 0;
     const nestDefense = defenseBonus * (ant.variant === "shieldHead" ? 0.78 : ant.role === "guard" || ant.variant === "heavySoldier" ? 0.62 : 0.26);
     const antPower =
       0.7 +
@@ -1881,6 +1894,7 @@ class RivalAnt3D {
       variant.pushMass * 0.17 +
       nestDefense +
       braceBonus +
+      wallAttackBonus +
       carriedPenalty;
     return { rivalPower, antPower };
   }
@@ -1893,15 +1907,20 @@ class RivalAnt3D {
     const length = Math.hypot(dx, dz);
     const lineX = length > 0.0001 ? dx / length : Math.sin(this.angle);
     const lineZ = length > 0.0001 ? dz / length : Math.cos(this.angle);
+    const wallInfo = sim.findEarthWallAt(anchorX, anchorZ, 1.4) ?? sim.findEarthWallAt(ant.x, ant.z, 1.0);
+    const wallSide = wallInfo ? (sim.earthWallLocal(wallInfo.earthwork, this.x, this.z).across < 0 ? -1 : 1) : 1;
+    if (wallInfo) sim.positionAntOnEarthWallTop(ant, wallInfo.earthwork, wallInfo.local.along, 0);
     this.clash = {
       ants: [ant],
       elapsed: 0,
-      duration,
+      duration: duration + (wallInfo ? 0.65 : 0),
       anchorX,
       anchorZ,
       phase: rand(0, Math.PI * 2),
       lineX,
       lineZ,
+      wallId: wallInfo?.earthwork.id ?? null,
+      wallSide,
       nextTrail: 0.24,
       nextRecruit: 0.16,
       nextEffect: 0.06,
@@ -1999,6 +2018,9 @@ class RivalAnt3D {
     }
 
     const lineAngle = Math.atan2(clash.lineZ, clash.lineX);
+    const wall = clash.wallId != null ? sim.earthworks.find((item) => item.id === clash.wallId && item.kind === "earthWall") : null;
+    const wallMetrics = wall ? sim.earthWallMetrics(wall) : null;
+    const wallAnchor = wall ? sim.earthWallLocal(wall, clash.anchorX, clash.anchorZ) : null;
     let pullX = 0;
     let pullZ = 0;
     const count = Math.max(1, clash.ants.length);
@@ -2011,8 +2033,14 @@ class RivalAnt3D {
       const scrape = Math.cos(clash.elapsed * 31 + ant.id * 1.7) * (0.045 + count * 0.01);
       const biteX = Math.cos(orbit) * tug;
       const biteZ = Math.sin(orbit) * tug;
-      const antTargetX = clash.anchorX + biteX + Math.cos(orbit + Math.PI / 2) * scrape;
-      const antTargetZ = clash.anchorZ + biteZ + Math.sin(orbit + Math.PI / 2) * scrape;
+      let antTargetX = clash.anchorX + biteX + Math.cos(orbit + Math.PI / 2) * scrape;
+      let antTargetZ = clash.anchorZ + biteZ + Math.sin(orbit + Math.PI / 2) * scrape;
+      if (wall && wallMetrics && wallAnchor) {
+        const slotAlong = clamp(wallAnchor.along + (index - (count - 1) / 2) * 1.32, -wallMetrics.halfLength * 0.86, wallMetrics.halfLength * 0.86);
+        const top = sim.earthWallWorldPoint(wall, slotAlong, 0);
+        antTargetX = top.x;
+        antTargetZ = top.z;
+      }
       ant.x += (antTargetX - ant.x) * 0.5;
       ant.z += (antTargetZ - ant.z) * 0.5;
       ant.angle = Math.atan2(this.x - ant.x, this.z - ant.z) + Math.sin(clash.elapsed * 16 + index) * 0.3;
@@ -2030,8 +2058,14 @@ class RivalAnt3D {
     const averagePullX = pullX / count;
     const averagePullZ = pullZ / count;
     const brace = Math.sin(clash.elapsed * 27 + this.id) * 0.1;
-    const rivalTargetX = clash.anchorX - averagePullX * (0.28 + count * 0.05) + Math.cos(lineAngle + Math.PI / 2) * brace;
-    const rivalTargetZ = clash.anchorZ - averagePullZ * (0.28 + count * 0.05) + Math.sin(lineAngle + Math.PI / 2) * brace;
+    let rivalTargetX = clash.anchorX - averagePullX * (0.28 + count * 0.05) + Math.cos(lineAngle + Math.PI / 2) * brace;
+    let rivalTargetZ = clash.anchorZ - averagePullZ * (0.28 + count * 0.05) + Math.sin(lineAngle + Math.PI / 2) * brace;
+    if (wall && wallMetrics && wallAnchor) {
+      const along = clamp(wallAnchor.along, -wallMetrics.halfLength * 0.86, wallMetrics.halfLength * 0.86);
+      const foot = sim.earthWallWorldPoint(wall, along, (clash.wallSide || 1) * (wallMetrics.footHalfWidth + 0.62));
+      rivalTargetX = foot.x + Math.cos(lineAngle + Math.PI / 2) * brace * 0.55;
+      rivalTargetZ = foot.z + Math.sin(lineAngle + Math.PI / 2) * brace * 0.55;
+    }
     this.x += (rivalTargetX - this.x) * 0.5;
     this.z += (rivalTargetZ - this.z) * 0.5;
     this.angle = Math.atan2(averagePullX, averagePullZ) + Math.sin(clash.elapsed * 13 + this.id) * 0.24;
@@ -2918,6 +2952,10 @@ class AntColony3D {
     this.branchPreview = null;
     this.pinchStart = null;
     this.dragMoved = false;
+    this.pendingConstructionKind = null;
+    this.wallPlacementDraft = null;
+    this.wallPlacementPreview = null;
+    this.wallPlacementGuide = null;
 
     this.tool = "inspect";
     this.paused = false;
@@ -3038,6 +3076,8 @@ class AntColony3D {
       foodCrumb: new THREE.SphereGeometry(0.8, 10, 8),
       waterCircle: new THREE.CircleGeometry(1, 64),
       trailCircle: new THREE.CircleGeometry(1, 18),
+      wallPlacementLine: new THREE.BoxGeometry(1, 1, 1),
+      wallPlacementMarker: new THREE.SphereGeometry(1, 14, 8),
       impactRing: new THREE.TorusGeometry(1, 0.035, 8, 72),
       combatDust: new THREE.SphereGeometry(1, 8, 6),
       combatSlash: new THREE.CylinderGeometry(1, 1, 1, 6, 1),
@@ -3101,6 +3141,10 @@ class AntColony3D {
       trailWater: new THREE.MeshBasicMaterial({ color: 0x55aee0, transparent: true, opacity: 0.18, depthWrite: false }),
       earthworkTrail: new THREE.MeshBasicMaterial({ color: 0xb68b43, transparent: true, opacity: 0.3, depthWrite: false }),
       earthworkBarricade: new THREE.MeshBasicMaterial({ color: 0x8a6335, transparent: true, opacity: 0.28, depthWrite: false }),
+      earthworkWall: new THREE.MeshBasicMaterial({ color: 0x6f4b29, transparent: true, opacity: 0.36, depthWrite: false }),
+      earthworkSentry: new THREE.MeshBasicMaterial({ color: 0x9b7442, transparent: true, opacity: 0.32, depthWrite: false }),
+      wallPlacementLine: new THREE.MeshBasicMaterial({ color: 0xf0c857, transparent: true, opacity: 0.9, depthWrite: false }),
+      wallPlacementMarker: new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 0.92, depthWrite: false }),
     };
 
     this.materials.antByState = {
@@ -3249,6 +3293,29 @@ class AntColony3D {
     return clamp(bonus, 0, 0.08);
   }
 
+  completedEarthworks(kind) {
+    return (this.earthworks ?? []).filter((earthwork) => earthwork.kind === kind && earthwork.strength > 0.95);
+  }
+
+  sentryMoundCount() {
+    return this.completedEarthworks("sentryMound").length;
+  }
+
+  raidWarningBonusSeconds() {
+    const def = getConstructionDef("sentryMound");
+    const count = this.sentryMoundCount();
+    if (count <= 0) return 0;
+    return Math.min(8, def.raidWarningBonus + Math.max(0, count - 1) * 3);
+  }
+
+  hasRaidDirectionIntel() {
+    return this.sentryMoundCount() > 0;
+  }
+
+  shouldRevealRaidDirection(raid = this.ensureRaidState()) {
+    return raid.phase !== "warning" || this.hasRaidDirectionIntel();
+  }
+
   earthworkSpeedAt(x, z, variant = "worker") {
     let multiplier = 1;
     for (const earthwork of this.earthworks ?? []) {
@@ -3262,35 +3329,160 @@ class AntColony3D {
     return clamp(multiplier, 1, 1.16);
   }
 
+  earthWallMetrics(earthwork) {
+    const radius = earthwork?.radius ?? 14;
+    return {
+      halfLength: radius * 1.16,
+      topHalfWidth: Math.max(0.85, radius * 0.07),
+      slowHalfWidth: Math.max(3.4, radius * 0.34),
+      footHalfWidth: Math.max(1.9, radius * 0.15),
+      topHeight: getConstructionDef("earthWall").wallTopHeight * clamp(earthwork?.strength ?? 0, 0, 1),
+    };
+  }
+
+  earthWallAxes(earthwork) {
+    const rotation = earthwork?.rotation ?? 0;
+    const axisX = Math.cos(rotation);
+    const axisZ = Math.sin(rotation);
+    return {
+      axisX,
+      axisZ,
+      normalX: -axisZ,
+      normalZ: axisX,
+    };
+  }
+
+  earthWallLocal(earthwork, x, z) {
+    const axes = this.earthWallAxes(earthwork);
+    const dx = x - earthwork.x;
+    const dz = z - earthwork.z;
+    return {
+      along: dx * axes.axisX + dz * axes.axisZ,
+      across: dx * axes.normalX + dz * axes.normalZ,
+      axes,
+    };
+  }
+
+  earthWallWorldPoint(earthwork, along, across = 0) {
+    const axes = this.earthWallAxes(earthwork);
+    return {
+      x: earthwork.x + axes.axisX * along + axes.normalX * across,
+      z: earthwork.z + axes.axisZ * along + axes.normalZ * across,
+    };
+  }
+
+  findEarthWallAt(x, z, extraWidth = 0) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const earthwork of this.earthworks ?? []) {
+      if (earthwork.kind !== "earthWall" || earthwork.strength <= 0.08) continue;
+      const metrics = this.earthWallMetrics(earthwork);
+      const local = this.earthWallLocal(earthwork, x, z);
+      if (Math.abs(local.along) > metrics.halfLength + 1.2) continue;
+      const width = metrics.slowHalfWidth + extraWidth;
+      if (Math.abs(local.across) > width) continue;
+      const score = (1 - Math.abs(local.across) / Math.max(width, 0.001)) * earthwork.strength;
+      if (score > bestScore) {
+        best = { earthwork, metrics, local, score };
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  wallTopElevationAt(x, z) {
+    let elevation = 0;
+    for (const earthwork of this.earthworks ?? []) {
+      if (earthwork.kind !== "earthWall" || earthwork.strength <= 0.08) continue;
+      const metrics = this.earthWallMetrics(earthwork);
+      const local = this.earthWallLocal(earthwork, x, z);
+      if (Math.abs(local.along) > metrics.halfLength || Math.abs(local.across) > metrics.topHalfWidth) continue;
+      const crest = 1 - Math.abs(local.across) / Math.max(metrics.topHalfWidth, 0.001);
+      elevation = Math.max(elevation, metrics.topHeight * (0.72 + crest * 0.28));
+    }
+    return elevation;
+  }
+
+  wallAttackBonusAt(x, z) {
+    let bonus = 0;
+    for (const earthwork of this.earthworks ?? []) {
+      if (earthwork.kind !== "earthWall" || earthwork.strength <= 0.82) continue;
+      const def = getConstructionDef(earthwork.kind);
+      const metrics = this.earthWallMetrics(earthwork);
+      const local = this.earthWallLocal(earthwork, x, z);
+      if (Math.abs(local.along) > metrics.halfLength || Math.abs(local.across) > metrics.topHalfWidth + 0.42) continue;
+      const crest = 1 - Math.min(1, Math.abs(local.across) / Math.max(metrics.topHalfWidth + 0.42, 0.001));
+      bonus = Math.max(bonus, def.wallAttackBonus * earthwork.strength * (0.82 + crest * 0.18));
+    }
+    return bonus;
+  }
+
+  positionAntOnEarthWallTop(ant, earthwork, along, slotOffset = 0) {
+    if (!ant || !earthwork) return;
+    const metrics = this.earthWallMetrics(earthwork);
+    const clampedAlong = clamp(along + slotOffset, -metrics.halfLength * 0.88, metrics.halfLength * 0.88);
+    const point = this.earthWallWorldPoint(earthwork, clampedAlong, 0);
+    ant.x = point.x;
+    ant.z = point.z;
+    ant.prevX = point.x;
+    ant.prevZ = point.z;
+  }
+
   rivalSpeedAt(x, z) {
     let multiplier = 1;
+    let hasWallInfluence = false;
     for (const earthwork of this.earthworks ?? []) {
-      if (earthwork.kind !== "lowBarricade" || earthwork.strength <= 0) continue;
+      const def = getConstructionDef(earthwork.kind);
+      if (def.enemySlowStrength <= 0 || earthwork.strength <= 0) continue;
+      if (earthwork.kind === "earthWall") {
+        const metrics = this.earthWallMetrics(earthwork);
+        const local = this.earthWallLocal(earthwork, x, z);
+        if (Math.abs(local.along) > metrics.halfLength || Math.abs(local.across) > metrics.slowHalfWidth) continue;
+        const crossing = 1 - Math.abs(local.across) / Math.max(metrics.slowHalfWidth, 0.001);
+        hasWallInfluence = true;
+        multiplier *= 1 - def.enemySlowStrength * crossing * earthwork.strength;
+        continue;
+      }
       const d = distance2(x, z, earthwork.x, earthwork.z);
       if (d >= earthwork.radius) continue;
-      multiplier *= 1 - 0.16 * (1 - d / earthwork.radius) * earthwork.strength;
+      multiplier *= 1 - def.enemySlowStrength * (1 - d / earthwork.radius) * earthwork.strength;
     }
     const shieldBlock = this.shieldBlockStrengthAt(x, z);
     if (shieldBlock > 0) multiplier *= 1 - 0.34 * shieldBlock;
-    return clamp(multiplier, 0.54, 1);
+    return clamp(multiplier, hasWallInfluence ? 0.32 : 0.54, 1);
   }
 
   braceBonusAt(x, z) {
     let bonus = 0;
+    let hasWallInfluence = false;
     for (const earthwork of this.earthworks ?? []) {
-      if (earthwork.kind !== "lowBarricade" || earthwork.strength <= 0) continue;
+      const def = getConstructionDef(earthwork.kind);
+      if (def.braceBonus <= 0 || earthwork.strength <= 0) continue;
+      if (earthwork.kind === "earthWall") {
+        const metrics = this.earthWallMetrics(earthwork);
+        const local = this.earthWallLocal(earthwork, x, z);
+        if (Math.abs(local.along) > metrics.halfLength || Math.abs(local.across) > metrics.footHalfWidth) continue;
+        hasWallInfluence = true;
+        const crest = 1 - Math.abs(local.across) / Math.max(metrics.footHalfWidth, 0.001);
+        bonus += def.braceBonus * crest * earthwork.strength;
+        continue;
+      }
       const d = distance2(x, z, earthwork.x, earthwork.z);
-      if (d < earthwork.radius) bonus += 0.28 * (1 - d / earthwork.radius) * earthwork.strength;
+      if (d < earthwork.radius) {
+        bonus += def.braceBonus * (1 - d / earthwork.radius) * earthwork.strength;
+      }
     }
     bonus += this.shieldBlockStrengthAt(x, z) * 0.38;
-    return clamp(bonus, 0, 0.45);
+    return clamp(bonus, 0, hasWallInfluence ? 0.62 : 0.45);
   }
 
   shieldHeadBlockPoint(ant = null) {
     const raid = this.ensureRaidState();
     let target = this.currentSortieTarget(ant?.x ?? this.nest.x, ant?.z ?? this.nest.z);
     if (!target && ant?.sortieTargetX != null && ant?.sortieTargetZ != null) target = { x: ant.sortieTargetX, z: ant.sortieTargetZ };
-    if (!target && (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating")) target = this.raidSignalPoint(raid, 0.78);
+    if (!target && (raid.phase === "active" || raid.phase === "retreating" || (raid.phase === "warning" && this.hasRaidDirectionIntel()))) {
+      target = this.raidSignalPoint(raid, 0.78);
+    }
 
     let dx = target ? target.x - this.nest.x : 0;
     let dz = target ? target.z - this.nest.z : 0;
@@ -3415,6 +3607,12 @@ class AntColony3D {
   }
 
   startConstruction(kind) {
+    if (kind === "earthWall") return this.beginConstructionPlacement(kind);
+    this.pendingConstructionKind = null;
+    return this.commitConstruction(kind, this.constructionTarget(kind));
+  }
+
+  beginConstructionPlacement(kind) {
     const def = getConstructionDef(kind);
     const checked = this.canStartConstruction(kind);
     if (!checked.ok) {
@@ -3422,8 +3620,32 @@ class AntColony3D {
       this.updateStats();
       return false;
     }
-    const target = this.constructionTarget(kind);
+    this.pendingConstructionKind = normalizeConstructionKind(kind);
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
+    this.constructionMessage = `${def.label}の線指定中`;
+    this.updateStats();
+    return true;
+  }
+
+  confirmConstructionPlacement(start, end = null, kind = this.pendingConstructionKind) {
+    if (!start || !isConstructionKind(kind)) return false;
+    const target = this.constructionTarget(kind, end ? { start, end } : start);
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
+    return this.commitConstruction(kind, target);
+  }
+
+  commitConstruction(kind, target) {
+    const def = getConstructionDef(kind);
+    const checked = this.canStartConstruction(kind);
+    if (!checked.ok) {
+      this.constructionMessage = checked.reason;
+      this.updateStats();
+      return false;
+    }
     const task = this.createBuildTask(kind, target.x, target.z, target);
+    if (this.pendingConstructionKind === kind) this.pendingConstructionKind = null;
     this.constructionMessage = def.startMessage;
     this.pushLog(def.startLog);
     this.syncEarthworksToColony();
@@ -3432,19 +3654,35 @@ class AntColony3D {
     return Boolean(task);
   }
 
-  constructionTarget(kind) {
+  constructionTarget(kind, placementPoint = null) {
     if (kind === "trailReinforce") {
       const def = getConstructionDef(kind);
       const foodTrail = this.findStrongestTrail("food", this.nest.x, this.nest.z, 96);
       const x = foodTrail ? foodTrail.x : this.nest.x + this.nest.radius + 17;
       const z = foodTrail ? foodTrail.z : this.nest.z + 7;
       const angle = Math.atan2(z - this.nest.z, x - this.nest.x);
-      return { x, z, radius: def.targetRadius, maxProgress: def.defaultMaxProgress, rotation: angle };
+      return { x, z, radius: def.targetRadius, maxProgress: def.buildCost, rotation: angle };
     }
     const def = getConstructionDef(kind);
+    if (kind === "earthWall" && placementPoint) {
+      const start = placementPoint.start ?? placementPoint;
+      const end = placementPoint.end ?? placementPoint;
+      return this.wallTargetFromLine(start, end);
+    }
+    if (kind === "sentryMound") {
+      const completed = this.earthworks.filter((earthwork) => earthwork.kind === "sentryMound" && earthwork.strength > 0.82).length;
+      const angle = -0.74 + completed * Math.PI * 0.92 + this.colony.nestLevel * 0.08;
+      return {
+        x: this.nest.x + Math.cos(angle) * (this.nest.radius + 12.5),
+        z: this.nest.z + Math.sin(angle) * (this.nest.radius + 12.5),
+        radius: def.targetRadius,
+        maxProgress: def.buildCost,
+        rotation: angle,
+      };
+    }
     const raid = this.ensureRaidState();
     let point;
-    if (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating") {
+    if ((raid.phase === "active" || raid.phase === "retreating") || (raid.phase === "warning" && this.hasRaidDirectionIntel())) {
       point = this.raidSignalPoint(raid, 0.36);
     } else {
       const threat = this.findRivalThreat(this.nest.x, this.nest.z, 96);
@@ -3455,7 +3693,7 @@ class AntColony3D {
       x: this.nest.x + Math.cos(angle) * (this.nest.radius + 9.5),
       z: this.nest.z + Math.sin(angle) * (this.nest.radius + 9.5),
       radius: def.targetRadius,
-      maxProgress: def.defaultMaxProgress,
+      maxProgress: def.buildCost,
       rotation: angle,
     };
   }
@@ -3466,7 +3704,7 @@ class AntColony3D {
     const id = this.colony.nextEarthworkId ?? 1;
     this.colony.nextEarthworkId = id + 1;
     const radius = options.radius ?? def.defaultRadius;
-    const maxProgress = options.maxProgress ?? def.defaultMaxProgress;
+    const maxProgress = options.maxProgress ?? def.buildCost;
     const earthwork = this.addEarthwork({ id, kind: constructionKind, x, z, radius, progress: 0, maxProgress, owner: "colony", rotation: options.rotation ?? 0 });
     const task = {
       id: earthwork.id,
@@ -3487,14 +3725,20 @@ class AntColony3D {
   }
 
   addEarthwork(config) {
-    const material = config.kind === "lowBarricade" ? this.materials.earthworkBarricade.clone() : this.materials.earthworkTrail.clone();
+    const material =
+      config.kind === "earthWall" ? this.materials.earthworkWall.clone() :
+      config.kind === "lowBarricade" ? this.materials.earthworkBarricade.clone() :
+      config.kind === "sentryMound" ? this.materials.earthworkSentry.clone() :
+      this.materials.earthworkTrail.clone();
     const group = new THREE.Group();
     group.position.set(config.x, 0, config.z);
     group.rotation.y = config.rotation ?? 0;
     const mesh = new THREE.Mesh(this.geometries.trailCircle, material);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(0, config.kind === "lowBarricade" ? 0.075 : 0.05, 0);
-    if (config.kind === "lowBarricade") mesh.scale.set(config.radius * 0.95, config.radius * 0.28, 1);
+    mesh.position.set(0, config.kind === "earthWall" ? 0.22 : config.kind === "sentryMound" ? 0.12 : config.kind === "lowBarricade" ? 0.075 : 0.05, 0);
+    if (config.kind === "earthWall") mesh.scale.set(config.radius * 1.16, config.radius * 0.14, 1);
+    else if (config.kind === "sentryMound") mesh.scale.set(config.radius * 0.72, config.radius * 0.5, 1);
+    else if (config.kind === "lowBarricade") mesh.scale.set(config.radius * 0.95, config.radius * 0.28, 1);
     else mesh.scale.set(config.radius * 1.35, config.radius * 0.36, 1);
     mesh.visible = false;
     group.add(mesh);
@@ -3523,6 +3767,45 @@ class AntColony3D {
 
   createEarthworkDetails(kind, radius) {
     const details = [];
+    if (kind === "earthWall") {
+      const count = 54;
+      for (let i = 0; i < count; i += 1) {
+        const t = count === 1 ? 0.5 : i / (count - 1);
+        const layer = i % 5;
+        const localX = (t - 0.5) * radius * 2.12 + Math.sin(i * 1.21) * 0.24;
+        const localZ = (layer - 2) * radius * 0.028 + Math.cos(i * 0.77) * 0.08;
+        const scale = 0.24 + (layer % 3) * 0.035 + (i % 5) * 0.014;
+        const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
+        mesh.position.set(localX, 0.25 + layer * 0.095 + scale * 0.32, localZ);
+        mesh.scale.set(scale * 1.1, scale * 1.55, scale * 0.7);
+        mesh.rotation.set(Math.sin(i * 0.9) * 0.16, (i * 1.67) % Math.PI, Math.cos(i * 1.1) * 0.12);
+        mesh.castShadow = this.quality.shadowQuality !== "off";
+        mesh.receiveShadow = this.quality.shadowQuality !== "off";
+        mesh.visible = false;
+        details.push({ mesh, threshold: 0.05 + t * 0.88 });
+      }
+      return details;
+    }
+    if (kind === "sentryMound") {
+      const count = 22;
+      for (let i = 0; i < count; i += 1) {
+        const ring = i < 6 ? 0.22 : i < 14 ? 0.46 : 0.72;
+        const angle = i * 2.399 + ring * 1.7;
+        const jitter = 0.78 + ((i * 37) % 11) * 0.018;
+        const localX = Math.cos(angle) * radius * ring * jitter;
+        const localZ = Math.sin(angle) * radius * ring * jitter * 0.72;
+        const scale = 0.24 + (1 - ring) * 0.22 + (i % 4) * 0.025;
+        const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
+        mesh.position.set(localX, 0.16 + (1 - ring) * 0.32 + scale * 0.32, localZ);
+        mesh.scale.set(scale * 1.08, scale * (1.22 + (1 - ring) * 0.58), scale * 0.86);
+        mesh.rotation.set(Math.sin(i * 0.8) * 0.15, (i * 1.41) % Math.PI, Math.cos(i * 1.2) * 0.12);
+        mesh.castShadow = this.quality.shadowQuality !== "off";
+        mesh.receiveShadow = this.quality.shadowQuality !== "off";
+        mesh.visible = false;
+        details.push({ mesh, threshold: 0.08 + (i / count) * 0.72 });
+      }
+      return details;
+    }
     if (kind === "lowBarricade") {
       const count = 26;
       for (let i = 0; i < count; i += 1) {
@@ -3679,9 +3962,11 @@ class AntColony3D {
       if (!earthwork.mesh) continue;
       earthwork.strength = clamp(earthwork.progress / Math.max(earthwork.maxProgress, 0.001), 0, 1);
       earthwork.mesh.visible = earthwork.strength > 0.02;
-      earthwork.mesh.material.opacity = (earthwork.kind === "lowBarricade" ? 0.28 : 0.3) * Math.max(0.15, earthwork.strength);
+      earthwork.mesh.material.opacity = (earthwork.kind === "earthWall" ? 0.42 : earthwork.kind === "sentryMound" ? 0.34 : earthwork.kind === "lowBarricade" ? 0.28 : 0.3) * Math.max(0.15, earthwork.strength);
       const scale = 0.78 + earthwork.strength * 0.22;
-      if (earthwork.kind === "lowBarricade") earthwork.mesh.scale.set(earthwork.radius * 0.95 * scale, earthwork.radius * 0.28 * scale, 1);
+      if (earthwork.kind === "earthWall") earthwork.mesh.scale.set(earthwork.radius * 1.16 * scale, earthwork.radius * 0.14 * scale, 1);
+      else if (earthwork.kind === "sentryMound") earthwork.mesh.scale.set(earthwork.radius * 0.72 * scale, earthwork.radius * 0.5 * scale, 1);
+      else if (earthwork.kind === "lowBarricade") earthwork.mesh.scale.set(earthwork.radius * 0.95 * scale, earthwork.radius * 0.28 * scale, 1);
       else earthwork.mesh.scale.set(earthwork.radius * 1.35 * scale, earthwork.radius * 0.36 * scale, 1);
       for (const detail of earthwork.details ?? []) {
         detail.mesh.visible = earthwork.strength >= detail.threshold;
@@ -3878,6 +4163,8 @@ class AntColony3D {
     ui.soldierSortieBtn.addEventListener("click", () => this.startSoldierSortie());
     ui.constructionTrailBtn?.addEventListener("click", () => this.startConstruction("trailReinforce"));
     ui.constructionBarricadeBtn?.addEventListener("click", () => this.startConstruction("lowBarricade"));
+    ui.constructionWallBtn?.addEventListener("click", () => this.startConstruction("earthWall"));
+    ui.constructionSentryBtn?.addEventListener("click", () => this.startConstruction("sentryMound"));
 
     const canvas = this.renderer.domElement;
     this.input = new InputManager(this, canvas);
@@ -3956,6 +4243,9 @@ class AntColony3D {
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.constructionMessage = "待機";
+    this.pendingConstructionKind = null;
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
     this.renderAntBuffer.length = 0;
     this.soldierSortieCooldown = 0;
     this.sortieRetireQueue = [];
@@ -4686,10 +4976,32 @@ class AntColony3D {
     const threat = this.findRivalThreat(x, z, SOLDIER_SORTIE_SEEK_RANGE);
     if (threat) return { x: threat.x, z: threat.z, kind: "rival" };
     const raid = this.ensureRaidState();
+    if (raid.phase === "warning" && !this.hasRaidDirectionIntel()) return null;
     if (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating") {
       return { ...this.raidSignalPoint(raid, 0.78), kind: "raid-signal" };
     }
     return null;
+  }
+
+  raidFormationPointForAnt(ant, raid = this.ensureRaidState()) {
+    const angle = raid.approachAngle ?? 0;
+    const forwardX = Math.cos(angle);
+    const forwardZ = Math.sin(angle);
+    const flankX = -forwardZ;
+    const flankZ = forwardX;
+    const soldiers = this.deployedSoldiers().sort((a, b) => (a.sortieIndex ?? 0) - (b.sortieIndex ?? 0));
+    const count = Math.max(1, soldiers.length || this.plannedSortieCount());
+    const index = Math.max(0, soldiers.indexOf(ant));
+    const centered = index - (count - 1) / 2;
+    const spacing = ant?.variant === "heavySoldier" ? 3.8 : 4.8;
+    const maxOffset = Math.min(18, 3.2 + count * 2.6);
+    const offset = clamp(centered * spacing, -maxOffset, maxOffset);
+    const depth = this.nest.radius + (ant?.variant === "heavySoldier" ? 18.5 : 22.5);
+    return {
+      x: this.nest.x + forwardX * depth + flankX * offset,
+      z: this.nest.z + forwardZ * depth + flankZ * offset,
+      kind: "raid-formation",
+    };
   }
 
   makeRoomForSortie(count) {
@@ -4766,11 +5078,13 @@ class AntColony3D {
 
     this.soldierSortieCooldown = SOLDIER_SORTIE_COOLDOWN_SECONDS;
     const heavyText = composition.heavy > 0 ? ` / 重兵装${composition.heavy}匹` : "";
+    const raid = this.ensureRaidState();
+    const formationText = raid.phase === "warning" && this.hasRaidDirectionIntel() ? " / 見張り塚の方角へ布陣" : "";
     const shieldText = composition.shield > 0 ? ` / 盾頭${composition.shield}匹` : "";
     const captainText = composition.captain > 0 ? ` / 小隊長${composition.captain}匹` : "";
     const acidText = composition.acid > 0 ? ` / 酸射${composition.acid}匹` : "";
     const scoutText = composition.scout > 0 ? ` / 斥候${composition.scout}匹` : "";
-    this.pushLog(`兵隊出撃: ${count}匹${heavyText}${shieldText}${captainText}${acidText}${scoutText}が巣口から防衛へ`);
+    this.pushLog(`兵隊出撃: ${count}匹${heavyText}${shieldText}${captainText}${acidText}${scoutText}が巣口から防衛へ${formationText}`);
     this.updateStats();
     this.saveColony();
     return true;
@@ -5067,6 +5381,7 @@ class AntColony3D {
     window.removeEventListener("resize", this.boundResize);
     window.removeEventListener("pagehide", this.boundPageHide);
     this.clearBranchPreview();
+    this.clearWallPlacementPreview();
     this.antRenderer?.destroy();
     this.squadRingSystem?.destroy();
     this.roleLabelSystem?.destroy();
@@ -5103,6 +5418,10 @@ class AntColony3D {
     const point = this.screenToGround(event.clientX, event.clientY);
     if (!point) return;
     this.pointerStart = { screenX: event.clientX, screenY: event.clientY, ...point };
+    if (this.pendingConstructionKind === "earthWall") {
+      this.wallPlacementDraft = { start: point, end: point };
+      this.updateWallPlacementPreview();
+    }
   }
 
   onPointerMove(event) {
@@ -5122,6 +5441,15 @@ class AntColony3D {
     const dy = event.clientY - previous.y;
     if (Math.abs(dx) + Math.abs(dy) > 2) this.dragMoved = true;
 
+    if (this.pendingConstructionKind === "earthWall" && this.wallPlacementDraft?.start) {
+      const point = this.screenToGround(event.clientX, event.clientY);
+      if (point) {
+        this.wallPlacementDraft.end = point;
+        this.updateWallPlacementPreview();
+      }
+      return;
+    }
+
     this.targetCameraYaw -= dx * 0.006;
     this.targetCameraPitch = clamp(this.targetCameraPitch + dy * 0.004, 0.62, 1.28);
   }
@@ -5129,7 +5457,14 @@ class AntColony3D {
   onPointerUp(event) {
     event.preventDefault();
     const point = this.screenToGround(event.clientX, event.clientY);
-    if (point && !this.dragMoved) this.selectNearestAnt(point.x, point.z);
+    if (point && this.pendingConstructionKind === "earthWall") {
+      const start = this.wallPlacementDraft?.start ?? point;
+      this.confirmConstructionPlacement(start, point, this.pendingConstructionKind);
+    } else if (point && !this.dragMoved && this.pendingConstructionKind) {
+      this.confirmConstructionPlacement(point, null, this.pendingConstructionKind);
+    } else if (point && !this.dragMoved) {
+      this.selectNearestAnt(point.x, point.z);
+    }
     this.pointerMap.delete(event.pointerId);
     if (this.pointerMap.size < 2) this.pinchStart = null;
   }
@@ -5197,7 +5532,8 @@ class AntColony3D {
   }
 
   raidWarningSeconds() {
-    return this.raidSoonMode ? RAID_SOON_WARNING_SECONDS : RAID_WARNING_SECONDS;
+    const base = this.raidSoonMode ? RAID_SOON_WARNING_SECONDS : RAID_WARNING_SECONDS;
+    return base + this.raidWarningBonusSeconds();
   }
 
   raidEnemyCount() {
@@ -5222,8 +5558,10 @@ class AntColony3D {
   }
 
   emitRaidSignal(raid = this.ensureRaidState(), strength = 0.72) {
+    if (!this.shouldRevealRaidDirection(raid)) return false;
     const point = this.raidSignalPoint(raid);
     this.addTrail(point.x, point.z, "alarm", strength);
+    return true;
   }
 
   enterRaidWarning() {
@@ -5239,9 +5577,15 @@ class AntColony3D {
     raid.enemyCasualties = 0;
     raid.startFallenAnts = Math.floor(this.colony.fallenAnts ?? 0);
     raid.lastOutcome = "warning";
+    const hasIntel = this.hasRaidDirectionIntel();
     this.emitRaidSignal(raid, 0.88);
-    this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹が集団接近`);
-    this.showRaidNotice(`敵アリ接近: 外縁から${raid.activeCount}匹。兵隊を出撃できます`, "warning");
+    if (hasIntel) {
+      this.pushLog(`見張り塚が敵アリの接近方角を捕捉: 外縁から${raid.activeCount}匹`);
+      this.showRaidNotice(`敵アリ接近: 見張り塚が方角を捕捉。兵隊を前方布陣できます`, "warning");
+    } else {
+      this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹。方角不明`);
+      this.showRaidNotice(`敵アリ接近: 方角不明。兵隊を出撃できます`, "warning");
+    }
   }
 
   beginRaid() {
@@ -5830,6 +6174,121 @@ class AntColony3D {
     }
   }
 
+  earthWallLineLimits() {
+    const def = getConstructionDef("earthWall");
+    return {
+      minLength: def.targetRadius * 0.9,
+      defaultLength: def.targetRadius * 2.32,
+      maxLength: def.targetRadius * 3.42,
+    };
+  }
+
+  earthWallBuildCostForLength(length) {
+    const def = getConstructionDef("earthWall");
+    const limits = this.earthWallLineLimits();
+    const normalizedLength = clamp(length, limits.minLength, limits.maxLength);
+    return def.buildCost * (normalizedLength / limits.defaultLength);
+  }
+
+  wallTargetFromLine(start, end) {
+    if (!start || !end) return null;
+    const limits = this.earthWallLineLimits();
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const rawLength = Math.hypot(dx, dz);
+    const fallbackAngle = Math.atan2(start.z - this.nest.z, start.x - this.nest.x) + Math.PI / 2;
+    const angle = rawLength > 0.001 ? Math.atan2(dz, dx) : fallbackAngle;
+    const length = clamp(rawLength, limits.minLength, limits.maxLength);
+    let midX = (start.x + end.x) / 2;
+    let midZ = (start.z + end.z) / 2;
+    const nestDx = midX - this.nest.x;
+    const nestDz = midZ - this.nest.z;
+    const nestDistance = Math.hypot(nestDx, nestDz) || 1;
+    const minNestDistance = this.nest.radius + 7.5;
+    if (nestDistance < minNestDistance) {
+      const pushX = Math.abs(nestDx) + Math.abs(nestDz) > 0.001 ? nestDx / nestDistance : Math.cos(angle + Math.PI / 2);
+      const pushZ = Math.abs(nestDx) + Math.abs(nestDz) > 0.001 ? nestDz / nestDistance : Math.sin(angle + Math.PI / 2);
+      midX = this.nest.x + pushX * minNestDistance;
+      midZ = this.nest.z + pushZ * minNestDistance;
+    }
+    const d = Math.hypot(midX, midZ) || 1;
+    const maxCenterDistance = this.worldRadius - length * 0.55 - 3;
+    const centerDistance = Math.min(d, Math.max(12, maxCenterDistance));
+    const x = (midX / d) * centerDistance;
+    const z = (midZ / d) * centerDistance;
+    const radius = length / 2.32;
+    return {
+      x,
+      z,
+      radius,
+      maxProgress: this.earthWallBuildCostForLength(length),
+      rotation: angle,
+      length,
+    };
+  }
+
+  updateWallPlacementPreview() {
+    this.clearWallPlacementPreview();
+    if (!this.wallPlacementDraft?.start || !this.wallPlacementDraft?.end) return;
+    const target = this.wallTargetFromLine(this.wallPlacementDraft.start, this.wallPlacementDraft.end);
+    if (!target) return;
+    const material = this.materials.earthworkWall.clone();
+    material.opacity = 0.58;
+    const mesh = new THREE.Mesh(this.geometries.trailCircle, material);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(target.x, 0.32, target.z);
+    mesh.rotation.y = target.rotation;
+    mesh.scale.set(target.radius * 1.16, target.radius * 0.14, 1);
+    this.scene.add(mesh);
+    this.wallPlacementPreview = mesh;
+    this.wallPlacementGuide = this.createWallPlacementGuide(target);
+    this.scene.add(this.wallPlacementGuide);
+    this.constructionMessage = `土壁の線指定中 / 工数 ${fmt(target.maxProgress, 1)}`;
+    this.updateStats();
+  }
+
+  createWallPlacementGuide(target) {
+    const group = new THREE.Group();
+    group.name = "earth-wall-placement-guide";
+    const line = new THREE.Mesh(this.geometries.wallPlacementLine, this.materials.wallPlacementLine.clone());
+    line.name = "earth-wall-placement-line";
+    line.position.set(target.x, 0.68, target.z);
+    line.rotation.y = target.rotation;
+    line.scale.set(target.length, 0.08, 0.42);
+    line.renderOrder = 20;
+    group.add(line);
+
+    const dx = Math.cos(target.rotation) * target.length * 0.5;
+    const dz = Math.sin(target.rotation) * target.length * 0.5;
+    for (const sign of [-1, 1]) {
+      const marker = new THREE.Mesh(this.geometries.wallPlacementMarker, this.materials.wallPlacementMarker.clone());
+      marker.name = sign < 0 ? "earth-wall-placement-start" : "earth-wall-placement-end";
+      marker.position.set(target.x + dx * sign, 0.76, target.z + dz * sign);
+      marker.scale.set(0.92, 0.22, 0.92);
+      marker.renderOrder = 21;
+      group.add(marker);
+    }
+
+    return group;
+  }
+
+  clearWallPlacementPreview() {
+    if (this.wallPlacementGuide) {
+      disposeObject3D(this.wallPlacementGuide, {
+        skipGeometries: this.sharedGeometries,
+        skipMaterials: this.sharedMaterials,
+      });
+      this.wallPlacementGuide = null;
+    }
+    if (this.wallPlacementPreview) {
+      disposeObject3D(this.wallPlacementPreview, {
+        skipGeometries: this.sharedGeometries,
+        skipMaterials: this.sharedMaterials,
+      });
+      this.wallPlacementPreview = null;
+    }
+  }
+
   eraseAt(x, z) {
     const radius = 7;
     const removeFrom = (list, predicate, onRemove = () => {}) => {
@@ -6267,7 +6726,27 @@ class AntColony3D {
   constructionButtonTitle(kind, commandState) {
     if (!isConstructionKind(kind)) return commandState?.reason ?? "";
     const detail = getConstructionDef(kind);
-    return `${detail.command}: ${detail.timeNote} / 採土・往復あり / ${detail.effect}${commandState?.reason ? ` / ${commandState.reason}` : ""}`;
+    const costLabel = kind === "earthWall" ? `基準工数 ${fmt(detail.buildCost, 1)} / 長さで変動` : `工数 ${fmt(detail.buildCost, 1)}`;
+    return `${detail.command}: ${costLabel} / 目安 ${detail.timeHint} / ${detail.timeNote} / 採土・往復あり / ${detail.effect}${commandState?.reason ? ` / ${commandState.reason}` : ""}`;
+  }
+
+  updateConstructionCommandButton(button, kind, commandState) {
+    if (!button || !isConstructionKind(kind)) return;
+    const detail = getConstructionDef(kind);
+    const isPending = this.pendingConstructionKind === kind;
+    button.disabled = !commandState.ok && !isPending;
+    const draftTarget = isPending && this.wallPlacementDraft?.start && this.wallPlacementDraft?.end
+      ? this.wallTargetFromLine(this.wallPlacementDraft.start, this.wallPlacementDraft.end)
+      : null;
+    const draftCost = draftTarget?.maxProgress ?? detail.buildCost;
+    button.title = isPending ? `${detail.command}: 線指定中 / ドラッグで長さ指定 / 工数 ${fmt(draftCost, 1)}` : this.constructionButtonTitle(kind, commandState);
+    const main = button.querySelector(".button-main");
+    const sub = button.querySelector(".button-sub");
+    if (main) main.textContent = detail.command;
+    if (sub) {
+      const costLabel = kind === "earthWall" ? `基準工数${fmt(detail.buildCost, 1)} / 長さで変動` : `工数${fmt(detail.buildCost, 1)}`;
+      sub.textContent = isPending ? `線指定中 / 工数${fmt(draftCost, 1)} / 長さで変動` : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
+    }
   }
 
   constructionAssignees(task) {
@@ -6314,6 +6793,7 @@ class AntColony3D {
     for (const task of activeTasks) {
       const progress = clamp(task.progress / Math.max(task.maxProgress, 0.001), 0, 1);
       const percent = Math.round(progress * 100);
+      const detail = getConstructionDef(task.kind);
       const assigneeCount = Math.max(this.constructionAssignees(task).length, this.normalizeBuildTaskClaims(task).length);
       const row = document.createElement("div");
       row.className = "construction-task";
@@ -6335,7 +6815,7 @@ class AntColony3D {
 
       const meta = document.createElement("div");
       meta.className = "construction-task-meta";
-      meta.textContent = `${this.constructionTaskStatus(task)} / 担当 ${fmt(assigneeCount, 0)}/${fmt(assigneeLimit, 0)}`;
+      meta.textContent = `${this.constructionTaskStatus(task)} / 工数 ${fmt(task.maxProgress, 1)} / 目安 ${detail.timeHint} / 担当 ${fmt(assigneeCount, 0)}/${fmt(assigneeLimit, 0)}`;
 
       row.append(header, track, meta);
       ui.constructionProgressList.append(row);
@@ -6352,6 +6832,8 @@ class AntColony3D {
     const completeConstruction = this.earthworks.filter((earthwork) => earthwork.strength > 0.95).length;
     const trailCommand = this.canStartConstruction("trailReinforce");
     const barricadeCommand = this.canStartConstruction("lowBarricade");
+    const wallCommand = this.canStartConstruction("earthWall");
+    const sentryCommand = this.canStartConstruction("sentryMound");
     const cooldownLeft = Math.ceil(this.soldierSortieCooldown);
     const raid = this.ensureRaidState();
     const raidTime = Math.max(0, Math.ceil(raid.timer));
@@ -6375,18 +6857,15 @@ class AntColony3D {
     ui.colonySummary.textContent =
       `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 盾頭 ${fmt(d.shieldHeads, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 斥候 ${fmt(d.scouts, 0)} / 小隊長 ${fmt(d.captains, 0)} / 土木 ${fmt(d.builders, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
-    ui.activeToolLabel.textContent = this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel;
+    const pendingConstructionLabel = this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 線指定中` : "";
+    ui.activeToolLabel.textContent = pendingConstructionLabel || (this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);
     if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);
     if (ui.constructionActive) ui.constructionActive.textContent = fmt(activeConstruction, 0);
     if (ui.constructionComplete) ui.constructionComplete.textContent = fmt(completeConstruction, 0);
-    if (ui.constructionTrailBtn) {
-      ui.constructionTrailBtn.disabled = !trailCommand.ok;
-      ui.constructionTrailBtn.title = this.constructionButtonTitle("trailReinforce", trailCommand);
-    }
-    if (ui.constructionBarricadeBtn) {
-      ui.constructionBarricadeBtn.disabled = !barricadeCommand.ok;
-      ui.constructionBarricadeBtn.title = this.constructionButtonTitle("lowBarricade", barricadeCommand);
-    }
+    this.updateConstructionCommandButton(ui.constructionTrailBtn, "trailReinforce", trailCommand);
+    this.updateConstructionCommandButton(ui.constructionBarricadeBtn, "lowBarricade", barricadeCommand);
+    this.updateConstructionCommandButton(ui.constructionWallBtn, "earthWall", wallCommand);
+    this.updateConstructionCommandButton(ui.constructionSentryBtn, "sentryMound", sentryCommand);
     if (ui.constructionStatus) {
       const activeProgress = this.buildTasks
         .filter((task) => task.progress < task.maxProgress)
