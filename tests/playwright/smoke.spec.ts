@@ -623,23 +623,46 @@ test("construction tab issues earthwork commands separately from growth", async 
 
   await page.locator("#constructionTrailBtn").click();
   await page.locator("#constructionBarricadeBtn").click();
+  await page.locator("#constructionSentryBtn").click();
   await page.locator("#constructionWallBtn").click();
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.wallPlacementDraft = {
+      start: { x: sim.nest.x + 15, z: sim.nest.z - 18 },
+      end: { x: sim.nest.x + 43, z: sim.nest.z - 10 },
+    };
+    sim.updateWallPlacementPreview();
+  });
 
   const pendingWall = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.updateStats();
+    const guideChildren = sim.wallPlacementGuide?.children ?? [];
+    const guideLine = guideChildren.find((child: any) => child.name === "earth-wall-placement-line");
     return {
       pendingKind: sim.pendingConstructionKind,
       taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
       wallButtonText: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).textContent,
       activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
+      hasWallPlacementPreview: Boolean(sim.wallPlacementPreview),
+      hasWallPlacementGuide: Boolean(sim.wallPlacementGuide),
+      guideChildNames: guideChildren.map((child: any) => child.name).sort(),
+      guideLineLength: guideLine?.scale.x,
     };
   });
 
   expect(pendingWall.pendingKind).toBe("earthWall");
-  expect(pendingWall.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
+  expect(pendingWall.taskKinds).toEqual(["lowBarricade", "sentryMound", "trailReinforce"]);
   expect(pendingWall.wallButtonText).toContain("線指定中");
   expect(pendingWall.activeToolLabel).toContain("線指定中");
+  expect(pendingWall.hasWallPlacementPreview).toBe(true);
+  expect(pendingWall.hasWallPlacementGuide).toBe(true);
+  expect(pendingWall.guideChildNames).toEqual([
+    "earth-wall-placement-end",
+    "earth-wall-placement-line",
+    "earth-wall-placement-start",
+  ]);
+  expect(pendingWall.guideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
 
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
@@ -682,11 +705,15 @@ test("construction tab issues earthwork commands separately from growth", async 
       trailButtonText: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).textContent,
       barricadeButtonText: (document.querySelector("#constructionBarricadeBtn") as HTMLButtonElement).textContent,
       wallButtonText: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).textContent,
+      sentryButtonText: (document.querySelector("#constructionSentryBtn") as HTMLButtonElement).textContent,
       trailButtonTitle: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).title,
       barricadeButtonTitle: (document.querySelector("#constructionBarricadeBtn") as HTMLButtonElement).title,
       wallButtonTitle: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).title,
+      sentryButtonTitle: (document.querySelector("#constructionSentryBtn") as HTMLButtonElement).title,
       trailDisabledAfterCommand: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).disabled,
       savedEarthworks: sim.colony.earthworks.length,
+      hasWallPlacementPreview: Boolean(sim.wallPlacementPreview),
+      hasWallPlacementGuide: Boolean(sim.wallPlacementGuide),
     };
   });
 
@@ -695,22 +722,25 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.growthActive).toBe(false);
   expect(result.constructionActive).toBe(true);
   expect(result.pendingKind).toBeNull();
-  expect(result.taskKinds).toEqual(["earthWall", "lowBarricade", "trailReinforce"]);
-  expect(result.earthworkKinds).toEqual(["earthWall", "lowBarricade", "trailReinforce"]);
+  expect(result.taskKinds).toEqual(["earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
+  expect(result.earthworkKinds).toEqual(["earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
   expect(result.wallTaskX).toBeGreaterThan(-30);
   expect(result.wallTaskZ).toBeLessThan(8);
   expect(Math.abs(result.wallTaskRotation - result.wallExpectedRotation)).toBeLessThan(0.001);
   expect(result.wallTaskRadius).toBeGreaterThan(12);
   expect(result.wallTaskCost).toBeCloseTo(result.expectedLineCost, 5);
   expect(result.wallTaskCost).not.toBe(7.2);
+  expect(result.hasWallPlacementPreview).toBe(false);
+  expect(result.hasWallPlacementGuide).toBe(false);
   expect(result.builderCountText).toBe("4");
-  expect(result.activeCountText).toBe("3");
+  expect(result.activeCountText).toBe("4");
   expect(result.statusText).toContain("作業中");
   expect(result.statusText).toContain("平均");
   expect(result.crewText).toContain("待機");
   expect(result.progressText).toContain("採餌道");
   expect(result.progressText).toContain("低い土塁");
   expect(result.progressText).toContain("大きな土壁");
+  expect(result.progressText).toContain("見張り塚");
   expect(result.progressText).toContain("工数");
   expect(result.progressText).toContain("目安");
   expect(result.trailButtonText).toContain("工数2.8");
@@ -719,6 +749,8 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.barricadeButtonText).toContain("敵減速");
   expect(result.wallButtonText).toContain("工数7.2");
   expect(result.wallButtonText).toContain("壁上攻撃");
+  expect(result.sentryButtonText).toContain("工数4.4");
+  expect(result.sentryButtonText).toContain("敵襲方角");
   expect(result.trailButtonTitle).toContain("距離・担当数で変動");
   expect(result.trailButtonTitle).toContain("工数 2.8");
   expect(result.trailButtonTitle).toContain("味方の移動");
@@ -727,12 +759,14 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.wallButtonTitle).toContain("工数 7.2");
   expect(result.wallButtonTitle).toContain("長め");
   expect(result.wallButtonTitle).toContain("敵の侵入");
+  expect(result.sentryButtonTitle).toContain("工数 4.4");
+  expect(result.sentryButtonTitle).toContain("敵襲の方角");
   expect(result.taskAssigneeCounts.every((count: number) => count <= result.taskAssigneeLimit)).toBe(true);
   expect(result.taskAssigneeTotal).toBe(4);
   expect(result.taskAssigneeLimit).toBe(3);
-  expect(result.progressRows).toBe(3);
+  expect(result.progressRows).toBe(4);
   expect(result.trailDisabledAfterCommand).toBe(true);
-  expect(result.savedEarthworks).toBe(3);
+  expect(result.savedEarthworks).toBe(4);
 });
 
 test("multiple builders can share one construction task", async ({ page }) => {
@@ -1226,6 +1260,135 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
   expect(raid.targetLateralSpread).toBeGreaterThan(6);
   expect(raid.minExitRadius).toBeGreaterThan(raid.worldRadius + 16);
   expect(raid.log).toContain("敵襲開始");
+});
+
+test("sentry mounds reveal raid direction and set warning formation", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const clearTrails = () => {
+      for (const trail of [...sim.trails]) sim.disposeDynamicItem(trail);
+      sim.trails = [];
+    };
+    const resetWarning = () => {
+      sim.clearRaidRivals();
+      clearTrails();
+      sim.colony.raidState = {
+        phase: "calm",
+        timer: 0.01,
+        wave: 0,
+        activeCount: 0,
+        approachAngle: 0,
+        signalTimer: 0,
+        breachTimer: 0,
+        casualties: 0,
+        enemyCasualties: 0,
+        lastOutcome: "none",
+      };
+      sim.updateRaid(0.02);
+    };
+
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 54;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 10;
+    sim.colony.heavySoldierAnts = 2;
+    sim.colony.nestLevel = 4;
+    sim.colony.territory = 5;
+    sim.colony.enemyThreat = 3;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.heavySoldierBrood = 2;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+
+    resetWarning();
+    const noSentry = {
+      phase: sim.colony.raidState.phase,
+      timer: sim.colony.raidState.timer,
+      hasIntel: sim.hasRaidDirectionIntel(),
+      target: sim.currentSortieTarget(),
+      alarmTrails: sim.trails.filter((trail: any) => trail.kind === "alarm").length,
+      notice: sim.raidNotice.message,
+      log: sim.colony.battleLog.join("\n"),
+    };
+
+    sim.addEarthwork({
+      id: sim.colony.nextEarthworkId++,
+      kind: "sentryMound",
+      x: sim.nest.x + 18,
+      z: sim.nest.z - 4,
+      radius: 8,
+      progress: 4.4,
+      maxProgress: 4.4,
+      strength: 1,
+      rotation: 0,
+      owner: "colony",
+    });
+    sim.updateEarthworks();
+    const sentryWarningSeconds = sim.raidWarningSeconds();
+    resetWarning();
+    const sentryTarget = sim.currentSortieTarget();
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const deployed = sim.deployedSoldiers();
+    const raid = sim.ensureRaidState();
+    for (const ant of deployed) {
+      const steering = { x: 0, z: 0 };
+      if (ant.variant === "heavySoldier") ant.updateHeavySoldier(1 / 60, sim, steering);
+      else ant.updateSortiePatrol(1 / 60, sim, steering);
+    }
+    const formationTargets = deployed.map((ant: any) => sim.raidFormationPointForAnt(ant, raid));
+    const angle = raid.approachAngle ?? 0;
+    const forwardX = Math.cos(angle);
+    const forwardZ = Math.sin(angle);
+    const flankX = -forwardZ;
+    const flankZ = forwardX;
+    const forwardDistances = formationTargets.map((point: any) => (point.x - sim.nest.x) * forwardX + (point.z - sim.nest.z) * forwardZ);
+    const flankOffsets = formationTargets.map((point: any) => (point.x - sim.nest.x) * flankX + (point.z - sim.nest.z) * flankZ);
+    const sentry = {
+      phase: sim.colony.raidState.phase,
+      timer: sim.colony.raidState.timer,
+      warningSeconds: sentryWarningSeconds,
+      hasIntel: sim.hasRaidDirectionIntel(),
+      targetKind: sentryTarget?.kind,
+      alarmTrails: sim.trails.filter((trail: any) => trail.kind === "alarm").length,
+      sortieStarted,
+      deployedCount: deployed.length,
+      formationKinds: formationTargets.map((point: any) => point.kind),
+      assignedFormationTargets: deployed.filter((ant: any) => ant.sortieTargetX != null && ant.sortieTargetZ != null).length,
+      minForwardDistance: Math.min(...forwardDistances),
+      flankSpread: Math.max(...flankOffsets) - Math.min(...flankOffsets),
+      notice: sim.raidNotice.message,
+      log: sim.colony.battleLog.join("\n"),
+    };
+
+    return { noSentry, sentry };
+  });
+
+  expect(result.noSentry.phase).toBe("warning");
+  expect(result.noSentry.hasIntel).toBe(false);
+  expect(result.noSentry.target).toBeNull();
+  expect(result.noSentry.alarmTrails).toBe(0);
+  expect(result.noSentry.notice).toContain("方角不明");
+  expect(result.noSentry.log).toContain("方角不明");
+
+  expect(result.sentry.phase).toBe("warning");
+  expect(result.sentry.hasIntel).toBe(true);
+  expect(result.sentry.warningSeconds).toBeGreaterThan(result.noSentry.timer);
+  expect(result.sentry.timer).toBeGreaterThan(result.noSentry.timer);
+  expect(result.sentry.targetKind).toBe("raid-signal");
+  expect(result.sentry.alarmTrails).toBeGreaterThan(0);
+  expect(result.sentry.sortieStarted).toBe(true);
+  expect(result.sentry.deployedCount).toBeGreaterThan(1);
+  expect(result.sentry.formationKinds.every((kind: string) => kind === "raid-formation")).toBe(true);
+  expect(result.sentry.assignedFormationTargets).toBe(result.sentry.deployedCount);
+  expect(result.sentry.minForwardDistance).toBeGreaterThan(18);
+  expect(result.sentry.flankSpread).toBeGreaterThan(3);
+  expect(result.sentry.notice).toContain("見張り塚");
+  expect(result.sentry.log).toContain("見張り塚");
+  expect(result.sentry.log).toContain("布陣");
 });
 
 test("rival ant combat grapples before the loser exits or remains", async ({ page }) => {

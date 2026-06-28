@@ -9,7 +9,7 @@ import {
 
 describe("construction registry", () => {
   it("keeps construction kinds and definitions in one registry", () => {
-    expect(CONSTRUCTION_KINDS).toEqual(["trailReinforce", "lowBarricade", "earthWall"]);
+    expect(CONSTRUCTION_KINDS).toEqual(["trailReinforce", "lowBarricade", "earthWall", "sentryMound"]);
     expect(Object.keys(CONSTRUCTION_DEFS).sort()).toEqual([...CONSTRUCTION_KINDS].sort());
   });
 
@@ -51,11 +51,24 @@ describe("construction registry", () => {
       startMessage: "大きな土壁を発注",
       completeMessage: "大きな土壁が完成",
     });
+    expect(getConstructionDef("sentryMound")).toMatchObject({
+      label: "見張り塚",
+      defaultRadius: 8,
+      targetRadius: 8,
+      buildCost: 4.4,
+      timeHint: "中くらい",
+      completedLimit: 2,
+      requiresHeavySoldier: false,
+      raidWarningBonus: 5,
+      startMessage: "見張り塚を発注",
+      completeMessage: "見張り塚が完成",
+    });
   });
 
   it("normalizes unknown construction kinds for old or malformed saves", () => {
     expect(isConstructionKind("lowBarricade")).toBe(true);
     expect(isConstructionKind("earthWall")).toBe(true);
+    expect(isConstructionKind("sentryMound")).toBe(true);
     expect(isConstructionKind("unknown")).toBe(false);
     expect(normalizeConstructionKind("unknown")).toBe("trailReinforce");
     expect(getConstructionDef("unknown").label).toBe("採餌道");

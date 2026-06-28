@@ -1,4 +1,4 @@
-export const CONSTRUCTION_KINDS = ["trailReinforce", "lowBarricade", "earthWall"] as const;
+export const CONSTRUCTION_KINDS = ["trailReinforce", "lowBarricade", "earthWall", "sentryMound"] as const;
 
 export type ConstructionKind = typeof CONSTRUCTION_KINDS[number];
 
@@ -18,6 +18,7 @@ export interface ConstructionDef {
   braceBonus: number;
   wallAttackBonus: number;
   wallTopHeight: number;
+  raidWarningBonus: number;
   startMessage: string;
   startLog: string;
   completeMessage: string;
@@ -41,6 +42,7 @@ export const CONSTRUCTION_DEFS: Record<ConstructionKind, ConstructionDef> = {
     braceBonus: 0,
     wallAttackBonus: 0,
     wallTopHeight: 0,
+    raidWarningBonus: 0,
     startMessage: "採餌道整備を発注",
     startLog: "土木指示: 採餌道を整える",
     completeMessage: "採餌道整備が完成",
@@ -62,6 +64,7 @@ export const CONSTRUCTION_DEFS: Record<ConstructionKind, ConstructionDef> = {
     braceBonus: 0.28,
     wallAttackBonus: 0,
     wallTopHeight: 0,
+    raidWarningBonus: 0,
     startMessage: "低い土塁を発注",
     startLog: "土木指示: 低い土塁を築く",
     completeMessage: "低い土塁が完成",
@@ -83,10 +86,33 @@ export const CONSTRUCTION_DEFS: Record<ConstructionKind, ConstructionDef> = {
     braceBonus: 0.55,
     wallAttackBonus: 1.15,
     wallTopHeight: 0.58,
+    raidWarningBonus: 0,
     startMessage: "大きな土壁を発注",
     startLog: "土木指示: 大きな土壁を築く",
     completeMessage: "大きな土壁が完成",
     completeLog: "土木アリが大きな土壁を固めた",
+  },
+  sentryMound: {
+    label: "見張り塚",
+    command: "見張り塚を築く",
+    timeNote: "完了時間は採土・往復・担当数で変動",
+    effect: "敵襲の方角を予兆中に捕捉し、防衛準備の時間を増やす",
+    buttonSummary: "敵襲方角・準備時間↑",
+    defaultRadius: 8,
+    targetRadius: 8,
+    buildCost: 4.4,
+    timeHint: "中くらい",
+    completedLimit: 2,
+    requiresHeavySoldier: false,
+    enemySlowStrength: 0,
+    braceBonus: 0,
+    wallAttackBonus: 0,
+    wallTopHeight: 0,
+    raidWarningBonus: 5,
+    startMessage: "見張り塚を発注",
+    startLog: "土木指示: 見張り塚を築く",
+    completeMessage: "見張り塚が完成",
+    completeLog: "土木アリが見張り塚を固めた",
   },
 };
 
