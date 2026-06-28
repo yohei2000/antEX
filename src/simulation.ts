@@ -212,6 +212,12 @@ const SQUAD_COLORS = [
   0xff7a00,
 ];
 
+const SQUAD_MEMBER_VARIANT_ORDER = ["shieldHead", "heavySoldier", "acidShooter", "scout", "soldier", "builder"];
+const SQUAD_TARGET_ASSIGNMENT_PENALTY = 52;
+const SQUAD_TARGET_STICKINESS_BONUS = 20;
+const SQUAD_RALLY_SPACING = 16;
+const SQUAD_THREAT_SPACING = 8.5;
+
 function squadColorForId(id) {
   return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
 }
@@ -1151,7 +1157,9 @@ class Ant3D {
       return true;
     }
     const squad = sim.squadForLeader(this);
-    const threat = sim.findRivalThreat(this.x, this.z, SOLDIER_SORTIE_SEEK_RANGE, this.squadTargetId ?? squad?.targetRivalId ?? null);
+    const threat = squad
+      ? sim.findSquadThreat(squad, this, SOLDIER_SORTIE_SEEK_RANGE)
+      : sim.findRivalThreat(this.x, this.z, SOLDIER_SORTIE_SEEK_RANGE, this.squadTargetId);
     const raid = sim.ensureRaidState();
     let target = threat;
     if (!target && this.isSortieSoldier) {
@@ -1165,9 +1173,11 @@ class Ant3D {
     }
     if (!target) return false;
 
-    const targetDistance = distance2(this.x, this.z, target.x, target.z) || 1;
-    this.sortieTargetX = target.x;
-    this.sortieTargetZ = target.z;
+    const rallyTarget = squad ? sim.spreadSquadTarget(squad, this, target, threat) : target;
+    const exactTarget = threat ?? target;
+    const targetDistance = distance2(this.x, this.z, rallyTarget.x, rallyTarget.z) || 1;
+    this.sortieTargetX = rallyTarget.x;
+    this.sortieTargetZ = rallyTarget.z;
     this.squadTargetId = threat?.id ?? squad?.targetRivalId ?? null;
     this.commandPulse = Math.max(this.commandPulse, threat ? 0.95 : 0.68);
     if (squad) sim.commandSquad(this, target, threat);
@@ -1179,20 +1189,21 @@ class Ant3D {
     const desiredDistance = threat ? CAPTAIN_COMMAND_RANGE * 0.62 : 18;
     const tooCloseDistance = threat ? CAPTAIN_COMMAND_RANGE * 0.42 : 0;
     if (threat && targetDistance < tooCloseDistance) {
+      const exactDistance = distance2(this.x, this.z, exactTarget.x, exactTarget.z) || 1;
       const pressure = 0.55 + (1 - targetDistance / Math.max(1, tooCloseDistance)) * 0.9;
-      steering.x += ((this.x - target.x) / targetDistance) * pressure;
-      steering.z += ((this.z - target.z) / targetDistance) * pressure;
+      steering.x += ((this.x - exactTarget.x) / exactDistance) * pressure;
+      steering.z += ((this.z - exactTarget.z) / exactDistance) * pressure;
       this.lastTacticalAction = "captainFallBack";
     } else if (targetDistance > desiredDistance) {
       const cohesionGate = squad?.memberIds?.length ? clamp(0.35 + (squad.cohesion ?? 0) * 0.65, 0.35, 1) : 1;
       const pressure = (targetDistance > 48 ? 1.35 : 0.82) * cohesionGate;
-      steering.x += ((target.x - this.x) / targetDistance) * pressure;
-      steering.z += ((target.z - this.z) / targetDistance) * pressure;
+      steering.x += ((rallyTarget.x - this.x) / targetDistance) * pressure;
+      steering.z += ((rallyTarget.z - this.z) / targetDistance) * pressure;
       this.lastTacticalAction = threat && cohesionGate > 0.58 ? "captainAdvance" : threat ? "captainWaitSquad" : "captainRally";
     } else {
-      this.angle = Math.atan2(target.x - this.x, target.z - this.z);
-      steering.x += ((target.x - this.x) / targetDistance) * 0.18;
-      steering.z += ((target.z - this.z) / targetDistance) * 0.18;
+      this.angle = Math.atan2(exactTarget.x - this.x, exactTarget.z - this.z);
+      steering.x += ((rallyTarget.x - this.x) / targetDistance) * 0.18;
+      steering.z += ((rallyTarget.z - this.z) / targetDistance) * 0.18;
       this.lastTacticalAction = threat ? "captainCommand" : "captainHold";
     }
     this.energy = clamp(this.energy - dt * 0.011, 0, 1);
@@ -2813,7 +2824,7 @@ class SquadRingSystem {
     this.sim = sim;
     this.capacity = capacity;
     this.dummy = new THREE.Object3D();
-    this.geometry = new THREE.RingGeometry(0.72, 1, 96);
+    this.geometry = new THREE.RingGeometry(0.86, 1, 96);
     this.colorToIndex = new Map(SQUAD_COLORS.map((color, index) => [color, index]));
     this.materials = SQUAD_COLORS.map((color) => new THREE.MeshBasicMaterial({
       color,
@@ -4362,25 +4373,59 @@ class AntColony3D {
     ant.squadColorHex = null;
   }
 
+  assignBalancedSquadMembers(members, squadEntries) {
+    const capacity = Math.max(0, CAPTAIN_SQUAD_SIZE - 1);
+    const sortedMembers = [...members].sort((a, b) => (a.sortieIndex ?? a.id ?? 0) - (b.sortieIndex ?? b.id ?? 0));
+    const orderedMembers = [];
+    const used = new Set();
+    for (const variant of SQUAD_MEMBER_VARIANT_ORDER) {
+      for (const ant of sortedMembers) {
+        if (used.has(ant) || ant.variant !== variant) continue;
+        orderedMembers.push(ant);
+        used.add(ant);
+      }
+    }
+    for (const ant of sortedMembers) {
+      if (!used.has(ant)) orderedMembers.push(ant);
+    }
+
+    for (const ant of orderedMembers) {
+      const entry = squadEntries
+        .filter((candidate) => candidate.members.length < capacity)
+        .sort((a, b) => {
+          const av = a.variantCounts.get(ant.variant) ?? 0;
+          const bv = b.variantCounts.get(ant.variant) ?? 0;
+          return av - bv || a.members.length - b.members.length || Math.abs(a.laneOffset) - Math.abs(b.laneOffset) || a.index - b.index;
+        })[0];
+      if (!entry) break;
+      entry.members.push(ant);
+      entry.variantCounts.set(ant.variant, (entry.variantCounts.get(ant.variant) ?? 0) + 1);
+      entry.squad.memberVariantCounts[ant.variant] = (entry.squad.memberVariantCounts[ant.variant] ?? 0) + 1;
+    }
+  }
+
   formSortieSquads(sortieAnts, sortieTarget = null) {
     const captains = sortieAnts.filter((ant) => ant.variant === "captain");
     if (!captains.length) return [];
     const members = sortieAnts.filter((ant) => ant.variant !== "captain");
     const created = [];
-    for (const leader of captains) {
-      const squadMembers = members.splice(0, Math.max(0, CAPTAIN_SQUAD_SIZE - 1));
+    const squadEntries = [];
+    for (const [leaderIndex, leader] of captains.entries()) {
       const squadId = this.nextSquadId++;
       const squadColorHex = squadColorForId(squadId);
+      const laneOffset = leaderIndex - (captains.length - 1) / 2;
       const squad = {
         id: squadId,
         leaderId: leader.id,
-        memberIds: squadMembers.map((ant) => ant.id),
+        memberIds: [],
         objective: "intercept",
         targetRivalId: null,
         rallyX: sortieTarget?.x ?? leader.x,
         rallyZ: sortieTarget?.z ?? leader.z,
         cohesion: 0,
         colorHex: squadColorHex,
+        laneOffset,
+        memberVariantCounts: {},
       };
       leader.squadId = squad.id;
       leader.squadLeaderId = leader.id;
@@ -4388,16 +4433,31 @@ class AntColony3D {
       leader.squadTargetId = null;
       leader.squadCohesion = 1;
       leader.squadColorHex = squadColorHex;
-      for (const [index, ant] of squadMembers.entries()) {
+      this.squads.push(squad);
+      created.push(squad);
+      squadEntries.push({
+        index: leaderIndex,
+        laneOffset,
+        leader,
+        squad,
+        members: [],
+        variantCounts: new Map(),
+      });
+    }
+
+    this.assignBalancedSquadMembers(members, squadEntries);
+
+    for (const entry of squadEntries) {
+      entry.squad.memberIds = entry.members.map((ant) => ant.id);
+      for (const [index, ant] of entry.members.entries()) {
+        const squad = entry.squad;
         ant.squadId = squad.id;
-        ant.squadLeaderId = leader.id;
+        ant.squadLeaderId = entry.leader.id;
         ant.squadSlot = index + 1;
         ant.squadTargetId = null;
         ant.squadCohesion = 0;
-        ant.squadColorHex = squadColorHex;
+        ant.squadColorHex = squad.colorHex;
       }
-      this.squads.push(squad);
-      created.push(squad);
     }
     return created;
   }
@@ -4426,12 +4486,68 @@ class AntColony3D {
     ) ?? null;
   }
 
+  squadTargetCounts(exceptSquadId = null) {
+    const counts = new Map();
+    for (const squad of this.squads) {
+      if (!squad?.targetRivalId || squad.id === exceptSquadId) continue;
+      if (!this.liveSquadTarget(squad)) continue;
+      counts.set(squad.targetRivalId, (counts.get(squad.targetRivalId) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  findSquadThreat(squad, leader, radius = SOLDIER_SORTIE_SEEK_RANGE) {
+    if (!leader) return null;
+    const assignedTargets = this.squadTargetCounts(squad?.id ?? null);
+    const preferredRivalId = squad?.targetRivalId ?? leader.squadTargetId ?? null;
+    let best = null;
+    let bestScore = radius;
+    for (const rival of this.rivalAnts) {
+      if (rival.defeated || rival.leftRaid || rival.retreat > 0 || rival.clash) continue;
+      const d = distance2(leader.x, leader.z, rival.x, rival.z);
+      if (d >= radius) continue;
+      const scoutBonus = rival.scoutMarkTimer > 0 ? clamp(rival.scoutMarkStrength ?? 0, 0, 1) * 28 : 0;
+      const preferredBonus = preferredRivalId != null && rival.id === preferredRivalId ? SQUAD_TARGET_STICKINESS_BONUS : 0;
+      const assignedPenalty = (assignedTargets.get(rival.id) ?? 0) * SQUAD_TARGET_ASSIGNMENT_PENALTY;
+      const score = d - scoutBonus - preferredBonus + assignedPenalty;
+      if (score < bestScore) {
+        best = rival;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  spreadSquadTarget(squad, leader, target, threat = null) {
+    if (!squad || !target) return target;
+    const laneOffset = squad.laneOffset ?? 0;
+    if (!laneOffset) return target;
+    let baseX = target.x - this.nest.x;
+    let baseZ = target.z - this.nest.z;
+    if (Math.hypot(baseX, baseZ) < 0.001) {
+      baseX = leader?.x - this.nest.x || 1;
+      baseZ = leader?.z - this.nest.z || 0;
+    }
+    const len = Math.hypot(baseX, baseZ) || 1;
+    const sideX = baseZ / len;
+    const sideZ = -baseX / len;
+    const spacing = threat ? SQUAD_THREAT_SPACING : SQUAD_RALLY_SPACING;
+    return {
+      ...target,
+      x: target.x + sideX * laneOffset * spacing,
+      z: target.z + sideZ * laneOffset * spacing,
+      exactX: target.x,
+      exactZ: target.z,
+    };
+  }
+
   commandSquad(leader, target, threat = null) {
     const squad = this.squadForLeader(leader);
     if (!squad || !leader || !target) return;
+    const rallyTarget = this.spreadSquadTarget(squad, leader, target, threat);
     squad.targetRivalId = threat?.id ?? squad.targetRivalId ?? null;
-    squad.rallyX = target.x;
-    squad.rallyZ = target.z;
+    squad.rallyX = rallyTarget.x;
+    squad.rallyZ = rallyTarget.z;
     squad.objective = threat ? "markedTarget" : "intercept";
     leader.squadTargetId = squad.targetRivalId;
     leader.squadColorHex = squad.colorHex;
@@ -4462,15 +4578,15 @@ class AntColony3D {
         if (!activeMemberIds.has(id)) this.clearSquadAssignment(this.getAntById(id));
       }
       leader.squadColorHex = squad.colorHex;
-      const existingTarget = this.liveSquadTarget(squad);
-      const threat = existingTarget ?? this.findRivalThreat(leader.x, leader.z, SOLDIER_SORTIE_SEEK_RANGE, squad.targetRivalId);
+      const threat = this.findSquadThreat(squad, leader, SOLDIER_SORTIE_SEEK_RANGE);
       const target = threat ?? this.currentSortieTarget(leader.x, leader.z) ?? { x: squad.rallyX, z: squad.rallyZ, kind: "rally" };
+      const rallyTarget = this.spreadSquadTarget(squad, leader, target, threat);
       squad.targetRivalId = threat?.id ?? null;
-      squad.rallyX = target.x;
-      squad.rallyZ = target.z;
+      squad.rallyX = rallyTarget.x;
+      squad.rallyZ = rallyTarget.z;
 
-      const tx = target.x - leader.x;
-      const tz = target.z - leader.z;
+      const tx = rallyTarget.x - leader.x;
+      const tz = rallyTarget.z - leader.z;
       const len = Math.hypot(tx, tz) || 1;
       const fx = tx / len;
       const fz = tz / len;
@@ -4492,8 +4608,8 @@ class AntColony3D {
         ant.squadAnchorZ = leader.z + fz * roleOffset + sz * sideOffset;
         ant.squadTargetId = squad.targetRivalId;
         ant.squadColorHex = squad.colorHex;
-        ant.sortieTargetX = target.x;
-        ant.sortieTargetZ = target.z;
+        ant.sortieTargetX = rallyTarget.x;
+        ant.sortieTargetZ = rallyTarget.z;
         const d = distance2(ant.x, ant.z, ant.squadAnchorX, ant.squadAnchorZ);
         ant.squadCohesion = clamp(1 - d / Math.max(1, CAPTAIN_COHESION_RADIUS), 0, 1);
         cohesionTotal += ant.squadCohesion;

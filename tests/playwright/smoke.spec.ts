@@ -1300,11 +1300,118 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
   );
   expect(result.ringOpacity).toBeGreaterThan(0.9);
   expect(result.ringDepthTest).toBe(false);
-  expect(result.ringInnerRadius).toBeGreaterThan(0.7);
+  expect(result.ringInnerRadius).toBeCloseTo(0.86);
   expect(result.ringOuterRadius).toBe(1);
+  expect(result.ringOuterRadius - result.ringInnerRadius).toBeCloseTo(0.14);
   expect(new Set(result.ringColors).size).toBe(2);
   expect(result.captainColors.every((color: number) => result.ringColors.includes(color))).toBe(true);
   expect(result.squads.every((squad: any) => result.ringColors.includes(squad.colorHex))).toBe(true);
+});
+
+test("captain squads balance roles and avoid dogpiling one rival", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 80;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 36;
+    sim.colony.heavySoldierAnts = 3;
+    sim.colony.shieldHeadAnts = 3;
+    sim.colony.acidShooterAnts = 3;
+    sim.colony.scoutAnts = 3;
+    sim.colony.captainAnts = 3;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 3;
+    sim.colony.upgrades.heavySoldierBrood = 3;
+    sim.colony.upgrades.shieldHeadBrood = 3;
+    sim.colony.upgrades.acidShooterBrood = 3;
+    sim.colony.upgrades.scoutBrood = 3;
+    sim.colony.upgrades.captainBrood = 3;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 4,
+      activeCount: 3,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.beginRaid();
+    const rivals = sim.raidRivals();
+    for (const [index, rival] of rivals.entries()) {
+      rival.x = 78;
+      rival.z = (index - 1) * 26;
+      rival.prevX = rival.x;
+      rival.prevZ = rival.z;
+      rival.retreat = 0;
+      rival.clash = null;
+      rival.scoutMarkTimer = 0;
+      rival.scoutMarkStrength = 0;
+    }
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const captains = sim.deployedSoldiers().filter((ant: any) => ant.variant === "captain");
+    for (const [index, captain] of captains.entries()) {
+      captain.x = 0;
+      captain.z = (index - 1) * 9;
+      captain.prevX = captain.x;
+      captain.prevZ = captain.z;
+      captain.state = "explore";
+      captain.sortieTimer = 30;
+    }
+    sim.updateSquads(1 / 60);
+
+    const squads = sim.squads.map((squad: any) => {
+      const members = squad.memberIds.map((id: number) => sim.getAntById(id)).filter(Boolean);
+      const counts = members.reduce((memo: Record<string, number>, ant: any) => {
+        memo[ant.variant] = (memo[ant.variant] ?? 0) + 1;
+        return memo;
+      }, {});
+      return {
+        id: squad.id,
+        laneOffset: squad.laneOffset,
+        targetRivalId: squad.targetRivalId,
+        rallyX: squad.rallyX,
+        rallyZ: squad.rallyZ,
+        memberCount: members.length,
+        counts,
+      };
+    });
+    const targetIds = squads.map((squad: any) => squad.targetRivalId).filter((id: number | null) => id != null);
+    const rallyZs = squads.map((squad: any) => squad.rallyZ);
+
+    return {
+      sortieStarted,
+      squadCount: sim.squads.length,
+      rivalCount: rivals.length,
+      squads,
+      distinctTargets: new Set(targetIds).size,
+      targetIds,
+      rallySpread: Math.max(...rallyZs) - Math.min(...rallyZs),
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.squadCount).toBe(3);
+  expect(result.rivalCount).toBe(3);
+  expect(result.squads.every((squad: any) => squad.memberCount === 5)).toBe(true);
+  for (const variant of ["shieldHead", "heavySoldier", "acidShooter", "scout", "soldier"]) {
+    expect(result.squads.every((squad: any) => squad.counts[variant] === 1)).toBe(true);
+  }
+  expect(result.targetIds).toHaveLength(3);
+  expect(result.distinctTargets).toBe(3);
+  expect(result.rallySpread).toBeGreaterThan(20);
 });
 
 test("captain ants stay inside the squad instead of rushing ahead", async ({ page }) => {
