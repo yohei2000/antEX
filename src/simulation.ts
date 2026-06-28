@@ -5545,6 +5545,7 @@ class AntColony3D {
       (d.normalSoldiers ?? 0) * 0.025 +
       (d.heavySoldiers ?? 0) * 0.06 +
       (d.shieldHeads ?? 0) * 0.05 +
+      (d.acidShooters ?? 0) * 0.045 +
       (d.scouts ?? 0) * 0.035 +
       (d.captains ?? 0) * 0.04;
     const pressure = this.colony.enemyThreat * 0.34 + this.colony.territory * 0.14 + colonyScalePressure - (d.defensePower - 1) * 0.9;
