@@ -204,12 +204,12 @@ const PHEROMONE_PARAMS = {
 };
 
 const SQUAD_COLORS = [
-  0xf0c65a,
-  0x5fc7ff,
-  0xff7aa8,
-  0x94d76a,
-  0xb58cff,
-  0xff9a55,
+  0xff2d55,
+  0x1f7aff,
+  0x19d66b,
+  0xffc400,
+  0xb14cff,
+  0xff7a00,
 ];
 
 function squadColorForId(id) {
@@ -2850,7 +2850,7 @@ class SquadRingSystem {
       this.dummy.updateMatrix();
       this.mesh.setMatrixAt(index, this.dummy.matrix);
       this.color.setHex(ant.squadColorHex);
-      if (isLeader) this.color.lerp(this.white, 0.16);
+      if (isLeader) this.color.lerp(this.white, 0.08);
       this.mesh.setColorAt(index, this.color);
       this.lastColors.push(ant.squadColorHex);
       index += 1;
@@ -3292,8 +3292,8 @@ class AntColony3D {
     const flankX = -uz;
     const flankZ = ux;
     const lane = (((ant?.sortieIndex ?? ant?.id ?? 0) % 3) - 1) * 2.2;
-    const standoff = target?.kind === "rival" ? 8.4 : 14;
-    const radius = clamp(length - standoff, this.nest.radius + 5.2, this.worldRadius * 0.78);
+    const standoff = target?.kind === "rival" ? 4.8 : 9.2;
+    const radius = clamp(length - standoff, this.nest.radius + 5.2, this.worldRadius * 0.92);
     return {
       x: this.nest.x + ux * radius + flankX * lane,
       z: this.nest.z + uz * radius + flankZ * lane,

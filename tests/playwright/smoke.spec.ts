@@ -1240,6 +1240,15 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
     sim.renderGame(1);
 
     const captains = sim.deployedSoldiers().filter((ant: any) => ant.variant === "captain");
+    const colorDistance = (a: number, b: number) => {
+      const ar = (a >> 16) & 255;
+      const ag = (a >> 8) & 255;
+      const ab = a & 255;
+      const br = (b >> 16) & 255;
+      const bg = (b >> 8) & 255;
+      const bb = b & 255;
+      return Math.hypot(ar - br, ag - bg, ab - bb);
+    };
     const squads = sim.squads.map((squad: any) => {
       const leader = sim.getAntById(squad.leaderId);
       const members = squad.memberIds.map((id: number) => sim.getAntById(id)).filter(Boolean);
@@ -1253,13 +1262,21 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
       };
     });
     const ringColors = [...new Set((sim.squadRingSystem?.lastColors ?? []).map((color: number) => color))];
+    const captainColors = captains.map((ant: any) => ant.squadColorHex);
+    const captainColorDistances = [];
+    for (let i = 0; i < captainColors.length; i += 1) {
+      for (let j = i + 1; j < captainColors.length; j += 1) {
+        captainColorDistances.push(colorDistance(captainColors[i], captainColors[j]));
+      }
+    }
 
     return {
       sortieStarted,
       squadCount: sim.squads.length,
       squads,
-      captainColors: captains.map((ant: any) => ant.squadColorHex),
-      distinctCaptainColors: new Set(captains.map((ant: any) => ant.squadColorHex)).size,
+      captainColors,
+      minCaptainColorDistance: Math.min(...captainColorDistances),
+      distinctCaptainColors: new Set(captainColors).size,
       distinctSquadColors: new Set(squads.map((squad: any) => squad.colorHex)).size,
       ringVisibleCount: sim.squadRingSystem?.lastVisibleCount ?? 0,
       ringColors,
@@ -1270,6 +1287,7 @@ test("captain squads use distinct command ring colors per squad", async ({ page 
   expect(result.squadCount).toBe(2);
   expect(result.distinctCaptainColors).toBe(2);
   expect(result.distinctSquadColors).toBe(2);
+  expect(result.minCaptainColorDistance).toBeGreaterThan(180);
   expect(result.squads.every((squad: any) => squad.leaderColorHex === squad.colorHex)).toBe(true);
   expect(result.squads.every((squad: any) => squad.allMembersShareColor)).toBe(true);
   expect(result.squads.every((squad: any) => squad.memberCount > 0)).toBe(true);
@@ -1534,8 +1552,10 @@ test("shield head ants advance to the front line and tank for allies", async ({ 
     if (!shield || !rival) return { sortieStarted, shieldFound: Boolean(shield), rivalFound: Boolean(rival) };
 
     const block = sim.shieldHeadBlockPoint(shield);
+    const initialTarget = sim.currentSortieTarget(shield.x, shield.z) ?? sim.raidSignalPoint(sim.ensureRaidState(), 0.78);
     const initialRivalDistance = Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z);
     const frontlineDistance = Math.hypot(block.x - sim.nest.x, block.z - sim.nest.z);
+    const blockDistanceToInitialTarget = Math.hypot(block.x - initialTarget.x, block.z - initialTarget.z);
     const forward = { x: Math.sin(block.angle), z: Math.cos(block.angle) };
     shield.x = block.x;
     shield.z = block.z;
@@ -1601,6 +1621,8 @@ test("shield head ants advance to the front line and tank for allies", async ({ 
       coverStrength,
       initialRivalDistance,
       frontlineDistance,
+      frontlineRatio: frontlineDistance / Math.max(1, initialRivalDistance),
+      blockDistanceToInitialTarget,
       followHandled,
       followIntent,
       followAction,
@@ -1628,8 +1650,10 @@ test("shield head ants advance to the front line and tank for allies", async ({ 
   expect(result.pushedOutward).toBe(true);
   expect(result.fightCooldownAfterPush).toBeGreaterThan(0);
   expect(result.coverStrength).toBeGreaterThan(0);
-  expect(result.frontlineDistance).toBeGreaterThan(43);
+  expect(result.frontlineDistance).toBeGreaterThan(56);
   expect(result.frontlineDistance).toBeLessThan(result.initialRivalDistance);
+  expect(result.frontlineRatio).toBeGreaterThan(0.68);
+  expect(result.blockDistanceToInitialTarget).toBeLessThan(result.initialRivalDistance * 0.34);
   expect(result.followHandled).toBe(true);
   expect(["shieldBlock", "shieldMove"]).toContain(result.followAction);
   if (result.followAction === "shieldMove") {
