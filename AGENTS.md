@@ -16,6 +16,7 @@
 ## Current gameplay rules
 - 遠征モードは削除済み。通常アプリへ復活させない。
 - 兵隊アリは平時は巣内リソースとして扱い、プレイヤーが兵隊タブから指示した時だけ地表へ出撃する。
+- 兵隊アリの増加は兵舎タブの育成キューを通し、兵種ごとの食料コストと育成時間を経て1匹ずつ巣内兵力へ加える。
 - 出撃兵は見えている敵、または敵襲シグナル方向へ向かって前進する。巣周辺だけで待機させない。
 - 敵アリ色は落ち着いた赤茶 `#8a4a2f` を維持する。
 - 味方アリのライブ表示色は状態に関係なくデフォルト色を維持する。戦闘状態を色変更で表現しない。
@@ -51,6 +52,7 @@
 ## Architecture notes
 - `src/simulation.ts` はまだ通常ゲームの compatibility entrypoint / orchestration 層。新しい定義や拡張点を無条件にここへ増やさず、既存 registry/state 境界を優先する。
 - アリ種別の追加・調整は `src/config/variants.ts` を起点にする。既存アリの `id`, `position`, `heading`, `gaitPhase`, `renderIndex` の連続性を壊さない。
+- 兵舎の兵種別育成コスト、育成時間、解禁条件は `src/config/barracks.ts` を起点にする。
 - 土木工事の種類追加・調整は `src/config/construction.ts` の `CONSTRUCTION_KINDS` / `CONSTRUCTION_DEFS` を起点にする。`src/config/balance.ts` に土木カタログを戻さない。
 - `EarthworkKind` は `ConstructionKind` に追従する。土木種別を追加する場合は、`src/state/migrations.ts` の正規化、保存互換、unit test、`npm run eval:save` を必ず確認する。
 - colony state、derived計算、save/migration は `src/state/*` を優先して扱う。セーブキー `ant3d.colonyState` は不用意に変えない。

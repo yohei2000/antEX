@@ -120,6 +120,7 @@
         <div class="panel-tabs" role="tablist" aria-label="管理タブ">
           <button class="tab-button active" type="button" data-tab="growth">成長</button>
           <button class="tab-button" type="button" data-tab="construction">土木</button>
+          <button class="tab-button" type="button" data-tab="barracks">兵舎</button>
           <button class="tab-button" type="button" data-tab="soldiers">兵隊</button>
         </div>
 
@@ -163,6 +164,25 @@
           <div id="constructionStatus" class="construction-status">待機</div>
           <div id="constructionCrew" class="construction-crew">待機 0</div>
           <div id="constructionProgressList" class="construction-progress-list"></div>
+        </div>
+
+        <div id="barracksTab" class="tab-panel">
+          <div class="barracks-grid">
+            <div>
+              <span>キュー</span>
+              <strong id="barracksQueueCount">0</strong>
+            </div>
+            <div>
+              <span>育成中</span>
+              <strong id="barracksActive">なし</strong>
+            </div>
+            <div>
+              <span>状態</span>
+              <strong id="barracksStatus">キューなし</strong>
+            </div>
+          </div>
+          <div id="barracksTrainingList" class="barracks-training-list"></div>
+          <div id="barracksQueueList" class="barracks-queue-list"></div>
         </div>
 
         <div id="soldierTab" class="tab-panel">

@@ -1,9 +1,10 @@
 import { RAID_INITIAL_DELAY_SECONDS, RAID_RIVAL_CAP, RAID_WARNING_SECONDS } from "../config/balance";
+import { BARRACKS_QUEUE_CAP, getBarracksTrainingDef, normalizeBarracksTrainingVariant } from "../config/barracks";
 import { normalizeConstructionKind } from "../config/construction";
 import { UPGRADE_DEFS } from "../config/upgrades";
 import { clamp } from "../shared/math";
 import { COLONY_SAVE_VERSION, createDefaultColony, createDefaultRaidState } from "./colony";
-import type { ColonyState, RaidPhase, RaidState } from "./schema";
+import type { BarracksTrainingItem, ColonyState, RaidPhase, RaidState } from "./schema";
 
 const RAID_PHASES: RaidPhase[] = ["calm", "warning", "active", "retreating", "recovering"];
 
@@ -91,6 +92,28 @@ export function migrateColony(raw: unknown): ColonyState {
     earthwork.progress = clamp(earthwork.progress, 0, earthwork.maxProgress);
     next.nextEarthworkId = Math.max(next.nextEarthworkId, earthwork.id + 1);
   }
+  next.nextBarracksOrderId = Math.floor(clamp(Number(next.nextBarracksOrderId) || 1, 1, 100000000));
+  next.barracksQueue = Array.isArray(source.barracksQueue)
+    ? source.barracksQueue.slice(0, BARRACKS_QUEUE_CAP).map((rawOrder) => {
+        const order = rawOrder as Partial<BarracksTrainingItem>;
+        const variant = normalizeBarracksTrainingVariant(order?.variant);
+        const def = getBarracksTrainingDef(variant);
+        const totalRaw = Number(order?.totalSeconds);
+        const remainingRaw = Number(order?.remainingSeconds);
+        const totalSeconds = clamp(Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : def.trainingSeconds, 1, 600);
+        const remainingSeconds = clamp(Number.isFinite(remainingRaw) ? remainingRaw : totalSeconds, 0, totalSeconds);
+        const id = Math.floor(clamp(Number(order?.id) || next.nextBarracksOrderId++, 1, 100000000));
+        next.nextBarracksOrderId = Math.max(next.nextBarracksOrderId, id + 1);
+        const foodCostRaw = Number(order?.foodCost);
+        return {
+          id,
+          variant,
+          foodCost: clamp(Number.isFinite(foodCostRaw) && foodCostRaw > 0 ? foodCostRaw : def.foodCost, 0, 1000000),
+          totalSeconds,
+          remainingSeconds,
+        };
+      })
+    : [];
   for (const upgrade of UPGRADE_DEFS) {
     next.upgrades[upgrade.id] = Math.floor(clamp(Number(next.upgrades[upgrade.id]) || 0, 0, upgrade.max));
   }

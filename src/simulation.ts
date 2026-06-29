@@ -54,6 +54,7 @@ import {
   SOLDIER_SORTIE_SECONDS,
   SOLDIER_SORTIE_SEEK_RANGE,
 } from "./config/balance";
+import { BARRACKS_QUEUE_CAP, BARRACKS_TRAINING_VARIANTS, getBarracksTrainingDef, isBarracksTrainingVariant } from "./config/barracks";
 import { getConstructionDef, isConstructionKind, normalizeConstructionKind } from "./config/construction";
 import { UPGRADE_BRANCHES, UPGRADE_DEFS, upgradeCost, upgradeLevel, upgradeName } from "./config/upgrades";
 import { ANT_VARIANTS, ANT_VARIANT_CONFIG, getAntVariantConfig, normalizeAntVariant } from "./config/variants";
@@ -94,6 +95,12 @@ const ui = {
   constructionStatus: document.querySelector("#constructionStatus"),
   constructionCrew: document.querySelector("#constructionCrew"),
   constructionProgressList: document.querySelector("#constructionProgressList"),
+  barracksTab: document.querySelector("#barracksTab"),
+  barracksQueueCount: document.querySelector("#barracksQueueCount"),
+  barracksActive: document.querySelector("#barracksActive"),
+  barracksStatus: document.querySelector("#barracksStatus"),
+  barracksTrainingList: document.querySelector("#barracksTrainingList"),
+  barracksQueueList: document.querySelector("#barracksQueueList"),
   soldierTab: document.querySelector("#soldierTab"),
   soldierNest: document.querySelector("#soldierNest"),
   soldierDeployed: document.querySelector("#soldierDeployed"),
@@ -4160,6 +4167,12 @@ class AntColony3D {
       event.preventDefault();
       this.buyUpgrade(button.dataset.upgrade);
     });
+    ui.barracksTrainingList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-train-variant]");
+      if (!button) return;
+      event.preventDefault();
+      this.startBarracksTraining(button.dataset.trainVariant);
+    });
     ui.soldierSortieBtn.addEventListener("click", () => this.startSoldierSortie());
     ui.constructionTrailBtn?.addEventListener("click", () => this.startConstruction("trailReinforce"));
     ui.constructionBarricadeBtn?.addEventListener("click", () => this.startConstruction("lowBarricade"));
@@ -4171,11 +4184,13 @@ class AntColony3D {
   }
 
   setActiveTab(tab) {
-    this.activeTab = tab === "soldiers" || tab === "construction" ? tab : "growth";
+    this.activeTab = tab === "soldiers" || tab === "construction" || tab === "barracks" ? tab : "growth";
     ui.buttons.forEach((item) => item.classList.toggle("active", item.dataset.tab === this.activeTab));
     ui.growthTab.classList.toggle("active", this.activeTab === "growth");
     ui.constructionTab?.classList.toggle("active", this.activeTab === "construction");
+    ui.barracksTab?.classList.toggle("active", this.activeTab === "barracks");
     ui.soldierTab.classList.toggle("active", this.activeTab === "soldiers");
+    this.updateStats();
   }
 
   bindPanelGestures() {
@@ -4309,31 +4324,9 @@ class AntColony3D {
       this.colony.hatchProgress = Math.min(this.colony.hatchProgress, 0.96);
     }
 
+    this.updateBarracksTraining(dt);
+
     const nextDerived = this.computeDerived();
-    if (this.colony.soldierAnts < nextDerived.soldierTarget && this.colony.food > nextDerived.antCost * 1.4) {
-      this.colony.soldierAnts += 1;
-      this.colony.food -= 2.5;
-    }
-    if (this.colony.heavySoldierAnts < nextDerived.heavyTarget && this.colony.food > nextDerived.antCost * 2.2) {
-      this.colony.heavySoldierAnts += 1;
-      this.colony.food -= 4.5;
-    }
-    if (this.colony.shieldHeadAnts < nextDerived.shieldHeadTarget && this.colony.food > nextDerived.antCost * 2.05) {
-      this.colony.shieldHeadAnts += 1;
-      this.colony.food -= 4.2;
-    }
-    if (this.colony.acidShooterAnts < nextDerived.acidShooterTarget && this.colony.food > nextDerived.antCost * 2.0) {
-      this.colony.acidShooterAnts += 1;
-      this.colony.food -= 4;
-    }
-    if (this.colony.scoutAnts < nextDerived.scoutTarget && this.colony.food > nextDerived.antCost * 1.9) {
-      this.colony.scoutAnts += 1;
-      this.colony.food -= 3.6;
-    }
-    if (this.colony.captainAnts < nextDerived.captainTarget && this.colony.food > nextDerived.antCost * 2.15) {
-      this.colony.captainAnts += 1;
-      this.colony.food -= 4.4;
-    }
     if (this.colony.builderAnts < nextDerived.builderTarget && this.colony.food > nextDerived.antCost * 1.35) {
       this.colony.builderAnts += 1;
       this.colony.food -= 2;
@@ -4526,6 +4519,141 @@ class AntColony3D {
     if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.captain + counts.soldier) return "soldier";
     if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.captain + counts.soldier + counts.builder) return "builder";
     return "worker";
+  }
+
+  barracksQueue() {
+    if (!Array.isArray(this.colony.barracksQueue)) this.colony.barracksQueue = [];
+    return this.colony.barracksQueue;
+  }
+
+  barracksVariantField(variant) {
+    if (variant === "heavySoldier") return "heavySoldierAnts";
+    if (variant === "shieldHead") return "shieldHeadAnts";
+    if (variant === "acidShooter") return "acidShooterAnts";
+    if (variant === "scout") return "scoutAnts";
+    if (variant === "captain") return "captainAnts";
+    return null;
+  }
+
+  barracksCurrentCount(variant, derived = this.computeDerived()) {
+    if (variant === "soldier") return Math.max(0, Math.floor(derived.normalSoldiers ?? 0));
+    if (variant === "heavySoldier") return Math.max(0, Math.floor(derived.heavySoldiers ?? 0));
+    if (variant === "shieldHead") return Math.max(0, Math.floor(derived.shieldHeads ?? 0));
+    if (variant === "acidShooter") return Math.max(0, Math.floor(derived.acidShooters ?? 0));
+    if (variant === "scout") return Math.max(0, Math.floor(derived.scouts ?? 0));
+    if (variant === "captain") return Math.max(0, Math.floor(derived.captains ?? 0));
+    return 0;
+  }
+
+  barracksPendingCount(variant) {
+    return this.barracksQueue().filter((item) => item.variant === variant).length;
+  }
+
+  barracksSoldierCapacity(derived = this.computeDerived()) {
+    const activeCap = Math.max(0, Math.floor((derived.activeAnts ?? 0) - 1));
+    if (activeCap <= 0) return 0;
+    const soldierTraining = upgradeLevel(this.colony.upgrades, "soldierTraining");
+    const sentinelPosts = upgradeLevel(this.colony.upgrades, "sentinelPosts");
+    const ratio = clamp(0.18 + soldierTraining * 0.05 + sentinelPosts * 0.015 + this.colony.nestLevel * 0.005, 0.16, 0.62);
+    return Math.min(activeCap, Math.max(1, Math.floor((derived.activeAnts ?? 0) * ratio)));
+  }
+
+  barracksVariantCapacity(variant, derived = this.computeDerived()) {
+    if (variant === "soldier") return this.barracksSoldierCapacity(derived);
+    const def = getBarracksTrainingDef(variant);
+    const unlockLevel = def.requiresUpgrade ? upgradeLevel(this.colony.upgrades, def.requiresUpgrade) : 1;
+    if (unlockLevel <= 0) return 0;
+    return Math.min(this.barracksSoldierCapacity(derived), unlockLevel * (def.capacityPerUpgradeLevel ?? 1));
+  }
+
+  canCompleteBarracksTraining(variant) {
+    if (!isBarracksTrainingVariant(variant)) return false;
+    const d = this.computeDerived();
+    if (this.sortieSoldierPool(d) >= this.barracksSoldierCapacity(d)) return false;
+    if (variant !== "soldier" && this.barracksCurrentCount(variant, d) >= this.barracksVariantCapacity(variant, d)) return false;
+    return true;
+  }
+
+  canStartBarracksTraining(variant) {
+    if (!isBarracksTrainingVariant(variant)) return { ok: false, reason: "不明な兵種" };
+    const def = getBarracksTrainingDef(variant);
+    const queue = this.barracksQueue();
+    if (queue.length >= BARRACKS_QUEUE_CAP) return { ok: false, reason: "キュー満杯" };
+    if (def.requiresUpgrade && upgradeLevel(this.colony.upgrades, def.requiresUpgrade) <= 0) return { ok: false, reason: `${upgradeName(def.requiresUpgrade)}で解禁` };
+    const d = this.computeDerived();
+    const soldierCapacity = this.barracksSoldierCapacity(d);
+    if (soldierCapacity <= 0) return { ok: false, reason: "活動個体不足" };
+    const reservedSoldiers = this.sortieSoldierPool(d) + queue.length;
+    if (reservedSoldiers >= soldierCapacity) return { ok: false, reason: "総兵力上限" };
+    if (variant !== "soldier") {
+      const variantCapacity = this.barracksVariantCapacity(variant, d);
+      if (this.barracksCurrentCount(variant, d) + this.barracksPendingCount(variant) >= variantCapacity) {
+        return { ok: false, reason: "兵種上限" };
+      }
+    }
+    if (this.colony.food < def.foodCost) return { ok: false, reason: `食料 ${fmt(def.foodCost - this.colony.food, 0)}不足` };
+    return { ok: true, reason: "育成可能" };
+  }
+
+  startBarracksTraining(variant) {
+    if (!isBarracksTrainingVariant(variant)) return false;
+    const state = this.canStartBarracksTraining(variant);
+    if (!state.ok) {
+      this.pushLog(`兵舎: ${state.reason}`);
+      this.updateStats();
+      return false;
+    }
+    const def = getBarracksTrainingDef(variant);
+    this.colony.nextBarracksOrderId = Math.max(1, Math.floor(Number(this.colony.nextBarracksOrderId) || 1));
+    this.colony.food = Math.max(0, this.colony.food - def.foodCost);
+    this.barracksQueue().push({
+      id: this.colony.nextBarracksOrderId++,
+      variant: def.variant,
+      foodCost: def.foodCost,
+      totalSeconds: def.trainingSeconds,
+      remainingSeconds: def.trainingSeconds,
+    });
+    this.pushLog(`兵舎: ${def.label}を育成キューへ追加`);
+    this.updateStats();
+    this.saveColony();
+    return true;
+  }
+
+  completeBarracksTraining(variant) {
+    if (!this.canCompleteBarracksTraining(variant)) return false;
+    const def = getBarracksTrainingDef(variant);
+    const activeCap = Math.max(0, Math.floor(this.computeDerived().activeAnts ?? 0));
+    this.colony.soldierAnts = Math.min(activeCap, Math.floor(this.colony.soldierAnts) + 1);
+    const field = this.barracksVariantField(variant);
+    if (field) {
+      const variantCap = this.barracksVariantCapacity(variant);
+      this.colony[field] = Math.min(variantCap, Math.floor(this.colony[field] ?? 0) + 1);
+    }
+    this.pushLog(`兵舎完了: ${def.label}が1匹増えた`);
+    this.computeDerived();
+    this.syncAntPopulation();
+    return true;
+  }
+
+  updateBarracksTraining(dt) {
+    const queue = this.barracksQueue();
+    if (queue.length <= 0 || dt <= 0) return;
+    let remaining = dt;
+    while (queue.length > 0 && remaining >= 0) {
+      const order = queue[0];
+      if (order.remainingSeconds <= 0) {
+        if (!this.completeBarracksTraining(order.variant)) break;
+        queue.shift();
+        continue;
+      }
+      const spent = Math.min(order.remainingSeconds, remaining);
+      order.remainingSeconds = Math.max(0, order.remainingSeconds - spent);
+      remaining -= spent;
+      if (order.remainingSeconds > 0) break;
+      if (!this.completeBarracksTraining(order.variant)) break;
+      queue.shift();
+      if (remaining <= 0) break;
+    }
   }
 
   getAntVariantConfig(variant) {
@@ -6823,6 +6951,96 @@ class AntColony3D {
     }
   }
 
+  barracksStatusText() {
+    const active = this.barracksQueue()[0];
+    if (!active) return "キューなし";
+    const def = getBarracksTrainingDef(active.variant);
+    if (active.remainingSeconds <= 0 && !this.canCompleteBarracksTraining(active.variant)) {
+      return `${def.label} 完了待ち / 兵力上限`;
+    }
+    return `${def.label} 育成中 / 残り ${fmt(Math.ceil(active.remainingSeconds), 0)}s`;
+  }
+
+  renderBarracksPanel() {
+    if (!ui.barracksTrainingList || !ui.barracksQueueList) return;
+    const d = this.computeDerived();
+    ui.barracksTrainingList.replaceChildren();
+    for (const variant of BARRACKS_TRAINING_VARIANTS) {
+      const def = getBarracksTrainingDef(variant);
+      const state = this.canStartBarracksTraining(variant);
+      const current = this.barracksCurrentCount(variant, d);
+      const pending = this.barracksPendingCount(variant);
+      const capacity = this.barracksVariantCapacity(variant, d);
+      const card = document.createElement("article");
+      card.className = "barracks-card";
+
+      const header = document.createElement("div");
+      header.className = "barracks-card-header";
+      const title = document.createElement("strong");
+      title.textContent = def.label;
+      const count = document.createElement("span");
+      count.textContent = `${fmt(current, 0)} / ${fmt(capacity, 0)}`;
+      header.append(title, count);
+
+      const summary = document.createElement("p");
+      summary.textContent = def.summary;
+
+      const meta = document.createElement("div");
+      meta.className = "barracks-meta";
+      meta.textContent = `費用 食料${fmt(def.foodCost, 0)} / 育成 ${fmt(def.trainingSeconds, 0)}s / 待ち ${fmt(pending, 0)}`;
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.trainVariant = def.variant;
+      button.disabled = !state.ok;
+      button.title = state.ok ? `${def.label}を育成キューへ追加` : state.reason;
+      button.textContent = state.ok ? "育成キューへ" : state.reason;
+
+      card.append(header, summary, meta, button);
+      ui.barracksTrainingList.append(card);
+    }
+
+    ui.barracksQueueList.replaceChildren();
+    const queue = this.barracksQueue();
+    if (queue.length <= 0) {
+      const empty = document.createElement("div");
+      empty.className = "barracks-queue-item";
+      empty.textContent = "育成キューなし";
+      ui.barracksQueueList.append(empty);
+      return;
+    }
+    queue.forEach((order, index) => {
+      const def = getBarracksTrainingDef(order.variant);
+      const progress = clamp(1 - order.remainingSeconds / Math.max(order.totalSeconds, 0.001), 0, 1);
+      const row = document.createElement("div");
+      row.className = "barracks-queue-item";
+
+      const header = document.createElement("div");
+      header.className = "barracks-queue-header";
+      const label = document.createElement("strong");
+      label.textContent = def.label;
+      const orderText = document.createElement("span");
+      orderText.textContent = index === 0 ? `${Math.round(progress * 100)}%` : `待機 ${index + 1}`;
+      header.append(label, orderText);
+
+      const track = document.createElement("div");
+      track.className = "barracks-progress-track";
+      const fill = document.createElement("span");
+      fill.className = "barracks-progress-fill";
+      fill.style.width = `${Math.round(progress * 100)}%`;
+      track.append(fill);
+
+      const meta = document.createElement("div");
+      meta.className = "barracks-meta";
+      meta.textContent = index === 0
+        ? `残り ${fmt(Math.ceil(order.remainingSeconds), 0)}s / 支払い済み 食料${fmt(order.foodCost, 0)}`
+        : `順番待ち / 支払い済み 食料${fmt(order.foodCost, 0)}`;
+
+      row.append(header, track, meta);
+      ui.barracksQueueList.append(row);
+    });
+  }
+
   updateStats() {
     const d = this.computeDerived();
     const deployedSoldiers = this.deployedSoldierCount();
@@ -6884,6 +7102,12 @@ class AntColony3D {
         `採土 ${fmt(crew.fetching, 0)} / 運搬 ${fmt(crew.carrying, 0)} / 作業 ${fmt(crew.building, 0)} / 退避 ${fmt(crew.retreating, 0)} / 待機 ${fmt(crew.idle, 0)}`;
     }
     if (this.activeTab === "construction") this.renderConstructionProgress();
+    const barracksQueue = this.barracksQueue();
+    const activeBarracksOrder = barracksQueue[0];
+    if (ui.barracksQueueCount) ui.barracksQueueCount.textContent = fmt(barracksQueue.length, 0);
+    if (ui.barracksActive) ui.barracksActive.textContent = activeBarracksOrder ? getBarracksTrainingDef(activeBarracksOrder.variant).label : "なし";
+    if (ui.barracksStatus) ui.barracksStatus.textContent = this.barracksStatusText();
+    if (this.activeTab === "barracks") this.renderBarracksPanel();
     ui.soldierNest.textContent = fmt(Math.max(0, sortiePool - deployedSoldiers), 0);
     ui.soldierDeployed.textContent = fmt(deployedSoldiers, 0);
     ui.soldierStatus.textContent =

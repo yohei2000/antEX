@@ -495,6 +495,112 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.logText).toContain("兵隊出撃");
 });
 
+test("barracks tab queues soldier training and completes one ant at a time", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 36;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 4;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.nestLevel = 2;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.heavySoldierBrood = 1;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.setActiveTab("barracks");
+    sim.updateStats();
+
+    const before = {
+      food: sim.colony.food,
+      soldiers: sim.colony.soldierAnts,
+      heavy: sim.colony.heavySoldierAnts,
+      soldierCapacity: sim.barracksSoldierCapacity(),
+      heavyCapacity: sim.barracksVariantCapacity("heavySoldier"),
+      tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
+      trainingCards: document.querySelectorAll("#barracksTrainingList .barracks-card").length,
+      trainingText: document.querySelector("#barracksTrainingList")?.textContent ?? "",
+    };
+
+    const soldierStarted = sim.startBarracksTraining("soldier");
+    const heavyStarted = sim.startBarracksTraining("heavySoldier");
+    const queueAfterStart = sim.colony.barracksQueue.map((order: any) => ({ ...order }));
+    const firstDuration = sim.colony.barracksQueue[0].totalSeconds;
+    sim.updateBarracksTraining(firstDuration - 0.1);
+    const beforeFirstComplete = {
+      soldiers: sim.colony.soldierAnts,
+      heavy: sim.colony.heavySoldierAnts,
+      queueLength: sim.colony.barracksQueue.length,
+      firstRemaining: sim.colony.barracksQueue[0].remainingSeconds,
+    };
+
+    sim.updateBarracksTraining(0.2);
+    const afterFirstComplete = {
+      soldiers: sim.colony.soldierAnts,
+      heavy: sim.colony.heavySoldierAnts,
+      queueLength: sim.colony.barracksQueue.length,
+      activeVariant: sim.colony.barracksQueue[0]?.variant ?? null,
+      activeRemaining: sim.colony.barracksQueue[0]?.remainingSeconds ?? null,
+    };
+
+    sim.updateBarracksTraining((sim.colony.barracksQueue[0]?.remainingSeconds ?? 0) + 0.1);
+    sim.updateStats();
+
+    return {
+      before,
+      soldierStarted,
+      heavyStarted,
+      queueAfterStart,
+      beforeFirstComplete,
+      afterFirstComplete,
+      afterAll: {
+        food: sim.colony.food,
+        soldiers: sim.colony.soldierAnts,
+        heavy: sim.colony.heavySoldierAnts,
+        queueLength: sim.colony.barracksQueue.length,
+        queueCountText: (document.querySelector("#barracksQueueCount") as HTMLElement).textContent,
+        activeText: (document.querySelector("#barracksActive") as HTMLElement).textContent,
+        statusText: (document.querySelector("#barracksStatus") as HTMLElement).textContent,
+        queueText: (document.querySelector("#barracksQueueList") as HTMLElement).textContent,
+        logText: sim.colony.battleLog.join("\n"),
+      },
+    };
+  });
+
+  expect(result.before.tabText).toContain("兵舎");
+  expect(result.before.trainingCards).toBeGreaterThanOrEqual(6);
+  expect(result.before.trainingText).toContain("兵隊アリ");
+  expect(result.before.trainingText).toContain("重兵装アリ");
+  expect(result.before.soldierCapacity).toBeGreaterThan(result.before.soldiers);
+  expect(result.before.heavyCapacity).toBeGreaterThan(result.before.heavy);
+  expect(result.soldierStarted).toBe(true);
+  expect(result.heavyStarted).toBe(true);
+  expect(result.queueAfterStart).toHaveLength(2);
+  expect(result.queueAfterStart.map((order: any) => order.variant)).toEqual(["soldier", "heavySoldier"]);
+  expect(result.queueAfterStart[0].foodCost).not.toBe(result.queueAfterStart[1].foodCost);
+  expect(result.queueAfterStart[0].totalSeconds).not.toBe(result.queueAfterStart[1].totalSeconds);
+  expect(result.beforeFirstComplete.soldiers).toBe(result.before.soldiers);
+  expect(result.beforeFirstComplete.heavy).toBe(result.before.heavy);
+  expect(result.beforeFirstComplete.queueLength).toBe(2);
+  expect(result.beforeFirstComplete.firstRemaining).toBeGreaterThan(0);
+  expect(result.afterFirstComplete.soldiers).toBe(result.before.soldiers + 1);
+  expect(result.afterFirstComplete.heavy).toBe(result.before.heavy);
+  expect(result.afterFirstComplete.queueLength).toBe(1);
+  expect(result.afterFirstComplete.activeVariant).toBe("heavySoldier");
+  expect(result.afterAll.soldiers).toBe(result.before.soldiers + 2);
+  expect(result.afterAll.heavy).toBe(result.before.heavy + 1);
+  expect(result.afterAll.food).toBe(result.before.food - 23);
+  expect(result.afterAll.queueLength).toBe(0);
+  expect(result.afterAll.queueCountText).toBe("0");
+  expect(result.afterAll.activeText).toBe("なし");
+  expect(result.afterAll.statusText).toBe("キューなし");
+  expect(result.afterAll.queueText).toContain("育成キューなし");
+  expect(result.afterAll.logText).toContain("兵舎完了");
+});
+
 test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builders unlock without replacing existing ants", async ({ page }) => {
   await waitForSimulation(page);
 
