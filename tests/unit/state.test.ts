@@ -8,7 +8,7 @@ describe("colony state modules", () => {
   it("creates the same default colony shape used by the browser game", () => {
     const colony = createDefaultColony();
 
-    expect(colony.version).toBe(11);
+    expect(colony.version).toBe(12);
     expect(colony.food).toBe(36);
     expect(colony.lifetimeFood).toBe(36);
     expect(colony.antPopulation).toBe(12);
@@ -84,7 +84,7 @@ describe("colony state modules", () => {
       battleLog: ["a", "b", "c", "d", "e", "f"],
     });
 
-    expect(colony.version).toBe(11);
+    expect(colony.version).toBe(12);
     expect(colony.food).toBe(321);
     expect(colony.lifetimeFood).toBe(654);
     expect(colony.antPopulation).toBe(18);

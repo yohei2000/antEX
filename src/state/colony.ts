@@ -2,7 +2,7 @@ import { RAID_INITIAL_DELAY_SECONDS } from "../config/balance";
 import { UPGRADE_DEFS } from "../config/upgrades";
 import type { ColonyState, RaidState } from "./schema";
 
-export const COLONY_SAVE_VERSION = 11;
+export const COLONY_SAVE_VERSION = 12;
 
 export function createDefaultRaidState(): RaidState {
   return {

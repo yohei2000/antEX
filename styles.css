@@ -678,6 +678,36 @@ button {
   color: rgba(244, 241, 232, 0.66);
 }
 
+.construction-crew-controls {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.construction-crew-controls button {
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(210, 180, 108, 0.42);
+  border-radius: 7px;
+  background: rgba(210, 180, 108, 0.14);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.construction-crew-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.construction-crew-controls span {
+  min-width: 0;
+  text-align: center;
+  color: rgba(244, 241, 232, 0.72);
+  overflow-wrap: anywhere;
+}
+
 .barracks-training-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(164px, 1fr));

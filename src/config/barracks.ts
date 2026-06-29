@@ -1,6 +1,8 @@
 import type { AntVariant } from "./variants";
 
 export const BARRACKS_TRAINING_VARIANTS = [
+  "worker",
+  "builder",
   "soldier",
   "heavySoldier",
   "shieldHead",
@@ -24,6 +26,22 @@ export interface BarracksTrainingDef {
 export const BARRACKS_QUEUE_CAP = 8;
 
 export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTrainingDef> = {
+  worker: {
+    variant: "worker",
+    label: "働きアリ",
+    summary: "採餌を担う基本個体。総アリ数を1増やす",
+    foodCost: 6,
+    trainingSeconds: 12,
+  },
+  builder: {
+    variant: "builder",
+    label: "土木アリ",
+    summary: "工事に割り当てる作業個体。未割当時は巣内で待機",
+    foodCost: 10,
+    trainingSeconds: 24,
+    requiresUpgrade: "builderTraining",
+    capacityPerUpgradeLevel: 2,
+  },
   soldier: {
     variant: "soldier",
     label: "兵隊アリ",
@@ -91,5 +109,12 @@ export function getBarracksTrainingDef(variant: unknown): BarracksTrainingDef {
 }
 
 export function isCombatAntVariant(variant: AntVariant): variant is BarracksTrainingVariant {
-  return isBarracksTrainingVariant(variant);
+  return (
+    variant === "soldier" ||
+    variant === "heavySoldier" ||
+    variant === "shieldHead" ||
+    variant === "acidShooter" ||
+    variant === "scout" ||
+    variant === "captain"
+  );
 }

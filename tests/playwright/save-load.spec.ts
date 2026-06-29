@@ -197,7 +197,7 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
     };
   });
 
-  expect(migrated.version).toBe(11);
+  expect(migrated.version).toBe(12);
   expect(migrated.heavySoldierAnts).toBe(0);
   expect(migrated.shieldHeadAnts).toBe(0);
   expect(migrated.acidShooterAnts).toBe(0);
