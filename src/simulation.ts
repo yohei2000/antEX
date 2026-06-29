@@ -3516,7 +3516,7 @@ class AntColony3D {
     this.pendingConstructionKind = normalizeConstructionKind(kind);
     this.wallPlacementDraft = { points: [], hover: null };
     this.clearWallPlacementPreview();
-    this.constructionMessage = `${def.label}の頂点指定中`;
+    this.constructionMessage = `${def.label}の一筆線指定中`;
     this.updateStats();
     return true;
   }
@@ -3561,8 +3561,10 @@ class AntColony3D {
     this.pendingConstructionKind = null;
     this.wallPlacementDraft = null;
     this.clearWallPlacementPreview();
-    this.constructionMessage = `${def.startMessage} / ${fmt(tasks.length, 0)}辺`;
-    this.pushLog(`${def.startLog} / ${fmt(tasks.length, 0)}辺`);
+    const metrics = this.wallPlacementMetrics(targets, this.wallPlacementPoints(false));
+    const strokeLabel = `一筆線 / 頂点${fmt(metrics.vertexCount, 0)} / 全長${fmt(metrics.totalLength, 0)}`;
+    this.constructionMessage = `${def.startMessage} / ${strokeLabel}`;
+    this.pushLog(`${def.startLog} / ${strokeLabel}`);
     this.syncEarthworksToColony();
     this.updateStats();
     this.saveColony();
@@ -5955,8 +5957,26 @@ class AntColony3D {
     for (let index = 0; index < points.length - 1; index += 1) {
       const start = points[index];
       const end = points[index + 1];
-      if (distance2(start.x, start.z, end.x, end.z) < 1.6) continue;
-      const target = this.wallTargetFromLine(start, end);
+      targets.push(...this.wallTargetsFromSegment(start, end));
+    }
+    return targets;
+  }
+
+  wallTargetsFromSegment(start, end) {
+    if (!start || !end) return [];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const rawLength = Math.hypot(dx, dz);
+    if (rawLength < 1.6) return [];
+    const limits = this.earthWallLineLimits();
+    const chunkCount = Math.max(1, Math.ceil(rawLength / limits.maxLength));
+    const targets = [];
+    for (let index = 0; index < chunkCount; index += 1) {
+      const from = index / chunkCount;
+      const to = (index + 1) / chunkCount;
+      const chunkStart = { x: start.x + dx * from, z: start.z + dz * from };
+      const chunkEnd = { x: start.x + dx * to, z: start.z + dz * to };
+      const target = this.wallTargetFromLine(chunkStart, chunkEnd);
       if (target) targets.push(target);
     }
     return targets;
@@ -5964,6 +5984,19 @@ class AntColony3D {
 
   wallPlacementTotalCost(targets = this.wallPlacementTargetsFromDraft(false)) {
     return targets.reduce((sum, target) => sum + (target?.maxProgress ?? 0), 0);
+  }
+
+  wallPlacementTotalLength(targets = this.wallPlacementTargetsFromDraft(false)) {
+    return targets.reduce((sum, target) => sum + (target?.length ?? 0), 0);
+  }
+
+  wallPlacementMetrics(targets = this.wallPlacementTargetsFromDraft(false), points = this.wallPlacementPoints(false)) {
+    return {
+      vertexCount: points.length,
+      targetCount: targets.length,
+      totalLength: this.wallPlacementTotalLength(targets),
+      cost: this.wallPlacementTotalCost(targets),
+    };
   }
 
   addWallPlacementVertex(point) {
@@ -6040,8 +6073,11 @@ class AntColony3D {
 
     this.wallPlacementGuide = this.createWallPlacementGuide(targets, points);
     this.scene.add(this.wallPlacementGuide);
-    const fixedCost = this.wallPlacementTotalCost(fixedTargets);
-    this.constructionMessage = `土壁の頂点指定中 / ${fmt(fixedTargets.length, 0)}辺 / 工数 ${fmt(fixedCost, 1)}`;
+    const fixedPoints = this.wallPlacementPoints(false);
+    const metrics = this.wallPlacementMetrics(fixedTargets, fixedPoints);
+    this.constructionMessage = metrics.targetCount > 0
+      ? `土壁の一筆線を作成中 / 頂点 ${fmt(metrics.vertexCount, 0)} / 全長 ${fmt(metrics.totalLength, 0)} / 工数 ${fmt(metrics.cost, 1)}`
+      : "土壁の開始点を指定中 / 次のクリックで一筆線を伸ばす";
     this.updateStats();
   }
 
@@ -6532,14 +6568,17 @@ class AntColony3D {
     const isPending = this.pendingConstructionKind === kind;
     button.disabled = !commandState.ok && !isPending;
     const draftTargets = isPending && kind === "earthWall" ? this.wallPlacementTargetsFromDraft(false) : [];
-    const draftCost = draftTargets.length > 0 ? this.wallPlacementTotalCost(draftTargets) : detail.buildCost;
-    button.title = isPending ? `${detail.command}: 頂点指定中 / クリックで辺を追加 / 工数 ${fmt(draftCost, 1)}` : this.constructionButtonTitle(kind, commandState);
+    const draftMetrics = isPending && kind === "earthWall" ? this.wallPlacementMetrics(draftTargets, this.wallPlacementPoints(false)) : null;
+    const draftCost = draftMetrics && draftMetrics.targetCount > 0 ? draftMetrics.cost : detail.buildCost;
+    button.title = isPending
+      ? `${detail.command}: 一筆書きで土壁を指定 / クリックで頂点追加 / 全長 ${fmt(draftMetrics?.totalLength ?? 0, 0)} / 工数 ${fmt(draftCost, 1)}`
+      : this.constructionButtonTitle(kind, commandState);
     const main = button.querySelector(".button-main");
     const sub = button.querySelector(".button-sub");
     if (main) main.textContent = detail.command;
     if (sub) {
       const costLabel = kind === "earthWall" ? `基準工数${fmt(detail.buildCost, 1)} / 長さで変動` : `工数${fmt(detail.buildCost, 1)}`;
-      sub.textContent = isPending ? `頂点指定中 / ${fmt(draftTargets.length, 0)}辺 / 工数${fmt(draftCost, 1)}` : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
+      sub.textContent = isPending ? `一筆線指定中 / ${fmt(draftMetrics?.vertexCount ?? 0, 0)}点 / 工数${fmt(draftCost, 1)}` : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
     }
   }
 
@@ -6548,16 +6587,16 @@ class AntColony3D {
     if (!button) return;
     const isPending = this.pendingConstructionKind === "earthWall";
     const targets = isPending ? this.wallPlacementTargetsFromDraft(false) : [];
-    const cost = this.wallPlacementTotalCost(targets);
+    const metrics = this.wallPlacementMetrics(targets, this.wallPlacementPoints(false));
     button.hidden = !isPending;
-    button.disabled = targets.length <= 0;
-    button.title = targets.length > 0
-      ? `土壁を確定: ${fmt(targets.length, 0)}辺 / 工数 ${fmt(cost, 1)}`
+    button.disabled = metrics.targetCount <= 0;
+    button.title = metrics.targetCount > 0
+      ? `土壁を確定: 一筆線 / 全長 ${fmt(metrics.totalLength, 0)} / 工数 ${fmt(metrics.cost, 1)}`
       : "土壁の頂点を2つ以上指定";
     const main = button.querySelector(".button-main");
     const sub = button.querySelector(".button-sub");
-    if (main) main.textContent = targets.length > 0 ? "土壁の形を決定" : "土壁の頂点を指定";
-    if (sub) sub.textContent = targets.length > 0 ? `${fmt(targets.length, 0)}辺 / 工数${fmt(cost, 1)} / クリックで頂点追加` : "地面をクリックして開始点を置く";
+    if (main) main.textContent = metrics.targetCount > 0 ? "土壁の一筆線を決定" : "土壁の開始点を指定";
+    if (sub) sub.textContent = metrics.targetCount > 0 ? `${fmt(metrics.vertexCount, 0)}点 / 全長${fmt(metrics.totalLength, 0)} / 工数${fmt(metrics.cost, 1)}` : "地面をクリックして開始点を置く";
   }
 
   constructionAssignees(task) {
@@ -6669,7 +6708,7 @@ class AntColony3D {
       `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 盾頭 ${fmt(d.shieldHeads, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 斥候 ${fmt(d.scouts, 0)} / 小隊長 ${fmt(d.captains, 0)} / 土木 ${fmt(d.builders, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     const pendingConstructionLabel = this.pendingConstructionKind === "earthWall"
-      ? `${this.constructionLabel(this.pendingConstructionKind)} 頂点指定中`
+      ? `${this.constructionLabel(this.pendingConstructionKind)} 一筆線指定中`
       : this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 線指定中` : "";
     ui.activeToolLabel.textContent = pendingConstructionLabel || (this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);
     if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);

@@ -1296,16 +1296,18 @@ test("construction tab issues earthwork commands separately from growth", async 
       firstGuideLineLength: guideLines[0]?.scale.x,
       fixedTargetCount: sim.wallPlacementTargetsFromDraft(false).length,
       previewTargetCount: sim.wallPlacementTargetsFromDraft(true).length,
+      fixedMetrics: sim.wallPlacementMetrics(sim.wallPlacementTargetsFromDraft(false), sim.wallPlacementPoints(false)),
+      previewMetrics: sim.wallPlacementMetrics(sim.wallPlacementTargetsFromDraft(true), sim.wallPlacementPoints(true)),
     };
   });
 
   expect(pendingWall.pendingKind).toBe("earthWall");
   expect(pendingWall.taskKinds).toEqual(["lowBarricade", "sentryMound", "trailReinforce"]);
-  expect(pendingWall.wallButtonText).toContain("頂点指定中");
+  expect(pendingWall.wallButtonText).toContain("一筆線指定中");
   expect(pendingWall.confirmButtonHidden).toBe(false);
   expect(pendingWall.confirmButtonDisabled).toBe(false);
-  expect(pendingWall.confirmButtonText).toContain("土壁の形を決定");
-  expect(pendingWall.activeToolLabel).toContain("頂点指定中");
+  expect(pendingWall.confirmButtonText).toContain("土壁の一筆線を決定");
+  expect(pendingWall.activeToolLabel).toContain("一筆線指定中");
   expect(pendingWall.hasWallPlacementPreview).toBe(true);
   expect(pendingWall.hasWallPlacementGuide).toBe(true);
   expect(pendingWall.guideChildNames.filter((name: string) => name === "earth-wall-placement-line")).toHaveLength(2);
@@ -1315,6 +1317,9 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(pendingWall.guideLineCount).toBe(2);
   expect(pendingWall.fixedTargetCount).toBe(1);
   expect(pendingWall.previewTargetCount).toBe(2);
+  expect(pendingWall.fixedMetrics.vertexCount).toBe(2);
+  expect(pendingWall.previewMetrics.vertexCount).toBe(3);
+  expect(pendingWall.previewMetrics.totalLength).toBeCloseTo(Math.hypot(28, 8) + Math.hypot(9, 24), 5);
   expect(pendingWall.firstGuideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
 
   await page.evaluate(() => {
