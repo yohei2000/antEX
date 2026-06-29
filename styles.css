@@ -592,6 +592,23 @@ button {
   text-align: left;
 }
 
+.wall-placement-confirm {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px;
+  text-align: left;
+  box-shadow: 0 -8px 18px rgba(13, 14, 12, 0.28);
+}
+
+.wall-placement-confirm[hidden] {
+  display: none;
+}
+
 .button-main,
 .button-sub {
   min-width: 0;

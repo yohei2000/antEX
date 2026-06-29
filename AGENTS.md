@@ -26,8 +26,8 @@
 - 枝はアリが引っかかる原因になるため、通常マップの自然障害物として配置しない。
 - 土木アリは工事に割り当てられている時だけ地表へ出る。未割当の土木アリは巣内リソースとして扱い、地表には描画しない。
 - 土木工事は待機中の土木アリがいる限り、別種類の工事を同時に進められる。1つの工事へ無制限に密集させない。
-- 土木工事は `trailReinforce`、`lowBarricade`、`earthWall`、`sentryMound` を扱う。`earthWall` は低い土塁より細く高い防壁として、プレイヤーがドラッグした線で壁の位置と長さを指定し、敵の侵入を大きく遅らせ、壁上の味方攻撃を強める。
-- `earthWall` の建築コストは指定した線の長さに応じて変わる。UIではドラッグ中にも概算工数を表示し、完成時間は固定秒数として扱わない。
+- 土木工事は `trailReinforce`、`lowBarricade`、`earthWall`、`sentryMound` を扱う。`earthWall` は低い土塁より細く高い防壁として、プレイヤーがクリックで置いた頂点列から壁の位置と長さを指定し、敵の侵入を大きく遅らせ、壁上の味方攻撃を強める。
+- `earthWall` の建築コストは指定した線分の長さ合計に応じて変わる。UIでは頂点指定中にも概算工数を表示し、完成時間は固定秒数として扱わない。
 - `earthWall` の戦闘表現では、壁付近の味方は壁上に配置され、敵は壁を越える側で大きく減速する。低い土塁の既存効果を巻き添えで強化しない。
 - `sentryMound` がない場合、敵襲予兆段階では敵襲方角を表示しない。方角アラームや予兆中の兵隊ターゲットで隠し方角を漏らさない。
 - 完成済み `sentryMound` がある場合、敵襲予兆段階で方角を捕捉し、警告時間を少し延ばす。プレイヤーが兵隊を出撃すると、その方角に対して前方布陣を取る。
@@ -51,6 +51,7 @@
 - `src/simulation.ts` はまだ通常ゲームの compatibility entrypoint / orchestration 層。新しい定義や拡張点を無条件にここへ増やさず、既存 registry/state 境界を優先する。
 - アリ種別の追加・調整は `src/config/variants.ts` を起点にする。既存アリの `id`, `position`, `heading`, `gaitPhase`, `renderIndex` の連続性を壊さない。
 - 土木工事の種類追加・調整は `src/config/construction.ts` の `CONSTRUCTION_KINDS` / `CONSTRUCTION_DEFS` を起点にする。`src/config/balance.ts` に土木カタログを戻さない。
+- 土木工事の見た目追加・調整は `src/render/VoxelBuildingRenderer.ts` を優先する。保存形式と効果計算は `EarthworkState` の中心/半径/回転モデルを維持し、描画都合でボクセル単位のセーブへ広げない。
 - `EarthworkKind` は `ConstructionKind` に追従する。土木種別を追加する場合は、`src/state/migrations.ts` の正規化、保存互換、unit test、`npm run eval:save` を必ず確認する。
 - colony state、derived計算、save/migration は `src/state/*` を優先して扱う。セーブキー `ant3d.colonyState` は不用意に変えない。
 - `src/expedition/` は旧遠征/検証由来。通常アプリへ遠征モードを戻す根拠にしない。

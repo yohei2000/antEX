@@ -1269,10 +1269,9 @@ test("construction tab issues earthwork commands separately from growth", async 
   await page.locator("#constructionWallBtn").click();
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.wallPlacementDraft = {
-      start: { x: sim.nest.x + 15, z: sim.nest.z - 18 },
-      end: { x: sim.nest.x + 43, z: sim.nest.z - 10 },
-    };
+    sim.addWallPlacementVertex({ x: sim.nest.x + 15, z: sim.nest.z - 18 });
+    sim.addWallPlacementVertex({ x: sim.nest.x + 43, z: sim.nest.z - 10 });
+    sim.wallPlacementDraft.hover = sim.snapWallPlacementPoint({ x: sim.nest.x + 34, z: sim.nest.z + 14 });
     sim.updateWallPlacementPreview();
   });
 
@@ -1280,46 +1279,59 @@ test("construction tab issues earthwork commands separately from growth", async 
     const sim = window.__ANT_SIM as any;
     sim.updateStats();
     const guideChildren = sim.wallPlacementGuide?.children ?? [];
-    const guideLine = guideChildren.find((child: any) => child.name === "earth-wall-placement-line");
+    const guideLines = guideChildren.filter((child: any) => child.name === "earth-wall-placement-line");
+    const confirmButton = document.querySelector("#constructionWallConfirmBtn") as HTMLButtonElement;
     return {
       pendingKind: sim.pendingConstructionKind,
       taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
       wallButtonText: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).textContent,
+      confirmButtonHidden: confirmButton.hidden,
+      confirmButtonDisabled: confirmButton.disabled,
+      confirmButtonText: confirmButton.textContent,
       activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
       hasWallPlacementPreview: Boolean(sim.wallPlacementPreview),
       hasWallPlacementGuide: Boolean(sim.wallPlacementGuide),
       guideChildNames: guideChildren.map((child: any) => child.name).sort(),
-      guideLineLength: guideLine?.scale.x,
+      guideLineCount: guideLines.length,
+      firstGuideLineLength: guideLines[0]?.scale.x,
+      fixedTargetCount: sim.wallPlacementTargetsFromDraft(false).length,
+      previewTargetCount: sim.wallPlacementTargetsFromDraft(true).length,
     };
   });
 
   expect(pendingWall.pendingKind).toBe("earthWall");
   expect(pendingWall.taskKinds).toEqual(["lowBarricade", "sentryMound", "trailReinforce"]);
-  expect(pendingWall.wallButtonText).toContain("線指定中");
-  expect(pendingWall.activeToolLabel).toContain("線指定中");
+  expect(pendingWall.wallButtonText).toContain("頂点指定中");
+  expect(pendingWall.confirmButtonHidden).toBe(false);
+  expect(pendingWall.confirmButtonDisabled).toBe(false);
+  expect(pendingWall.confirmButtonText).toContain("土壁の形を決定");
+  expect(pendingWall.activeToolLabel).toContain("頂点指定中");
   expect(pendingWall.hasWallPlacementPreview).toBe(true);
   expect(pendingWall.hasWallPlacementGuide).toBe(true);
-  expect(pendingWall.guideChildNames).toEqual([
-    "earth-wall-placement-end",
-    "earth-wall-placement-line",
-    "earth-wall-placement-start",
-  ]);
-  expect(pendingWall.guideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
+  expect(pendingWall.guideChildNames.filter((name: string) => name === "earth-wall-placement-line")).toHaveLength(2);
+  expect(pendingWall.guideChildNames).toContain("earth-wall-placement-start");
+  expect(pendingWall.guideChildNames).toContain("earth-wall-placement-vertex");
+  expect(pendingWall.guideChildNames).toContain("earth-wall-placement-end");
+  expect(pendingWall.guideLineCount).toBe(2);
+  expect(pendingWall.fixedTargetCount).toBe(1);
+  expect(pendingWall.previewTargetCount).toBe(2);
+  expect(pendingWall.firstGuideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
 
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.confirmConstructionPlacement(
-      { x: sim.nest.x + 15, z: sim.nest.z - 18 },
-      { x: sim.nest.x + 43, z: sim.nest.z - 10 },
-    );
+    sim.addWallPlacementVertex({ x: sim.nest.x + 34, z: sim.nest.z + 14 });
+    sim.updateStats();
   });
+  await page.locator("#constructionWallConfirmBtn").click();
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.updateStats();
-    const wallTask = sim.buildTasks.find((task: any) => task.kind === "earthWall");
-    const expectedLineLength = Math.hypot(28, 8);
-    const expectedLineCost = sim.earthWallBuildCostForLength(expectedLineLength);
+    const wallTasks = sim.buildTasks.filter((task: any) => task.kind === "earthWall");
+    const firstLineLength = Math.hypot(28, 8);
+    const secondLineLength = Math.hypot(9, 24);
+    const expectedLineCost = sim.earthWallBuildCostForLength(firstLineLength) + sim.earthWallBuildCostForLength(secondLineLength);
+    const confirmButton = document.querySelector("#constructionWallConfirmBtn") as HTMLButtonElement;
     return {
       activeTab: sim.activeTab,
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
@@ -1328,13 +1340,15 @@ test("construction tab issues earthwork commands separately from growth", async 
       pendingKind: sim.pendingConstructionKind,
       taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
       earthworkKinds: sim.earthworks.map((earthwork: any) => earthwork.kind).sort(),
-      wallTaskX: wallTask?.x,
-      wallTaskZ: wallTask?.z,
-      wallTaskRotation: wallTask?.rotation,
-      wallTaskRadius: wallTask?.radius,
-      wallTaskCost: wallTask?.maxProgress,
+      wallTaskCount: wallTasks.length,
+      wallTaskX: wallTasks[0]?.x,
+      wallTaskZ: wallTasks[0]?.z,
+      wallTaskRotation: wallTasks[0]?.rotation,
+      wallTaskRadius: wallTasks[0]?.radius,
+      wallTaskCost: wallTasks.reduce((sum: number, task: any) => sum + task.maxProgress, 0),
       wallExpectedRotation: Math.atan2(8, 28),
       expectedLineCost,
+      confirmButtonHidden: confirmButton.hidden,
       builderCountText: (document.querySelector("#constructionBuilders") as HTMLElement).textContent,
       activeCountText: (document.querySelector("#constructionActive") as HTMLElement).textContent,
       statusText: (document.querySelector("#constructionStatus") as HTMLElement).textContent,
@@ -1364,18 +1378,20 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.growthActive).toBe(false);
   expect(result.constructionActive).toBe(true);
   expect(result.pendingKind).toBeNull();
-  expect(result.taskKinds).toEqual(["earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
-  expect(result.earthworkKinds).toEqual(["earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
+  expect(result.taskKinds).toEqual(["earthWall", "earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
+  expect(result.earthworkKinds).toEqual(["earthWall", "earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
+  expect(result.wallTaskCount).toBe(2);
   expect(result.wallTaskX).toBeGreaterThan(-30);
   expect(result.wallTaskZ).toBeLessThan(8);
   expect(Math.abs(result.wallTaskRotation - result.wallExpectedRotation)).toBeLessThan(0.001);
   expect(result.wallTaskRadius).toBeGreaterThan(12);
   expect(result.wallTaskCost).toBeCloseTo(result.expectedLineCost, 5);
   expect(result.wallTaskCost).not.toBe(7.2);
+  expect(result.confirmButtonHidden).toBe(true);
   expect(result.hasWallPlacementPreview).toBe(false);
   expect(result.hasWallPlacementGuide).toBe(false);
   expect(result.builderCountText).toBe("4");
-  expect(result.activeCountText).toBe("4");
+  expect(result.activeCountText).toBe("5");
   expect(result.statusText).toContain("作業中");
   expect(result.statusText).toContain("平均");
   expect(result.crewText).toContain("待機");
@@ -1406,9 +1422,9 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.taskAssigneeCounts.every((count: number) => count <= result.taskAssigneeLimit)).toBe(true);
   expect(result.taskAssigneeTotal).toBe(4);
   expect(result.taskAssigneeLimit).toBe(3);
-  expect(result.progressRows).toBe(4);
+  expect(result.progressRows).toBe(5);
   expect(result.trailDisabledAfterCommand).toBe(true);
-  expect(result.savedEarthworks).toBe(4);
+  expect(result.savedEarthworks).toBe(5);
 });
 
 test("multiple builders can share one construction task", async ({ page }) => {
