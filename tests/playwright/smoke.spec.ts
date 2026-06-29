@@ -1325,7 +1325,7 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(pendingWall.previewMetrics.totalLength).toBeCloseTo(Math.hypot(28, 8) + Math.hypot(9, 24), 5);
   expect(pendingWall.firstGuideLineRelativeX).toBeCloseTo(29, 5);
   expect(pendingWall.firstGuideLineRelativeZ).toBeCloseTo(-14, 5);
-  expect(pendingWall.firstGuideLineRotation).toBeCloseTo(Math.atan2(8, 28), 5);
+  expect(pendingWall.firstGuideLineRotation).toBeCloseTo(-Math.atan2(8, 28), 5);
   expect(pendingWall.firstGuideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
 
   await page.evaluate(() => {

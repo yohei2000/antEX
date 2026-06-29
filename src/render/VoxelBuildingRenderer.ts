@@ -72,7 +72,7 @@ export class VoxelBuildingRenderer {
     const group = new THREE.Group();
     group.name = `earthwork-${config.kind}`;
     group.position.set(config.x, 0, config.z);
-    group.rotation.y = config.rotation ?? 0;
+    group.rotation.y = config.kind === "earthWall" ? -(config.rotation ?? 0) : (config.rotation ?? 0);
 
     const footprint = new THREE.Mesh(this.assets.geometries.trailCircle, this.footprintMaterial(config.kind));
     footprint.name = `${config.kind}-footprint`;

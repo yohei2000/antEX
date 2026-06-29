@@ -6049,7 +6049,7 @@ class AntColony3D {
       mesh.name = "earth-wall-placement-footprint";
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(target.x, 0.32, target.z);
-      mesh.rotation.y = target.rotation;
+      mesh.rotation.y = -target.rotation;
       mesh.scale.set(target.radius * 1.16, target.radius * 0.14, 1);
       previewGroup.add(mesh);
     }
@@ -6079,7 +6079,7 @@ class AntColony3D {
       const line = new THREE.Mesh(this.geometries.wallPlacementLine, this.materials.wallPlacementLine.clone());
       line.name = "earth-wall-placement-line";
       line.position.set((start.x + end.x) / 2, 0.68 + index * 0.006, (start.z + end.z) / 2);
-      line.rotation.y = Math.atan2(dz, dx);
+      line.rotation.y = -Math.atan2(dz, dx);
       line.scale.set(length, 0.08, 0.42);
       line.renderOrder = 20;
       group.add(line);
