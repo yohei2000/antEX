@@ -31,7 +31,6 @@ import {
   RAID_RETREAT_SECONDS,
   RAID_RIVAL_CAP,
   BUILD_TASK_ASSIGNEE_CAP,
-  BUILDERS_PER_TRAINING,
   CAPTAIN_COHESION_RADIUS,
   CAPTAIN_COMMAND_RANGE,
   CAPTAIN_SQUAD_SIZE,
@@ -4574,7 +4573,7 @@ class AntColony3D {
     return this.colony.barracksQueue;
   }
 
-  barracksTrainingSpeedMultiplier() {
+  barracksTrainingSpeedMultiplier(variant = null) {
     const upgrades = this.colony.upgrades;
     const broodNursery = upgradeLevel(upgrades, "broodNursery");
     const broodClimate = upgradeLevel(upgrades, "broodClimate");
@@ -4585,7 +4584,10 @@ class AntColony3D {
     const improved =
       (base + queenCare * 0.0058 + broodNursery * 0.0038 + broodClimate * 0.003 + foodDistribution * 0.0012) *
       (1 + ventilationShafts * 0.008);
-    return clamp(improved / base, 1, 8);
+    const def = isBarracksTrainingVariant(variant) ? getBarracksTrainingDef(variant) : null;
+    const broodLevel = def?.requiresUpgrade ? upgradeLevel(upgrades, def.requiresUpgrade) : 0;
+    const broodSpeed = broodLevel > 1 ? 1 + (broodLevel - 1) * 0.08 : 1;
+    return clamp((improved / base) * broodSpeed, 1, 8);
   }
 
   barracksVariantField(variant) {
@@ -4643,23 +4645,13 @@ class AntColony3D {
   }
 
   barracksVariantCapacity(variant, derived = this.computeDerived()) {
-    if (variant === "worker") return Math.max(0, Math.floor(derived.capacity ?? 0));
-    if (variant === "builder") return Math.max(0, upgradeLevel(this.colony.upgrades, "builderTraining") * BUILDERS_PER_TRAINING);
-    if (variant === "soldier") return this.barracksSoldierCapacity(derived);
-    const def = getBarracksTrainingDef(variant);
-    const unlockLevel = def.requiresUpgrade ? upgradeLevel(this.colony.upgrades, def.requiresUpgrade) : 1;
-    if (unlockLevel <= 0) return 0;
-    return Math.min(this.barracksSoldierCapacity(derived), unlockLevel * (def.capacityPerUpgradeLevel ?? 1));
+    return Math.max(0, Math.floor(derived.capacity ?? 0));
   }
 
   canCompleteBarracksTraining(variant) {
     if (!isBarracksTrainingVariant(variant)) return false;
     const d = this.computeDerived();
     if (this.colony.antPopulation >= d.capacity) return false;
-    if (variant === "worker") return true;
-    if (variant === "builder") return this.barracksCurrentCount("builder", d) < this.barracksVariantCapacity("builder", d);
-    if (this.sortieSoldierPool(d) >= this.barracksSoldierCapacity(d)) return false;
-    if (variant !== "soldier" && this.barracksCurrentCount(variant, d) >= this.barracksVariantCapacity(variant, d)) return false;
     return true;
   }
 
@@ -4671,22 +4663,6 @@ class AntColony3D {
     if (def.requiresUpgrade && upgradeLevel(this.colony.upgrades, def.requiresUpgrade) <= 0) return { ok: false, reason: `${upgradeName(def.requiresUpgrade)}で解禁` };
     const d = this.computeDerived();
     if (this.colony.antPopulation + this.barracksPendingPopulationCount() >= d.capacity) return { ok: false, reason: "収容上限" };
-    if (variant === "builder") {
-      const builderCapacity = this.barracksVariantCapacity("builder", d);
-      if (builderCapacity <= 0) return { ok: false, reason: "土木枠なし" };
-      if (this.barracksCurrentCount("builder", d) + this.barracksPendingCount("builder") >= builderCapacity) return { ok: false, reason: "土木上限" };
-    } else if (this.isBarracksCombatVariant(variant)) {
-      const soldierCapacity = this.barracksSoldierCapacity(d);
-      if (soldierCapacity <= 0) return { ok: false, reason: "活動個体不足" };
-      const reservedSoldiers = this.sortieSoldierPool(d) + this.barracksPendingCombatCount();
-      if (reservedSoldiers >= soldierCapacity) return { ok: false, reason: "総兵力上限" };
-    }
-    if (this.isBarracksCombatVariant(variant) && variant !== "soldier") {
-      const variantCapacity = this.barracksVariantCapacity(variant, d);
-      if (this.barracksCurrentCount(variant, d) + this.barracksPendingCount(variant) >= variantCapacity) {
-        return { ok: false, reason: "兵種上限" };
-      }
-    }
     if (this.colony.food < def.foodCost) return { ok: false, reason: `食料 ${fmt(def.foodCost - this.colony.food, 0)}不足` };
     return { ok: true, reason: "育成可能" };
   }
@@ -4721,15 +4697,13 @@ class AntColony3D {
     const capacity = Math.max(0, Math.floor(this.computeDerived().capacity ?? 0));
     this.colony.antPopulation = Math.min(capacity, Math.floor(this.colony.antPopulation) + 1);
     if (variant === "builder") {
-      const builderCap = this.barracksVariantCapacity("builder");
-      this.colony.builderAnts = Math.min(builderCap, Math.floor(this.colony.builderAnts ?? 0) + 1);
+      this.colony.builderAnts = Math.floor(this.colony.builderAnts ?? 0) + 1;
     } else if (this.isBarracksCombatVariant(variant)) {
       const activeCap = Math.max(0, Math.floor(this.computeDerived().activeAnts ?? 0));
       this.colony.soldierAnts = Math.min(activeCap, Math.floor(this.colony.soldierAnts) + 1);
       const field = this.barracksVariantField(variant);
       if (field) {
-        const variantCap = this.barracksVariantCapacity(variant);
-        this.colony[field] = Math.min(variantCap, Math.floor(this.colony[field] ?? 0) + 1);
+        this.colony[field] = Math.floor(this.colony[field] ?? 0) + 1;
       }
     }
     this.pushLog(`育成完了: ${def.label}が1匹増えた`);
@@ -4741,7 +4715,7 @@ class AntColony3D {
   updateBarracksTraining(dt) {
     const queue = this.barracksQueue();
     if (queue.length <= 0 || dt <= 0) return;
-    let remaining = dt * this.barracksTrainingSpeedMultiplier();
+    let remaining = dt;
     while (queue.length > 0 && remaining >= 0) {
       const order = queue[0];
       if (order.remainingSeconds <= 0) {
@@ -4749,8 +4723,9 @@ class AntColony3D {
         queue.shift();
         continue;
       }
-      const spent = Math.min(order.remainingSeconds, remaining);
-      order.remainingSeconds = Math.max(0, order.remainingSeconds - spent);
+      const speed = this.barracksTrainingSpeedMultiplier(order.variant);
+      const spent = Math.min(order.remainingSeconds / speed, remaining);
+      order.remainingSeconds = Math.max(0, order.remainingSeconds - spent * speed);
       remaining -= spent;
       if (order.remainingSeconds > 0) break;
       if (!this.completeBarracksTraining(order.variant)) break;
@@ -7047,7 +7022,7 @@ class AntColony3D {
     if (active.remainingSeconds <= 0 && !this.canCompleteBarracksTraining(active.variant)) {
       return `${def.label} 完了待ち / 上限`;
     }
-    const secondsLeft = active.remainingSeconds / this.barracksTrainingSpeedMultiplier();
+    const secondsLeft = active.remainingSeconds / this.barracksTrainingSpeedMultiplier(active.variant);
     return `${def.label} 育成中 / 残り ${fmt(Math.ceil(secondsLeft), 0)}s`;
   }
 
@@ -7060,7 +7035,6 @@ class AntColony3D {
       const state = this.canStartBarracksTraining(variant);
       const current = this.barracksCurrentCount(variant, d);
       const pending = this.barracksPendingCount(variant);
-      const capacity = this.barracksVariantCapacity(variant, d);
       const card = document.createElement("article");
       card.className = "barracks-card";
 
@@ -7069,7 +7043,7 @@ class AntColony3D {
       const title = document.createElement("strong");
       title.textContent = def.label;
       const count = document.createElement("span");
-      count.textContent = `${fmt(current, 0)} / ${fmt(capacity, 0)}`;
+      count.textContent = pending > 0 ? `${fmt(current, 0)} + ${fmt(pending, 0)}` : fmt(current, 0);
       header.append(title, count);
 
       const summary = document.createElement("p");
@@ -7102,7 +7076,7 @@ class AntColony3D {
     queue.forEach((order, index) => {
       const def = getBarracksTrainingDef(order.variant);
       const progress = clamp(1 - order.remainingSeconds / Math.max(order.totalSeconds, 0.001), 0, 1);
-      const secondsLeft = order.remainingSeconds / this.barracksTrainingSpeedMultiplier();
+      const secondsLeft = order.remainingSeconds / this.barracksTrainingSpeedMultiplier(order.variant);
       const row = document.createElement("div");
       row.className = "barracks-queue-item";
 
@@ -7158,7 +7132,7 @@ class AntColony3D {
     const activeBarracksProgress = activeBarracksOrder
       ? clamp(1 - activeBarracksOrder.remainingSeconds / Math.max(activeBarracksOrder.totalSeconds, 0.001), 0, 1)
       : 0;
-    const activeBarracksRate = activeBarracksOrder ? (60 * this.barracksTrainingSpeedMultiplier()) / Math.max(activeBarracksOrder.totalSeconds, 0.001) : 0;
+    const activeBarracksRate = activeBarracksOrder ? (60 * this.barracksTrainingSpeedMultiplier(activeBarracksOrder.variant)) / Math.max(activeBarracksOrder.totalSeconds, 0.001) : 0;
 
     ui.statFood.textContent = fmt(this.colony.food, 0);
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;

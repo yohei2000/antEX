@@ -416,7 +416,7 @@ test("upgrade click increments an available upgrade", async ({ page }) => {
   expect(after).toBe(before + 1);
 });
 
-test("soldier tab deploys nest soldiers on player command", async ({ page }) => {
+test("military tab deploys nest soldiers on player command", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -482,6 +482,7 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.before.availableSortie).toBe(4);
   expect(result.before.plannedSortie).toBe(4);
   expect(result.before.button).toContain("兵隊を出撃 4");
+  expect(result.before.tabText).toContain("軍事");
   expect(result.before.tabText).not.toContain("遠征");
   expect(result.started).toBe(true);
   expect(result.firstWaveCount).toBe(4);
@@ -525,10 +526,6 @@ test("barracks tab queues every ant type and completes one ant at a time", async
       builders: sim.colony.builderAnts,
       soldiers: sim.colony.soldierAnts,
       heavy: sim.colony.heavySoldierAnts,
-      workerCapacity: sim.barracksVariantCapacity("worker"),
-      builderCapacity: sim.barracksVariantCapacity("builder"),
-      soldierCapacity: sim.barracksSoldierCapacity(),
-      heavyCapacity: sim.barracksVariantCapacity("heavySoldier"),
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
       trainingCards: document.querySelectorAll("#barracksTrainingList .barracks-card").length,
       trainingText: document.querySelector("#barracksTrainingList")?.textContent ?? "",
@@ -589,16 +586,12 @@ test("barracks tab queues every ant type and completes one ant at a time", async
     };
   });
 
-  expect(result.before.tabText).toContain("兵舎");
+  expect(result.before.tabText).toContain("育房");
   expect(result.before.trainingCards).toBeGreaterThanOrEqual(8);
   expect(result.before.trainingText).toContain("働きアリ");
   expect(result.before.trainingText).toContain("土木アリ");
   expect(result.before.trainingText).toContain("兵隊アリ");
   expect(result.before.trainingText).toContain("重兵装アリ");
-  expect(result.before.workerCapacity).toBeGreaterThan(result.before.ants);
-  expect(result.before.builderCapacity).toBeGreaterThan(result.before.builders);
-  expect(result.before.soldierCapacity).toBeGreaterThan(result.before.soldiers);
-  expect(result.before.heavyCapacity).toBeGreaterThan(result.before.heavy);
   expect(result.workerStarted).toBe(true);
   expect(result.builderStarted).toBe(true);
   expect(result.soldierStarted).toBe(true);
@@ -629,6 +622,46 @@ test("barracks tab queues every ant type and completes one ant at a time", async
   expect(result.afterAll.statusText).toBe("キューなし");
   expect(result.afterAll.queueText).toContain("育成キューなし");
   expect(result.afterAll.logText).toContain("育成完了");
+});
+
+test("nursery queue accepts thirty orders without per-species caps", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.food = 10000;
+    sim.colony.lifetimeFood = 10000;
+    sim.colony.antPopulation = 20;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 2;
+    sim.colony.nestLevel = 6;
+    sim.colony.territory = 8;
+    sim.colony.upgrades.storageChambers = 4;
+    sim.colony.upgrades.soldierTraining = 6;
+    sim.colony.upgrades.heavySoldierBrood = 4;
+    sim.colony.barracksQueue = [];
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.setActiveTab("barracks");
+    const starts = Array.from({ length: 30 }, () => sim.startBarracksTraining("heavySoldier"));
+    const extraStarted = sim.startBarracksTraining("heavySoldier");
+    sim.updateStats();
+    return {
+      starts,
+      extraStarted,
+      queueLength: sim.colony.barracksQueue.length,
+      queueCountText: (document.querySelector("#barracksQueueCount") as HTMLElement).textContent,
+      trainingText: document.querySelector("#barracksTrainingList")?.textContent ?? "",
+      statusText: (document.querySelector("#barracksStatus") as HTMLElement).textContent,
+    };
+  });
+
+  expect(result.starts.every(Boolean)).toBe(true);
+  expect(result.extraStarted).toBe(false);
+  expect(result.queueLength).toBe(30);
+  expect(result.queueCountText).toBe("30");
+  expect(result.trainingText).toContain("キュー満杯");
+  expect(result.statusText).toContain("重兵装アリ");
 });
 
 test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builders unlock without replacing existing ants", async ({ page }) => {
@@ -782,7 +815,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
   expect(result.scoutCount).toBeGreaterThanOrEqual(1);
   expect(result.captainCount).toBeGreaterThanOrEqual(1);
   expect(result.builderCount).toBe(1);
-  expect(result.builderTarget).toBe(2);
+  expect(result.builderTarget).toBeGreaterThan(result.builderCount);
   expect(result.surfaceHeavyBeforeSortie).toBe(0);
   expect(result.surfaceShieldBeforeSortie).toBe(0);
   expect(result.surfaceAcidBeforeSortie).toBe(0);
@@ -2252,7 +2285,7 @@ test("builders stay in the nest until assigned and spread across construction ty
     };
   });
 
-  expect(result.builderTarget).toBe(4);
+  expect(result.builderTarget).toBeGreaterThan(result.builderCount);
   expect(result.builderCount).toBe(4);
   expect(result.surfaceBuildersBefore).toBe(0);
   expect(result.idleBuildersInNest).toBe(true);

@@ -20,10 +20,9 @@ export interface BarracksTrainingDef {
   foodCost: number;
   trainingSeconds: number;
   requiresUpgrade?: string;
-  capacityPerUpgradeLevel?: number;
 }
 
-export const BARRACKS_QUEUE_CAP = 8;
+export const BARRACKS_QUEUE_CAP = 30;
 
 export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTrainingDef> = {
   worker: {
@@ -40,7 +39,6 @@ export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTra
     foodCost: 10,
     trainingSeconds: 24,
     requiresUpgrade: "builderTraining",
-    capacityPerUpgradeLevel: 2,
   },
   soldier: {
     variant: "soldier",
@@ -56,7 +54,6 @@ export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTra
     foodCost: 15,
     trainingSeconds: 36,
     requiresUpgrade: "heavySoldierBrood",
-    capacityPerUpgradeLevel: 2,
   },
   shieldHead: {
     variant: "shieldHead",
@@ -65,7 +62,6 @@ export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTra
     foodCost: 13,
     trainingSeconds: 32,
     requiresUpgrade: "shieldHeadBrood",
-    capacityPerUpgradeLevel: 2,
   },
   acidShooter: {
     variant: "acidShooter",
@@ -74,7 +70,6 @@ export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTra
     foodCost: 12,
     trainingSeconds: 28,
     requiresUpgrade: "acidShooterBrood",
-    capacityPerUpgradeLevel: 2,
   },
   scout: {
     variant: "scout",
@@ -83,7 +78,6 @@ export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTra
     foodCost: 10,
     trainingSeconds: 22,
     requiresUpgrade: "scoutBrood",
-    capacityPerUpgradeLevel: 2,
   },
   captain: {
     variant: "captain",
@@ -92,7 +86,6 @@ export const BARRACKS_TRAINING_DEFS: Record<BarracksTrainingVariant, BarracksTra
     foodCost: 18,
     trainingSeconds: 42,
     requiresUpgrade: "captainBrood",
-    capacityPerUpgradeLevel: 2,
   },
 };
 
