@@ -5897,30 +5897,15 @@ class AntColony3D {
 
   wallTargetFromLine(start, end) {
     if (!start || !end) return null;
-    const limits = this.earthWallLineLimits();
     const dx = end.x - start.x;
     const dz = end.z - start.z;
     const rawLength = Math.hypot(dx, dz);
+    if (rawLength < 1.6) return null;
     const fallbackAngle = Math.atan2(start.z - this.nest.z, start.x - this.nest.x) + Math.PI / 2;
     const angle = rawLength > 0.001 ? Math.atan2(dz, dx) : fallbackAngle;
-    const length = clamp(rawLength, limits.minLength, limits.maxLength);
-    let midX = (start.x + end.x) / 2;
-    let midZ = (start.z + end.z) / 2;
-    const nestDx = midX - this.nest.x;
-    const nestDz = midZ - this.nest.z;
-    const nestDistance = Math.hypot(nestDx, nestDz) || 1;
-    const minNestDistance = this.nest.radius + 7.5;
-    if (nestDistance < minNestDistance) {
-      const pushX = Math.abs(nestDx) + Math.abs(nestDz) > 0.001 ? nestDx / nestDistance : Math.cos(angle + Math.PI / 2);
-      const pushZ = Math.abs(nestDx) + Math.abs(nestDz) > 0.001 ? nestDz / nestDistance : Math.sin(angle + Math.PI / 2);
-      midX = this.nest.x + pushX * minNestDistance;
-      midZ = this.nest.z + pushZ * minNestDistance;
-    }
-    const d = Math.hypot(midX, midZ) || 1;
-    const maxCenterDistance = this.worldRadius - length * 0.55 - 3;
-    const centerDistance = Math.min(d, Math.max(12, maxCenterDistance));
-    const x = (midX / d) * centerDistance;
-    const z = (midZ / d) * centerDistance;
+    const length = rawLength;
+    const x = (start.x + end.x) / 2;
+    const z = (start.z + end.z) / 2;
     const radius = length / 2.32;
     return {
       x,
@@ -6071,7 +6056,7 @@ class AntColony3D {
     this.scene.add(previewGroup);
     this.wallPlacementPreview = previewGroup;
 
-    this.wallPlacementGuide = this.createWallPlacementGuide(targets, points);
+    this.wallPlacementGuide = this.createWallPlacementGuide(points);
     this.scene.add(this.wallPlacementGuide);
     const fixedPoints = this.wallPlacementPoints(false);
     const metrics = this.wallPlacementMetrics(fixedTargets, fixedPoints);
@@ -6081,18 +6066,24 @@ class AntColony3D {
     this.updateStats();
   }
 
-  createWallPlacementGuide(targets, points = []) {
+  createWallPlacementGuide(points = []) {
     const group = new THREE.Group();
     group.name = "earth-wall-placement-guide";
-    targets.forEach((target, index) => {
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index];
+      const end = points[index + 1];
+      if (distance2(start.x, start.z, end.x, end.z) < 1.6) continue;
+      const dx = end.x - start.x;
+      const dz = end.z - start.z;
+      const length = Math.hypot(dx, dz);
       const line = new THREE.Mesh(this.geometries.wallPlacementLine, this.materials.wallPlacementLine.clone());
       line.name = "earth-wall-placement-line";
-      line.position.set(target.x, 0.68 + index * 0.006, target.z);
-      line.rotation.y = target.rotation;
-      line.scale.set(target.length, 0.08, 0.42);
+      line.position.set((start.x + end.x) / 2, 0.68 + index * 0.006, (start.z + end.z) / 2);
+      line.rotation.y = Math.atan2(dz, dx);
+      line.scale.set(length, 0.08, 0.42);
       line.renderOrder = 20;
       group.add(line);
-    });
+    }
 
     points.forEach((point, index) => {
       const marker = new THREE.Mesh(this.geometries.wallPlacementMarker, this.materials.wallPlacementMarker.clone());

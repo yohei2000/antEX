@@ -1293,6 +1293,9 @@ test("construction tab issues earthwork commands separately from growth", async 
       hasWallPlacementGuide: Boolean(sim.wallPlacementGuide),
       guideChildNames: guideChildren.map((child: any) => child.name).sort(),
       guideLineCount: guideLines.length,
+      firstGuideLineRelativeX: guideLines[0] ? guideLines[0].position.x - sim.nest.x : undefined,
+      firstGuideLineRelativeZ: guideLines[0] ? guideLines[0].position.z - sim.nest.z : undefined,
+      firstGuideLineRotation: guideLines[0]?.rotation.y,
       firstGuideLineLength: guideLines[0]?.scale.x,
       fixedTargetCount: sim.wallPlacementTargetsFromDraft(false).length,
       previewTargetCount: sim.wallPlacementTargetsFromDraft(true).length,
@@ -1320,6 +1323,9 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(pendingWall.fixedMetrics.vertexCount).toBe(2);
   expect(pendingWall.previewMetrics.vertexCount).toBe(3);
   expect(pendingWall.previewMetrics.totalLength).toBeCloseTo(Math.hypot(28, 8) + Math.hypot(9, 24), 5);
+  expect(pendingWall.firstGuideLineRelativeX).toBeCloseTo(29, 5);
+  expect(pendingWall.firstGuideLineRelativeZ).toBeCloseTo(-14, 5);
+  expect(pendingWall.firstGuideLineRotation).toBeCloseTo(Math.atan2(8, 28), 5);
   expect(pendingWall.firstGuideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
 
   await page.evaluate(() => {
