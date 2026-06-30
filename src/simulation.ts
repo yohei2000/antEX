@@ -5974,15 +5974,19 @@ class AntColony3D {
   updateRaidBreachDamage(dt) {
     const raid = this.ensureRaidState();
     if (raid.phase !== "active") return;
-    const pressure = this.raidRivals().reduce((sum, rival) => {
-      if (rival.defeated || rival.leftRaid || rival.retreat > 0) return sum;
-      const inPressureArea =
-        distance2(rival.x, rival.z, this.nest.x, this.nest.z) < this.nest.radius + 24 ||
-        this.isNearFood(rival.x, rival.z, 7);
-      if (!inPressureArea) return sum;
+    let nestPressure = 0;
+    let foodPressure = 0;
+    for (const rival of this.raidRivals()) {
+      if (rival.defeated || rival.leftRaid || rival.retreat > 0) continue;
+      const nearNest = distance2(rival.x, rival.z, this.nest.x, this.nest.z) < this.nest.radius + 24;
+      const nearFood = this.isNearFood(rival.x, rival.z, 7);
+      if (!nearNest && !nearFood) continue;
       const shieldRelief = this.shieldBlockStrengthAt(rival.x, rival.z);
-      return sum + Math.max(0.28, 1 - shieldRelief * 0.42);
-    }, 0);
+      const rivalPressure = Math.max(0.28, 1 - shieldRelief * 0.42);
+      if (nearNest) nestPressure += rivalPressure;
+      else foodPressure += rivalPressure;
+    }
+    const pressure = nestPressure + foodPressure;
     if (pressure <= 0) {
       raid.breachTimer = Math.max(0, raid.breachTimer - dt * 0.6);
       return;
@@ -5993,10 +5997,13 @@ class AntColony3D {
     const defense = this.computeDerived().defensePower;
     const loss = Math.min(this.colony.food, (1.8 + pressure * 1.4 + this.colony.enemyThreat * 0.08) / defense);
     this.colony.food = Math.max(0, this.colony.food - loss);
-    const casualtyChance = clamp((pressure - 1) * 0.18 + this.colony.enemyThreat * 0.012 - (defense - 1) * 0.18, 0, 0.62);
+    const casualtyChance = nestPressure > 0
+      ? clamp((nestPressure - 1) * 0.18 + this.colony.enemyThreat * 0.012 - (defense - 1) * 0.18, 0, 0.62)
+      : 0;
     let casualties = 0;
     if (Math.random() < casualtyChance) casualties = this.applyRaidCasualties(1, "breach");
-    this.pushLog(`敵が巣周辺を荒らした: 食料-${fmt(loss, 0)}${casualties ? ` / 死亡${casualties}` : ""}`);
+    const pressureArea = nestPressure > 0 ? "巣周辺" : "餌場";
+    this.pushLog(`敵が${pressureArea}を荒らした: 食料-${fmt(loss, 0)}${casualties ? ` / 死亡${casualties}` : ""}`);
   }
 
   updateRaid(dt) {

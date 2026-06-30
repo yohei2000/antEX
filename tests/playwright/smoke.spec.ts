@@ -3229,3 +3229,91 @@ test("rival ants actively harass ants near food instead of only camping", async 
   expect(result.antAlive).toBe(false);
   expect(result.casualties).toBeGreaterThanOrEqual(1);
 });
+
+test("raid food pressure damages food without killing ants inside the nest", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 12;
+    sim.colony.woundedAnts = 0;
+    sim.colony.enemyThreat = 50;
+    sim.colony.fallenAnts = 3;
+    sim.syncAntPopulation();
+    for (const ant of sim.ants) {
+      ant.inNest = true;
+      ant.nestStayTimer = 30;
+      ant.state = "stunned";
+      ant.stun = 30;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.x = sim.nest.x;
+      ant.z = sim.nest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 3,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const food = sim.food.find((item: any) =>
+      Math.hypot(item.x - sim.nest.x, item.z - sim.nest.z) > sim.nest.radius + 30,
+    ) ?? sim.food[0];
+    const rival = sim.raidRivals()[0];
+    rival.x = food.x;
+    rival.z = food.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.defeated = false;
+    rival.leftRaid = false;
+    sim.colony.raidState.breachTimer = 7.19;
+    const before = {
+      food: sim.colony.food,
+      population: sim.colony.antPopulation,
+      fallen: sim.colony.fallenAnts,
+      ants: sim.ants.length,
+    };
+    const oldRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      sim.updateRaidBreachDamage(0.2);
+    } finally {
+      Math.random = oldRandom;
+    }
+    return {
+      before,
+      after: {
+        food: sim.colony.food,
+        population: sim.colony.antPopulation,
+        fallen: sim.colony.fallenAnts,
+        ants: sim.ants.length,
+        casualties: sim.colony.raidState.casualties,
+        log: sim.colony.battleLog.join("\n"),
+      },
+    };
+  });
+
+  expect(result.after.food).toBeLessThan(result.before.food);
+  expect(result.after.population).toBe(result.before.population);
+  expect(result.after.fallen).toBe(result.before.fallen);
+  expect(result.after.ants).toBe(result.before.ants);
+  expect(result.after.casualties).toBe(0);
+  expect(result.after.log).toContain("餌場");
+  expect(result.after.log).not.toContain("死亡1");
+});
