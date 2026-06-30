@@ -416,7 +416,7 @@ test("upgrade click increments an available upgrade", async ({ page }) => {
   expect(after).toBe(before + 1);
 });
 
-test("soldier tab deploys nest soldiers on player command", async ({ page }) => {
+test("military tab deploys nest soldiers on player command", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -482,6 +482,7 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.before.availableSortie).toBe(4);
   expect(result.before.plannedSortie).toBe(4);
   expect(result.before.button).toContain("兵隊を出撃 4");
+  expect(result.before.tabText).toContain("軍事");
   expect(result.before.tabText).not.toContain("遠征");
   expect(result.started).toBe(true);
   expect(result.firstWaveCount).toBe(4);
@@ -493,6 +494,182 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.afterRetire).toBe(0);
   expect(result.statusText).toContain("再準備");
   expect(result.logText).toContain("兵隊出撃");
+});
+
+test("barracks tab queues every ant type and completes one ant at a time", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 30;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 4;
+    sim.colony.builderAnts = 1;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.nestLevel = 3;
+    sim.colony.territory = 4;
+    sim.colony.upgrades.storageChambers = 2;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.builderTraining = 1;
+    sim.colony.upgrades.heavySoldierBrood = 1;
+    sim.colony.upgrades.medicBrood = 1;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.setActiveTab("barracks");
+    sim.updateStats();
+
+    const before = {
+      food: sim.colony.food,
+      ants: sim.colony.antPopulation,
+      workers: sim.computeDerived().workers,
+      builders: sim.colony.builderAnts,
+      soldiers: sim.colony.soldierAnts,
+      heavy: sim.colony.heavySoldierAnts,
+      medic: sim.colony.medicAnts,
+      tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
+      trainingCards: document.querySelectorAll("#barracksTrainingList .barracks-card").length,
+      trainingText: document.querySelector("#barracksTrainingList")?.textContent ?? "",
+    };
+
+    const workerStarted = sim.startBarracksTraining("worker");
+    const builderStarted = sim.startBarracksTraining("builder");
+    const soldierStarted = sim.startBarracksTraining("soldier");
+    const heavyStarted = sim.startBarracksTraining("heavySoldier");
+    const medicStarted = sim.startBarracksTraining("medic");
+    const queueAfterStart = sim.colony.barracksQueue.map((order: any) => ({ ...order }));
+    const firstDuration = sim.colony.barracksQueue[0].totalSeconds;
+    sim.updateBarracksTraining(firstDuration - 0.1);
+    const beforeFirstComplete = {
+      soldiers: sim.colony.soldierAnts,
+      heavy: sim.colony.heavySoldierAnts,
+      queueLength: sim.colony.barracksQueue.length,
+      firstRemaining: sim.colony.barracksQueue[0].remainingSeconds,
+    };
+
+    sim.updateBarracksTraining(0.2);
+    const afterFirstComplete = {
+      ants: sim.colony.antPopulation,
+      workers: sim.computeDerived().workers,
+      builders: sim.colony.builderAnts,
+      soldiers: sim.colony.soldierAnts,
+      heavy: sim.colony.heavySoldierAnts,
+      queueLength: sim.colony.barracksQueue.length,
+      activeVariant: sim.colony.barracksQueue[0]?.variant ?? null,
+      activeRemaining: sim.colony.barracksQueue[0]?.remainingSeconds ?? null,
+    };
+
+    const remainingQueueSeconds = sim.colony.barracksQueue.reduce((sum: number, order: any) => sum + order.remainingSeconds, 0);
+    sim.updateBarracksTraining(remainingQueueSeconds + 0.1);
+    sim.updateStats();
+
+    return {
+      before,
+      workerStarted,
+      builderStarted,
+      soldierStarted,
+      heavyStarted,
+      medicStarted,
+      queueAfterStart,
+      beforeFirstComplete,
+      afterFirstComplete,
+      afterAll: {
+        food: sim.colony.food,
+        ants: sim.colony.antPopulation,
+        builders: sim.colony.builderAnts,
+        soldiers: sim.colony.soldierAnts,
+        heavy: sim.colony.heavySoldierAnts,
+        medic: sim.colony.medicAnts,
+        queueLength: sim.colony.barracksQueue.length,
+        queueCountText: (document.querySelector("#barracksQueueCount") as HTMLElement).textContent,
+        activeText: (document.querySelector("#barracksActive") as HTMLElement).textContent,
+        statusText: (document.querySelector("#barracksStatus") as HTMLElement).textContent,
+        queueText: (document.querySelector("#barracksQueueList") as HTMLElement).textContent,
+        logText: sim.colony.battleLog.join("\n"),
+      },
+    };
+  });
+
+  expect(result.before.tabText).toContain("育房");
+  expect(result.before.trainingCards).toBeGreaterThanOrEqual(9);
+  expect(result.before.trainingText).toContain("働きアリ");
+  expect(result.before.trainingText).toContain("土木アリ");
+  expect(result.before.trainingText).toContain("兵隊アリ");
+  expect(result.before.trainingText).toContain("重兵装アリ");
+  expect(result.before.trainingText).toContain("救護アリ");
+  expect(result.workerStarted).toBe(true);
+  expect(result.builderStarted).toBe(true);
+  expect(result.soldierStarted).toBe(true);
+  expect(result.heavyStarted).toBe(true);
+  expect(result.medicStarted).toBe(true);
+  expect(result.queueAfterStart).toHaveLength(5);
+  expect(result.queueAfterStart.map((order: any) => order.variant)).toEqual(["worker", "builder", "soldier", "heavySoldier", "medic"]);
+  expect(result.queueAfterStart[0].foodCost).not.toBe(result.queueAfterStart[1].foodCost);
+  expect(result.queueAfterStart[0].totalSeconds).not.toBe(result.queueAfterStart[1].totalSeconds);
+  expect(result.beforeFirstComplete.queueLength).toBe(5);
+  expect(result.beforeFirstComplete.soldiers).toBe(result.before.soldiers);
+  expect(result.beforeFirstComplete.heavy).toBe(result.before.heavy);
+  expect(result.beforeFirstComplete.firstRemaining).toBeGreaterThan(0);
+  expect(result.afterFirstComplete.ants).toBe(result.before.ants + 1);
+  expect(result.afterFirstComplete.workers).toBe(result.before.workers + 1);
+  expect(result.afterFirstComplete.builders).toBe(result.before.builders);
+  expect(result.afterFirstComplete.soldiers).toBe(result.before.soldiers);
+  expect(result.afterFirstComplete.heavy).toBe(result.before.heavy);
+  expect(result.afterFirstComplete.queueLength).toBe(4);
+  expect(result.afterFirstComplete.activeVariant).toBe("builder");
+  expect(result.afterAll.ants).toBe(result.before.ants + 5);
+  expect(result.afterAll.builders).toBe(result.before.builders + 1);
+  expect(result.afterAll.soldiers).toBe(result.before.soldiers + 3);
+  expect(result.afterAll.heavy).toBe(result.before.heavy + 1);
+  expect(result.afterAll.medic).toBe(result.before.medic + 1);
+  expect(result.afterAll.food).toBe(result.before.food - 50);
+  expect(result.afterAll.queueLength).toBe(0);
+  expect(result.afterAll.queueCountText).toBe("0");
+  expect(result.afterAll.activeText).toBe("なし");
+  expect(result.afterAll.statusText).toBe("キューなし");
+  expect(result.afterAll.queueText).toContain("育成キューなし");
+  expect(result.afterAll.logText).toContain("育成完了");
+});
+
+test("nursery queue accepts thirty orders without per-species caps", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.food = 10000;
+    sim.colony.lifetimeFood = 10000;
+    sim.colony.antPopulation = 20;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 2;
+    sim.colony.nestLevel = 6;
+    sim.colony.territory = 8;
+    sim.colony.upgrades.storageChambers = 4;
+    sim.colony.upgrades.soldierTraining = 6;
+    sim.colony.upgrades.heavySoldierBrood = 4;
+    sim.colony.barracksQueue = [];
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.setActiveTab("barracks");
+    const starts = Array.from({ length: 30 }, () => sim.startBarracksTraining("heavySoldier"));
+    const extraStarted = sim.startBarracksTraining("heavySoldier");
+    sim.updateStats();
+    return {
+      starts,
+      extraStarted,
+      queueLength: sim.colony.barracksQueue.length,
+      queueCountText: (document.querySelector("#barracksQueueCount") as HTMLElement).textContent,
+      trainingText: document.querySelector("#barracksTrainingList")?.textContent ?? "",
+      statusText: (document.querySelector("#barracksStatus") as HTMLElement).textContent,
+    };
+  });
+
+  expect(result.starts.every(Boolean)).toBe(true);
+  expect(result.extraStarted).toBe(false);
+  expect(result.queueLength).toBe(30);
+  expect(result.queueCountText).toBe("30");
+  expect(result.trainingText).toContain("キュー満杯");
+  expect(result.statusText).toContain("重兵装アリ");
 });
 
 test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and builders unlock without replacing existing ants", async ({ page }) => {
@@ -508,7 +685,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and
     sim.colony.soldierAnts = 12;
     sim.colony.nestLevel = 3;
     sim.colony.territory = 4;
-    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.soldierTraining = 6;
     sim.colony.upgrades.chamberExcavation = 1;
     const heavyBought = sim.buyUpgrade("heavySoldierBrood");
     const shieldBought = sim.buyUpgrade("shieldHeadBrood");
@@ -517,6 +694,26 @@ test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and
     const medicBought = sim.buyUpgrade("medicBrood");
     const captainBought = sim.buyUpgrade("captainBrood");
     const builderBought = sim.buyUpgrade("builderTraining");
+    const countsAfterUnlock = {
+      heavy: sim.colony.heavySoldierAnts,
+      shield: sim.colony.shieldHeadAnts,
+      acid: sim.colony.acidShooterAnts,
+      scout: sim.colony.scoutAnts,
+      medic: sim.colony.medicAnts,
+      captain: sim.colony.captainAnts,
+      builders: sim.colony.builderAnts,
+    };
+    const trainingStarted = [
+      sim.startBarracksTraining("heavySoldier"),
+      sim.startBarracksTraining("shieldHead"),
+      sim.startBarracksTraining("acidShooter"),
+      sim.startBarracksTraining("scout"),
+      sim.startBarracksTraining("medic"),
+      sim.startBarracksTraining("captain"),
+      sim.startBarracksTraining("builder"),
+    ];
+    const queuedSeconds = sim.colony.barracksQueue.reduce((sum: number, order: any) => sum + order.remainingSeconds, 0);
+    sim.updateBarracksTraining(queuedSeconds + 0.1);
     sim.computeDerived();
     sim.syncAntPopulation();
     const surfaceHeavyBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "heavySoldier" && sim.shouldRenderAnt(ant)).length;
@@ -552,6 +749,8 @@ test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and
       medicBought,
       captainBought,
       builderBought,
+      countsAfterUnlock,
+      trainingStarted,
       sameFirstObject: sim.ants[0] === first,
       firstId: sim.ants[0].id,
       beforeFirstId: first.id,
@@ -610,6 +809,16 @@ test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and
   expect(result.medicBought).toBe(true);
   expect(result.captainBought).toBe(true);
   expect(result.builderBought).toBe(true);
+  expect(result.countsAfterUnlock).toEqual({
+    heavy: 0,
+    shield: 0,
+    acid: 0,
+    scout: 0,
+    medic: 0,
+    captain: 0,
+    builders: 0,
+  });
+  expect(result.trainingStarted).toEqual([true, true, true, true, true, true, true]);
   expect(result.sameFirstObject).toBe(true);
   expect(result.firstId).toBe(result.beforeFirstId);
   expect(result.uniqueIds).toBe(result.renderedAnts);
@@ -626,8 +835,8 @@ test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and
   expect(result.scoutCount).toBeGreaterThanOrEqual(1);
   expect(result.medicCount).toBeGreaterThanOrEqual(1);
   expect(result.captainCount).toBeGreaterThanOrEqual(1);
-  expect(result.builderCount).toBe(2);
-  expect(result.builderTarget).toBe(2);
+  expect(result.builderCount).toBe(1);
+  expect(result.builderTarget).toBeGreaterThan(result.builderCount);
   expect(result.surfaceHeavyBeforeSortie).toBe(0);
   expect(result.surfaceShieldBeforeSortie).toBe(0);
   expect(result.surfaceAcidBeforeSortie).toBe(0);
@@ -635,7 +844,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and
   expect(result.surfaceMedicBeforeSortie).toBe(0);
   expect(result.surfaceCaptainBeforeSortie).toBe(0);
   expect(result.sortieStarted).toBe(true);
-  expect(result.deployedCount).toBe(6);
+  expect(result.deployedCount).toBe(result.sortieLimit);
   expect(result.deployedHeavyCount).toBe(1);
   expect(result.deployedShieldCount).toBe(1);
   expect(result.deployedAcidCount).toBe(1);
@@ -1915,7 +2124,7 @@ test("construction tab issues earthwork commands separately from growth", async 
     sim.colony.woundedAnts = 0;
     sim.colony.soldierAnts = 6;
     sim.colony.heavySoldierAnts = 1;
-    sim.colony.builderAnts = 3;
+    sim.colony.builderAnts = 4;
     sim.colony.nestLevel = 3;
     sim.colony.territory = 4;
     sim.colony.upgrades.soldierTraining = 1;
@@ -1931,14 +2140,75 @@ test("construction tab issues earthwork commands separately from growth", async 
 
   await page.locator("#constructionTrailBtn").click();
   await page.locator("#constructionBarricadeBtn").click();
+  const pendingBarricade = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const point = { x: sim.nest.x + 18, z: sim.nest.z - 12 };
+    sim.updateConstructionPlacementPreview(point);
+    sim.updateStats();
+    const previewChildren = sim.wallPlacementPreview?.children ?? [];
+    return {
+      pendingKind: sim.pendingConstructionKind,
+      taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
+      barricadeButtonText: (document.querySelector("#constructionBarricadeBtn") as HTMLButtonElement).textContent,
+      activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
+      hasPlacementPreview: Boolean(sim.wallPlacementPreview),
+      hasPlacementGuide: Boolean(sim.wallPlacementGuide),
+      previewChildNames: previewChildren.map((child: any) => child.name).sort(),
+      target: sim.constructionTarget("lowBarricade", point),
+    };
+  });
+  expect(pendingBarricade.pendingKind).toBe("lowBarricade");
+  expect(pendingBarricade.taskKinds).toEqual(["trailReinforce"]);
+  expect(pendingBarricade.barricadeButtonText).toContain("場所指定中");
+  expect(pendingBarricade.activeToolLabel).toContain("場所指定中");
+  expect(pendingBarricade.hasPlacementPreview).toBe(true);
+  expect(pendingBarricade.hasPlacementGuide).toBe(false);
+  expect(pendingBarricade.previewChildNames).toContain("lowBarricade-placement-footprint");
+  expect(pendingBarricade.previewChildNames).toContain("lowBarricade-placement-point");
+  expect(pendingBarricade.target.x).toBeCloseTo(-24, 5);
+  expect(pendingBarricade.target.z).toBeCloseTo(0, 5);
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.confirmConstructionPlacement({ x: sim.nest.x + 18, z: sim.nest.z - 12 }, null, "lowBarricade");
+  });
+
   await page.locator("#constructionSentryBtn").click();
+  const pendingSentry = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const point = { x: sim.nest.x - 16, z: sim.nest.z + 28 };
+    sim.updateConstructionPlacementPreview(point);
+    sim.updateStats();
+    const previewChildren = sim.wallPlacementPreview?.children ?? [];
+    return {
+      pendingKind: sim.pendingConstructionKind,
+      taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
+      sentryButtonText: (document.querySelector("#constructionSentryBtn") as HTMLButtonElement).textContent,
+      activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
+      hasPlacementPreview: Boolean(sim.wallPlacementPreview),
+      previewChildNames: previewChildren.map((child: any) => child.name).sort(),
+      target: sim.constructionTarget("sentryMound", point),
+    };
+  });
+  expect(pendingSentry.pendingKind).toBe("sentryMound");
+  expect(pendingSentry.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
+  expect(pendingSentry.sentryButtonText).toContain("場所指定中");
+  expect(pendingSentry.activeToolLabel).toContain("場所指定中");
+  expect(pendingSentry.hasPlacementPreview).toBe(true);
+  expect(pendingSentry.previewChildNames).toContain("sentryMound-placement-footprint");
+  expect(pendingSentry.previewChildNames).toContain("sentryMound-placement-point");
+  expect(pendingSentry.target.x).toBeCloseTo(-58, 5);
+  expect(pendingSentry.target.z).toBeCloseTo(40, 5);
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.confirmConstructionPlacement({ x: sim.nest.x - 16, z: sim.nest.z + 28 }, null, "sentryMound");
+  });
+
   await page.locator("#constructionWallBtn").click();
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.wallPlacementDraft = {
-      start: { x: sim.nest.x + 15, z: sim.nest.z - 18 },
-      end: { x: sim.nest.x + 43, z: sim.nest.z - 10 },
-    };
+    sim.addWallPlacementVertex({ x: sim.nest.x + 15, z: sim.nest.z - 18 });
+    sim.addWallPlacementVertex({ x: sim.nest.x + 43, z: sim.nest.z - 10 });
+    sim.wallPlacementDraft.hover = sim.snapWallPlacementPoint({ x: sim.nest.x + 34, z: sim.nest.z + 14 });
     sim.updateWallPlacementPreview();
   });
 
@@ -1946,46 +2216,70 @@ test("construction tab issues earthwork commands separately from growth", async 
     const sim = window.__ANT_SIM as any;
     sim.updateStats();
     const guideChildren = sim.wallPlacementGuide?.children ?? [];
-    const guideLine = guideChildren.find((child: any) => child.name === "earth-wall-placement-line");
+    const guideLines = guideChildren.filter((child: any) => child.name === "earth-wall-placement-line");
+    const confirmButton = document.querySelector("#constructionWallConfirmBtn") as HTMLButtonElement;
     return {
       pendingKind: sim.pendingConstructionKind,
       taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
       wallButtonText: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).textContent,
+      confirmButtonHidden: confirmButton.hidden,
+      confirmButtonDisabled: confirmButton.disabled,
+      confirmButtonText: confirmButton.textContent,
       activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
       hasWallPlacementPreview: Boolean(sim.wallPlacementPreview),
       hasWallPlacementGuide: Boolean(sim.wallPlacementGuide),
       guideChildNames: guideChildren.map((child: any) => child.name).sort(),
-      guideLineLength: guideLine?.scale.x,
+      guideLineCount: guideLines.length,
+      firstGuideLineRelativeX: guideLines[0] ? guideLines[0].position.x - sim.nest.x : undefined,
+      firstGuideLineRelativeZ: guideLines[0] ? guideLines[0].position.z - sim.nest.z : undefined,
+      firstGuideLineRotation: guideLines[0]?.rotation.y,
+      firstGuideLineLength: guideLines[0]?.scale.x,
+      fixedTargetCount: sim.wallPlacementTargetsFromDraft(false).length,
+      previewTargetCount: sim.wallPlacementTargetsFromDraft(true).length,
+      fixedMetrics: sim.wallPlacementMetrics(sim.wallPlacementTargetsFromDraft(false), sim.wallPlacementPoints(false)),
+      previewMetrics: sim.wallPlacementMetrics(sim.wallPlacementTargetsFromDraft(true), sim.wallPlacementPoints(true)),
     };
   });
 
   expect(pendingWall.pendingKind).toBe("earthWall");
   expect(pendingWall.taskKinds).toEqual(["lowBarricade", "sentryMound", "trailReinforce"]);
-  expect(pendingWall.wallButtonText).toContain("線指定中");
-  expect(pendingWall.activeToolLabel).toContain("線指定中");
+  expect(pendingWall.wallButtonText).toContain("一筆線指定中");
+  expect(pendingWall.confirmButtonHidden).toBe(false);
+  expect(pendingWall.confirmButtonDisabled).toBe(false);
+  expect(pendingWall.confirmButtonText).toContain("土壁の一筆線を決定");
+  expect(pendingWall.activeToolLabel).toContain("一筆線指定中");
   expect(pendingWall.hasWallPlacementPreview).toBe(true);
   expect(pendingWall.hasWallPlacementGuide).toBe(true);
-  expect(pendingWall.guideChildNames).toEqual([
-    "earth-wall-placement-end",
-    "earth-wall-placement-line",
-    "earth-wall-placement-start",
-  ]);
-  expect(pendingWall.guideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
+  expect(pendingWall.guideChildNames.filter((name: string) => name === "earth-wall-placement-line")).toHaveLength(2);
+  expect(pendingWall.guideChildNames).toContain("earth-wall-placement-start");
+  expect(pendingWall.guideChildNames).toContain("earth-wall-placement-vertex");
+  expect(pendingWall.guideChildNames).toContain("earth-wall-placement-end");
+  expect(pendingWall.guideLineCount).toBe(2);
+  expect(pendingWall.fixedTargetCount).toBe(1);
+  expect(pendingWall.previewTargetCount).toBe(2);
+  expect(pendingWall.fixedMetrics.vertexCount).toBe(2);
+  expect(pendingWall.previewMetrics.vertexCount).toBe(3);
+  expect(pendingWall.previewMetrics.totalLength).toBeCloseTo(Math.hypot(28, 8) + Math.hypot(9, 24), 5);
+  expect(pendingWall.firstGuideLineRelativeX).toBeCloseTo(29, 5);
+  expect(pendingWall.firstGuideLineRelativeZ).toBeCloseTo(-14, 5);
+  expect(pendingWall.firstGuideLineRotation).toBeCloseTo(-Math.atan2(8, 28), 5);
+  expect(pendingWall.firstGuideLineLength).toBeCloseTo(Math.hypot(28, 8), 5);
 
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.confirmConstructionPlacement(
-      { x: sim.nest.x + 15, z: sim.nest.z - 18 },
-      { x: sim.nest.x + 43, z: sim.nest.z - 10 },
-    );
+    sim.addWallPlacementVertex({ x: sim.nest.x + 34, z: sim.nest.z + 14 });
+    sim.updateStats();
   });
+  await page.locator("#constructionWallConfirmBtn").click();
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.updateStats();
-    const wallTask = sim.buildTasks.find((task: any) => task.kind === "earthWall");
-    const expectedLineLength = Math.hypot(28, 8);
-    const expectedLineCost = sim.earthWallBuildCostForLength(expectedLineLength);
+    const wallTasks = sim.buildTasks.filter((task: any) => task.kind === "earthWall");
+    const firstLineLength = Math.hypot(28, 8);
+    const secondLineLength = Math.hypot(9, 24);
+    const expectedLineCost = sim.earthWallBuildCostForLength(firstLineLength) + sim.earthWallBuildCostForLength(secondLineLength);
+    const confirmButton = document.querySelector("#constructionWallConfirmBtn") as HTMLButtonElement;
     return {
       activeTab: sim.activeTab,
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
@@ -1994,13 +2288,15 @@ test("construction tab issues earthwork commands separately from growth", async 
       pendingKind: sim.pendingConstructionKind,
       taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
       earthworkKinds: sim.earthworks.map((earthwork: any) => earthwork.kind).sort(),
-      wallTaskX: wallTask?.x,
-      wallTaskZ: wallTask?.z,
-      wallTaskRotation: wallTask?.rotation,
-      wallTaskRadius: wallTask?.radius,
-      wallTaskCost: wallTask?.maxProgress,
+      wallTaskCount: wallTasks.length,
+      wallTaskX: wallTasks[0]?.x,
+      wallTaskZ: wallTasks[0]?.z,
+      wallTaskRotation: wallTasks[0]?.rotation,
+      wallTaskRadius: wallTasks[0]?.radius,
+      wallTaskCost: wallTasks.reduce((sum: number, task: any) => sum + task.maxProgress, 0),
       wallExpectedRotation: Math.atan2(8, 28),
       expectedLineCost,
+      confirmButtonHidden: confirmButton.hidden,
       builderCountText: (document.querySelector("#constructionBuilders") as HTMLElement).textContent,
       activeCountText: (document.querySelector("#constructionActive") as HTMLElement).textContent,
       statusText: (document.querySelector("#constructionStatus") as HTMLElement).textContent,
@@ -2008,8 +2304,10 @@ test("construction tab issues earthwork commands separately from growth", async 
       progressText: (document.querySelector("#constructionProgressList") as HTMLElement).textContent,
       progressRows: document.querySelectorAll("#constructionProgressList .construction-task").length,
       taskAssigneeCounts: sim.buildTasks.map((task: any) => sim.constructionAssignees(task).length).sort(),
+      taskAssigneeTargets: sim.buildTasks.map((task: any) => task.assigneeTarget).sort(),
       taskAssigneeTotal: sim.buildTasks.reduce((sum: number, task: any) => sum + sim.constructionAssignees(task).length, 0),
       taskAssigneeLimit: sim.buildTaskAssigneeLimit(),
+      crewControlCount: document.querySelectorAll("#constructionProgressList .construction-crew-controls button").length,
       trailButtonText: (document.querySelector("#constructionTrailBtn") as HTMLButtonElement).textContent,
       barricadeButtonText: (document.querySelector("#constructionBarricadeBtn") as HTMLButtonElement).textContent,
       wallButtonText: (document.querySelector("#constructionWallBtn") as HTMLButtonElement).textContent,
@@ -2030,18 +2328,20 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.growthActive).toBe(false);
   expect(result.constructionActive).toBe(true);
   expect(result.pendingKind).toBeNull();
-  expect(result.taskKinds).toEqual(["earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
-  expect(result.earthworkKinds).toEqual(["earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
+  expect(result.taskKinds).toEqual(["earthWall", "earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
+  expect(result.earthworkKinds).toEqual(["earthWall", "earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
+  expect(result.wallTaskCount).toBe(2);
   expect(result.wallTaskX).toBeGreaterThan(-30);
   expect(result.wallTaskZ).toBeLessThan(8);
   expect(Math.abs(result.wallTaskRotation - result.wallExpectedRotation)).toBeLessThan(0.001);
   expect(result.wallTaskRadius).toBeGreaterThan(12);
   expect(result.wallTaskCost).toBeCloseTo(result.expectedLineCost, 5);
   expect(result.wallTaskCost).not.toBe(7.2);
+  expect(result.confirmButtonHidden).toBe(true);
   expect(result.hasWallPlacementPreview).toBe(false);
   expect(result.hasWallPlacementGuide).toBe(false);
   expect(result.builderCountText).toBe("4");
-  expect(result.activeCountText).toBe("4");
+  expect(result.activeCountText).toBe("5");
   expect(result.statusText).toContain("作業中");
   expect(result.statusText).toContain("平均");
   expect(result.crewText).toContain("待機");
@@ -2051,6 +2351,7 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.progressText).toContain("見張り塚");
   expect(result.progressText).toContain("工数");
   expect(result.progressText).toContain("目安");
+  expect(result.progressText).toContain("目標 1/4");
   expect(result.trailButtonText).toContain("工数2.8");
   expect(result.trailButtonText).toContain("採餌効率");
   expect(result.barricadeButtonText).toContain("工数3.6");
@@ -2070,11 +2371,14 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.sentryButtonTitle).toContain("工数 4.4");
   expect(result.sentryButtonTitle).toContain("敵襲の方角");
   expect(result.taskAssigneeCounts.every((count: number) => count <= result.taskAssigneeLimit)).toBe(true);
-  expect(result.taskAssigneeTotal).toBe(4);
-  expect(result.taskAssigneeLimit).toBe(3);
-  expect(result.progressRows).toBe(4);
+  expect(result.taskAssigneeTargets).toEqual([1, 1, 1, 1, 1]);
+  expect(result.taskAssigneeTotal).toBeGreaterThanOrEqual(3);
+  expect(result.taskAssigneeTotal).toBeLessThanOrEqual(4);
+  expect(result.taskAssigneeLimit).toBe(4);
+  expect(result.progressRows).toBe(5);
+  expect(result.crewControlCount).toBe(10);
   expect(result.trailDisabledAfterCommand).toBe(true);
-  expect(result.savedEarthworks).toBe(4);
+  expect(result.savedEarthworks).toBe(5);
 });
 
 test("multiple builders can share one construction task", async ({ page }) => {
@@ -2084,17 +2388,17 @@ test("multiple builders can share one construction task", async ({ page }) => {
     const sim = window.__ANT_SIM as any;
     sim.colony.food = 100000;
     sim.colony.lifetimeFood = 100000;
-    sim.colony.antPopulation = 42;
+    sim.colony.antPopulation = 54;
     sim.colony.woundedAnts = 0;
     sim.colony.soldierAnts = 6;
     sim.colony.heavySoldierAnts = 1;
-    sim.colony.builderAnts = 3;
+    sim.colony.builderAnts = 10;
     sim.colony.nestLevel = 3;
     sim.colony.territory = 4;
     sim.colony.upgrades.soldierTraining = 1;
     sim.colony.upgrades.heavySoldierBrood = 1;
     sim.colony.upgrades.chamberExcavation = 1;
-    sim.colony.upgrades.builderTraining = 3;
+    sim.colony.upgrades.builderTraining = 5;
     sim.computeDerived();
     sim.syncAntPopulation();
     sim.setPanelCompact(false, false);
@@ -2104,6 +2408,13 @@ test("multiple builders can share one construction task", async ({ page }) => {
     sim.earthworks = [];
 
     const task = sim.createBuildTask("trailReinforce", sim.nest.x + 16, sim.nest.z + 4, { radius: 13, maxProgress: 4 });
+    const increased = sim.adjustBuildTaskAssigneeTarget(task.id, 2);
+    const targetAfterIncrease = task.assigneeTarget;
+    const claimsAfterIncrease = task.claimedByIds.length;
+    const decreased = sim.adjustBuildTaskAssigneeTarget(task.id, -1);
+    const targetAfterDecrease = task.assigneeTarget;
+    const claimsAfterDecrease = task.claimedByIds.length;
+    const reincreased = sim.adjustBuildTaskAssigneeTarget(task.id, 1);
     const builders = sim.ants.filter((ant: any) => ant.variant === "builder").slice(0, 3);
     const claimedTaskIds = builders.map((builder: any) => sim.claimBuildTask(builder)?.id ?? null);
     const before = task.progress;
@@ -2111,7 +2422,16 @@ test("multiple builders can share one construction task", async ({ page }) => {
     sim.updateStats();
 
     return {
+      increased,
+      targetAfterIncrease,
+      claimsAfterIncrease,
+      decreased,
+      targetAfterDecrease,
+      claimsAfterDecrease,
+      reincreased,
+      limit: sim.buildTaskAssigneeLimit(),
       claimedTaskIds,
+      assigneeTarget: task.assigneeTarget,
       claimedByIds: task.claimedByIds,
       progressGain: task.progress - before,
       progressText: (document.querySelector("#constructionProgressList") as HTMLElement).textContent,
@@ -2119,11 +2439,21 @@ test("multiple builders can share one construction task", async ({ page }) => {
     };
   });
 
+  expect(result.increased).toBe(true);
+  expect(result.targetAfterIncrease).toBe(3);
+  expect(result.claimsAfterIncrease).toBe(3);
+  expect(result.decreased).toBe(true);
+  expect(result.targetAfterDecrease).toBe(2);
+  expect(result.claimsAfterDecrease).toBe(2);
+  expect(result.reincreased).toBe(true);
+  expect(result.limit).toBe(10);
   expect(result.claimedTaskIds).toEqual([expect.any(Number), expect.any(Number), expect.any(Number)]);
   expect(new Set(result.claimedTaskIds).size).toBe(1);
+  expect(result.assigneeTarget).toBe(3);
   expect(result.claimedByIds).toHaveLength(3);
   expect(result.progressGain).toBeCloseTo(1.2, 5);
   expect(result.progressText).toContain("担当 3/3");
+  expect(result.progressText).toContain("目標 3/10");
   expect(result.crewText).toContain("待機");
 });
 
@@ -2170,21 +2500,25 @@ test("builders stay in the nest until assigned and spread across construction ty
       claimedTaskIds,
       trailClaims: trail.claimedByIds.length,
       barricadeClaims: barricade.claimedByIds.length,
+      trailTarget: trail.assigneeTarget,
+      barricadeTarget: barricade.assigneeTarget,
       surfaceBuildersAfter: sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length,
       visibleBuilderLabels: sim.roleLabelSystem.sprites.filter((sprite: any) => sprite.visible && sprite.material.map === sim.roleLabelSystem.textures.get("builder")).length,
     };
   });
 
-  expect(result.builderTarget).toBe(4);
+  expect(result.builderTarget).toBeGreaterThan(result.builderCount);
   expect(result.builderCount).toBe(4);
   expect(result.surfaceBuildersBefore).toBe(0);
   expect(result.idleBuildersInNest).toBe(true);
-  expect(result.claimedTaskIds.every((id: number | null) => id != null)).toBe(true);
-  expect(new Set(result.claimedTaskIds).size).toBe(2);
-  expect(result.trailClaims).toBeGreaterThanOrEqual(1);
-  expect(result.barricadeClaims).toBeGreaterThanOrEqual(1);
-  expect(result.surfaceBuildersAfter).toBe(4);
-  expect(result.visibleBuilderLabels).toBe(4);
+  expect(result.claimedTaskIds.filter((id: number | null) => id != null)).toHaveLength(2);
+  expect(new Set(result.claimedTaskIds.filter((id: number | null) => id != null)).size).toBe(2);
+  expect(result.trailClaims).toBe(1);
+  expect(result.barricadeClaims).toBe(1);
+  expect(result.trailTarget).toBe(1);
+  expect(result.barricadeTarget).toBe(1);
+  expect(result.surfaceBuildersAfter).toBe(2);
+  expect(result.visibleBuilderLabels).toBe(2);
 });
 
 test("heavy soldiers brace while builders complete earthworks and retreat", async ({ page }) => {
@@ -3027,4 +3361,92 @@ test("rival ants actively harass ants near food instead of only camping", async 
   expect(result.rivalWins).toBeGreaterThanOrEqual(1);
   expect(result.antAlive).toBe(false);
   expect(result.casualties).toBeGreaterThanOrEqual(1);
+});
+
+test("raid food pressure damages food without killing ants inside the nest", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 12;
+    sim.colony.woundedAnts = 0;
+    sim.colony.enemyThreat = 50;
+    sim.colony.fallenAnts = 3;
+    sim.syncAntPopulation();
+    for (const ant of sim.ants) {
+      ant.inNest = true;
+      ant.nestStayTimer = 30;
+      ant.state = "stunned";
+      ant.stun = 30;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.x = sim.nest.x;
+      ant.z = sim.nest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 3,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const food = sim.food.find((item: any) =>
+      Math.hypot(item.x - sim.nest.x, item.z - sim.nest.z) > sim.nest.radius + 30,
+    ) ?? sim.food[0];
+    const rival = sim.raidRivals()[0];
+    rival.x = food.x;
+    rival.z = food.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.defeated = false;
+    rival.leftRaid = false;
+    sim.colony.raidState.breachTimer = 7.19;
+    const before = {
+      food: sim.colony.food,
+      population: sim.colony.antPopulation,
+      fallen: sim.colony.fallenAnts,
+      ants: sim.ants.length,
+    };
+    const oldRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      sim.updateRaidBreachDamage(0.2);
+    } finally {
+      Math.random = oldRandom;
+    }
+    return {
+      before,
+      after: {
+        food: sim.colony.food,
+        population: sim.colony.antPopulation,
+        fallen: sim.colony.fallenAnts,
+        ants: sim.ants.length,
+        casualties: sim.colony.raidState.casualties,
+        log: sim.colony.battleLog.join("\n"),
+      },
+    };
+  });
+
+  expect(result.after.food).toBeLessThan(result.before.food);
+  expect(result.after.population).toBe(result.before.population);
+  expect(result.after.fallen).toBe(result.before.fallen);
+  expect(result.after.ants).toBe(result.before.ants);
+  expect(result.after.casualties).toBe(0);
+  expect(result.after.log).toContain("餌場");
+  expect(result.after.log).not.toContain("死亡1");
 });

@@ -8,7 +8,7 @@ describe("colony state modules", () => {
   it("creates the same default colony shape used by the browser game", () => {
     const colony = createDefaultColony();
 
-    expect(colony.version).toBe(11);
+    expect(colony.version).toBe(13);
     expect(colony.food).toBe(36);
     expect(colony.lifetimeFood).toBe(36);
     expect(colony.antPopulation).toBe(12);
@@ -24,6 +24,8 @@ describe("colony state modules", () => {
     expect(colony.raidState.timer).toBe(78);
     expect(colony.nextEarthworkId).toBe(1);
     expect(colony.earthworks).toEqual([]);
+    expect(colony.nextBarracksOrderId).toBe(1);
+    expect(colony.barracksQueue).toEqual([]);
     expect(Object.keys(colony.upgrades).sort()).toEqual(UPGRADE_DEFS.map((upgrade) => upgrade.id).sort());
   });
 
@@ -43,6 +45,7 @@ describe("colony state modules", () => {
       builderAnts: 99,
       nestLevel: 2,
       nextEarthworkId: -4,
+      nextBarracksOrderId: -2,
       earthworks: [
         {
           id: 3,
@@ -53,6 +56,22 @@ describe("colony state modules", () => {
           progress: 40,
           maxProgress: 12,
           rotation: 0.5,
+        },
+      ],
+      barracksQueue: [
+        {
+          id: 6,
+          variant: "heavySoldier",
+          foodCost: 15,
+          totalSeconds: 36,
+          remainingSeconds: 12,
+        },
+        {
+          id: 7,
+          variant: "unknown",
+          foodCost: -4,
+          totalSeconds: -1,
+          remainingSeconds: 999,
         },
       ],
       upgrades: {
@@ -67,7 +86,7 @@ describe("colony state modules", () => {
       battleLog: ["a", "b", "c", "d", "e", "f"],
     });
 
-    expect(colony.version).toBe(11);
+    expect(colony.version).toBe(13);
     expect(colony.food).toBe(321);
     expect(colony.lifetimeFood).toBe(654);
     expect(colony.antPopulation).toBe(18);
@@ -86,6 +105,23 @@ describe("colony state modules", () => {
     expect(colony.raidState.activeCount).toBe(40);
     expect(colony.raidState.casualties).toBe(7);
     expect(colony.nextEarthworkId).toBe(4);
+    expect(colony.nextBarracksOrderId).toBe(8);
+    expect(colony.barracksQueue).toEqual([
+      {
+        id: 6,
+        variant: "heavySoldier",
+        foodCost: 15,
+        totalSeconds: 36,
+        remainingSeconds: 12,
+      },
+      {
+        id: 7,
+        variant: "soldier",
+        foodCost: 8,
+        totalSeconds: 18,
+        remainingSeconds: 18,
+      },
+    ]);
     expect(colony.earthworks).toEqual([
       {
         id: 3,

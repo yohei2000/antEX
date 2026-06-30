@@ -108,7 +108,7 @@
             <strong id="statWounded">0</strong>
           </div>
           <div>
-            <span>増加/分</span>
+            <span>育成/分</span>
             <strong id="statGrowthRate">0</strong>
           </div>
           <div>
@@ -120,7 +120,8 @@
         <div class="panel-tabs" role="tablist" aria-label="管理タブ">
           <button class="tab-button active" type="button" data-tab="growth">成長</button>
           <button class="tab-button" type="button" data-tab="construction">土木</button>
-          <button class="tab-button" type="button" data-tab="soldiers">兵隊</button>
+          <button class="tab-button" type="button" data-tab="barracks">育房</button>
+          <button class="tab-button" type="button" data-tab="soldiers">軍事</button>
         </div>
 
         <div id="growthTab" class="tab-panel active">
@@ -160,9 +161,32 @@
               <span class="button-sub">工数4.4 / 中くらい / 敵襲方角・準備時間↑</span>
             </button>
           </div>
+          <button id="constructionWallConfirmBtn" class="primary-button wall-placement-confirm" type="button" hidden>
+            <span class="button-main">土壁の一筆線を決定</span>
+            <span class="button-sub">頂点を置いてから確定</span>
+          </button>
           <div id="constructionStatus" class="construction-status">待機</div>
           <div id="constructionCrew" class="construction-crew">待機 0</div>
           <div id="constructionProgressList" class="construction-progress-list"></div>
+        </div>
+
+        <div id="barracksTab" class="tab-panel">
+          <div class="barracks-grid">
+            <div>
+              <span>キュー</span>
+              <strong id="barracksQueueCount">0</strong>
+            </div>
+            <div>
+              <span>育成中</span>
+              <strong id="barracksActive">なし</strong>
+            </div>
+            <div>
+              <span>状態</span>
+              <strong id="barracksStatus">キューなし</strong>
+            </div>
+          </div>
+          <div id="barracksTrainingList" class="barracks-training-list"></div>
+          <div id="barracksQueueList" class="barracks-queue-list"></div>
         </div>
 
         <div id="soldierTab" class="tab-panel">

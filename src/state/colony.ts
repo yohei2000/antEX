@@ -2,7 +2,7 @@ import { RAID_INITIAL_DELAY_SECONDS } from "../config/balance";
 import { UPGRADE_DEFS } from "../config/upgrades";
 import type { ColonyState, RaidState } from "./schema";
 
-export const COLONY_SAVE_VERSION = 11;
+export const COLONY_SAVE_VERSION = 13;
 
 export function createDefaultRaidState(): RaidState {
   return {
@@ -46,6 +46,8 @@ export function createDefaultColony(): ColonyState {
     raidState: createDefaultRaidState(),
     nextEarthworkId: 1,
     earthworks: [],
+    nextBarracksOrderId: 1,
+    barracksQueue: [],
     unlockedEnemyColonies: ["near-food"],
     upgrades: Object.fromEntries(UPGRADE_DEFS.map((upgrade) => [upgrade.id, 0])),
     battleLog: ["小さな巣が地中で動き始めた"],

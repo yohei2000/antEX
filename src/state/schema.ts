@@ -1,4 +1,5 @@
 import type { ConstructionKind } from "../config/construction";
+import type { BarracksTrainingVariant } from "../config/barracks";
 
 export type RaidPhase = "calm" | "warning" | "active" | "retreating" | "recovering";
 
@@ -30,6 +31,14 @@ export interface EarthworkState {
   owner: "colony";
 }
 
+export interface BarracksTrainingItem {
+  id: number;
+  variant: BarracksTrainingVariant;
+  foodCost: number;
+  totalSeconds: number;
+  remainingSeconds: number;
+}
+
 export interface ColonyState {
   version: number;
   food: number;
@@ -55,6 +64,8 @@ export interface ColonyState {
   raidState: RaidState;
   nextEarthworkId: number;
   earthworks: EarthworkState[];
+  nextBarracksOrderId: number;
+  barracksQueue: BarracksTrainingItem[];
   unlockedEnemyColonies: string[];
   upgrades: Record<string, number>;
   battleLog: string[];

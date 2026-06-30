@@ -107,9 +107,12 @@ button {
 .panel-header span,
 .metric-grid span,
 .soldier-grid span,
+.barracks-grid span,
 .battle-log,
 .upgrade-card p,
-.upgrade-meta {
+.upgrade-meta,
+.barracks-card p,
+.barracks-meta {
   color: var(--muted);
 }
 
@@ -486,7 +489,8 @@ button {
 
 .metric-grid,
 .soldier-grid,
-.construction-grid {
+.construction-grid,
+.barracks-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
@@ -494,7 +498,8 @@ button {
 
 .metric-grid div,
 .soldier-grid div,
-.construction-grid div {
+.construction-grid div,
+.barracks-grid div {
   min-width: 0;
   padding: 7px 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -504,7 +509,7 @@ button {
 
 .panel-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -572,7 +577,10 @@ button {
 .battle-log,
 .construction-status,
 .construction-crew,
-.construction-progress-list {
+.construction-progress-list,
+.barracks-training-list,
+.barracks-queue-list,
+.barracks-meta {
   font-size: 0.72rem;
   line-height: 1.35;
 }
@@ -590,6 +598,23 @@ button {
   min-height: 58px;
   padding: 8px 7px;
   text-align: left;
+}
+
+.wall-placement-confirm {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px;
+  text-align: left;
+  box-shadow: 0 -8px 18px rgba(13, 14, 12, 0.28);
+}
+
+.wall-placement-confirm[hidden] {
+  display: none;
 }
 
 .button-main,
@@ -670,6 +695,107 @@ button {
   color: rgba(244, 241, 232, 0.66);
 }
 
+.construction-crew-controls {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.construction-crew-controls button {
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(210, 180, 108, 0.42);
+  border-radius: 7px;
+  background: rgba(210, 180, 108, 0.14);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.construction-crew-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.construction-crew-controls span {
+  min-width: 0;
+  text-align: center;
+  color: rgba(244, 241, 232, 0.72);
+  overflow-wrap: anywhere;
+}
+
+.barracks-training-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(164px, 1fr));
+  gap: 7px;
+}
+
+.barracks-card,
+.barracks-queue-item {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.barracks-card-header,
+.barracks-queue-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.barracks-card-header strong,
+.barracks-card-header span,
+.barracks-queue-header strong,
+.barracks-queue-header span,
+.barracks-card p,
+.barracks-meta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.barracks-card p {
+  margin: 0;
+}
+
+.barracks-card button {
+  min-height: 32px;
+  border: 1px solid rgba(81, 183, 166, 0.42);
+  border-radius: 7px;
+  background: rgba(81, 183, 166, 0.18);
+  cursor: pointer;
+}
+
+.barracks-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.barracks-queue-list {
+  display: grid;
+  gap: 7px;
+}
+
+.barracks-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(244, 241, 232, 0.13);
+}
+
+.barracks-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #51b7a6, #d9a63f);
+}
+
 .upgrade-effect {
   color: rgba(244, 241, 232, 0.74);
 }
@@ -715,7 +841,8 @@ button {
   .stats-strip span,
   .metric-grid span,
   .soldier-grid span,
-  .construction-grid span {
+  .construction-grid span,
+  .barracks-grid span {
     font-size: 0.62rem;
   }
 
@@ -732,6 +859,8 @@ button {
   .soldier-grid,
   .construction-grid,
   .construction-actions,
+  .barracks-grid,
+  .barracks-training-list,
   .upgrade-list {
     grid-template-columns: 1fr;
   }

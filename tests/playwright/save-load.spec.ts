@@ -22,6 +22,16 @@ test("persists colony state through localStorage", async ({ page }) => {
     sim.colony.captainAnts = 1;
     sim.colony.builderAnts = 2;
     sim.colony.nestLevel = 2;
+    sim.colony.nextBarracksOrderId = 12;
+    sim.colony.barracksQueue = [
+      {
+        id: 11,
+        variant: "acidShooter",
+        foodCost: 12,
+        totalSeconds: 28,
+        remainingSeconds: 9,
+      },
+    ];
     sim.colony.upgrades = {
       foragerTrails: 1,
       storageChambers: 2,
@@ -89,6 +99,8 @@ test("persists colony state through localStorage", async ({ page }) => {
       liveEarthworks: sim.earthworks.length,
       earthworkKind: sim.earthworks[0]?.kind,
       earthworkStrength: sim.earthworks[0]?.strength,
+      nextBarracksOrderId: sim.colony.nextBarracksOrderId,
+      barracksQueue: sim.colony.barracksQueue,
     };
   });
 
@@ -123,6 +135,16 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.liveEarthworks).toBe(1);
   expect(restored.earthworkKind).toBe("earthWall");
   expect(restored.earthworkStrength).toBeGreaterThan(0.95);
+  expect(restored.nextBarracksOrderId).toBe(12);
+  expect(restored.barracksQueue).toHaveLength(1);
+  expect(restored.barracksQueue[0]).toMatchObject({
+    id: 11,
+    variant: "acidShooter",
+    foodCost: 12,
+    totalSeconds: 28,
+  });
+  expect(restored.barracksQueue[0].remainingSeconds).toBeGreaterThan(7);
+  expect(restored.barracksQueue[0].remainingSeconds).toBeLessThanOrEqual(9);
 });
 
 test("migrates old colony saves without variant fields", async ({ page }) => {
@@ -166,6 +188,8 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
       captainAnts: sim.colony.captainAnts,
       builderAnts: sim.colony.builderAnts,
       nextEarthworkId: sim.colony.nextEarthworkId,
+      nextBarracksOrderId: sim.colony.nextBarracksOrderId,
+      barracksQueue: sim.colony.barracksQueue,
       heavySoldierBrood: sim.colony.upgrades.heavySoldierBrood,
       shieldHeadBrood: sim.colony.upgrades.shieldHeadBrood,
       acidShooterBrood: sim.colony.upgrades.acidShooterBrood,
@@ -181,7 +205,7 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
     };
   });
 
-  expect(migrated.version).toBe(11);
+  expect(migrated.version).toBe(13);
   expect(migrated.heavySoldierAnts).toBe(0);
   expect(migrated.shieldHeadAnts).toBe(0);
   expect(migrated.acidShooterAnts).toBe(0);
@@ -190,6 +214,8 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
   expect(migrated.captainAnts).toBe(0);
   expect(migrated.builderAnts).toBe(0);
   expect(migrated.nextEarthworkId).toBe(1);
+  expect(migrated.nextBarracksOrderId).toBe(1);
+  expect(migrated.barracksQueue).toEqual([]);
   expect(migrated.heavySoldierBrood).toBe(0);
   expect(migrated.shieldHeadBrood).toBe(0);
   expect(migrated.acidShooterBrood).toBe(0);
