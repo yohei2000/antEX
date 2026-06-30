@@ -19,6 +19,11 @@ import {
   GUARD_INTERCEPT_RANGE,
   MAX_FIXED_STEPS,
   MAX_FRAME_DELTA,
+  MEDIC_AID_COOLDOWN_SECONDS,
+  MEDIC_AID_RANGE,
+  MEDIC_AID_SECONDS,
+  MEDIC_EVACUATE_ENERGY,
+  MEDIC_STANDOFF,
   MIN_COLONY_SURVIVORS,
   OFFLINE_CAP_SECONDS,
   RAID_ACTIVE_SECONDS,
@@ -214,7 +219,7 @@ const SQUAD_COLORS = [
   0xff7a00,
 ];
 
-const SQUAD_MEMBER_VARIANT_ORDER = ["shieldHead", "heavySoldier", "acidShooter", "scout", "soldier", "builder"];
+const SQUAD_MEMBER_VARIANT_ORDER = ["shieldHead", "heavySoldier", "acidShooter", "scout", "medic", "soldier", "builder"];
 const SQUAD_TARGET_ASSIGNMENT_PENALTY = 52;
 const SQUAD_TARGET_STICKINESS_BONUS = 20;
 const SQUAD_RALLY_SPACING = 16;
@@ -500,6 +505,10 @@ class Ant3D {
     this.scoutMarkCooldown = 0;
     this.scoutTargetId = null;
     this.scoutSignal = 0;
+    this.medicAidCooldown = rand(0, MEDIC_AID_COOLDOWN_SECONDS * 0.5);
+    this.medicAidTimer = 0;
+    this.medicTargetId = null;
+    this.medicSignal = 0;
     this.commandPulse = 0;
     this.commandEffectCooldown = rand(0, 0.6);
     this.squadId = null;
@@ -577,6 +586,13 @@ class Ant3D {
       this.traits.curiosity = clamp(Math.max(this.traits.curiosity, 0.82) + 0.08, 0, 1);
       this.traits.caution = clamp(Math.max(this.traits.caution, 0.74) + 0.06, 0, 1);
       this.traits.persistence = clamp(Math.max(this.traits.persistence, 0.58) + 0.04, 0, 1);
+    } else if (nextVariant === "medic") {
+      this.role = "guard";
+      this.carrying = 0;
+      this.foodSourceId = null;
+      this.traits.social = clamp(Math.max(this.traits.social, 0.84) + 0.1, 0, 1);
+      this.traits.caution = clamp(Math.max(this.traits.caution, 0.78) + 0.08, 0, 1);
+      this.traits.persistence = clamp(Math.max(this.traits.persistence, 0.54) + 0.04, 0, 1);
     } else if (nextVariant === "captain") {
       this.role = "guard";
       this.carrying = 0;
@@ -614,6 +630,10 @@ class Ant3D {
     this.braceIntent = Math.max(0, this.braceIntent - dt * 1.4);
     this.scoutSignal = Math.max(0, this.scoutSignal - dt * 2.6);
     this.scoutMarkCooldown = Math.max(0, this.scoutMarkCooldown - dt);
+    this.medicSignal = Math.max(0, this.medicSignal - dt * 2.2);
+    this.medicAidCooldown = Math.max(0, this.medicAidCooldown - dt);
+    this.medicAidTimer = Math.max(0, this.medicAidTimer - dt);
+    if (this.medicAidTimer <= 0) this.medicTargetId = null;
     this.commandPulse = Math.max(0, this.commandPulse - dt * 2.8);
     this.commandEffectCooldown = Math.max(0, this.commandEffectCooldown - dt);
     this.acidSprayCooldown = Math.max(0, this.acidSprayCooldown - dt);
@@ -696,6 +716,7 @@ class Ant3D {
     const hazardResponse =
       this.variant === "heavySoldier" || this.variant === "shieldHead" ? 0.22 :
       this.variant === "captain" ? 0.62 + this.traits.caution * 0.45 :
+      this.variant === "medic" && this.isSortieSoldier ? 0.92 + this.traits.caution * 0.42 :
       this.variant === "scout" && this.isSortieSoldier ? 0.78 + this.traits.caution * 0.38 :
       this.variant === "scout" ? 1.48 + this.traits.caution :
       1.2 + this.traits.caution;
@@ -728,7 +749,7 @@ class Ant3D {
 
   startRivalClash(rival, anchorX, anchorZ, duration = RIVAL_CLASH_DURATION) {
     if (this.clashTimer > 0 || this.fleeTimer > 0 || this.stun > 0 || this.state === "stunned") return false;
-    if (this.variant === "shieldHead" || this.variant === "scout") return false;
+    if (this.variant === "shieldHead" || this.variant === "scout" || this.variant === "medic") return false;
     if (this.variant === "heavySoldier" || this.variant === "shieldHead") this.braceIntent = 1;
     this.clashRival = rival;
     this.clashTimer = duration;
@@ -891,6 +912,7 @@ class Ant3D {
     if (this.variant === "heavySoldier" && this.updateHeavySoldier(dt, sim, steering, sensed)) return;
     if (this.variant === "acidShooter" && this.updateAcidShooter(dt, sim, steering)) return;
     if (this.variant === "scout" && this.updateScout(dt, sim, steering)) return;
+    if (this.variant === "medic" && this.updateMedic(dt, sim, steering)) return;
     if (this.role === "guard" && this.isSortieSoldier && this.updateGuardIntercept(dt, sim, steering)) return;
     if (this.role === "guard" && this.isSortieSoldier && this.updateSortiePatrol(dt, sim, steering)) return;
     if (this.variant === "builder" && this.updateBuilder(dt, sim, steering, sensed)) return;
@@ -1157,6 +1179,66 @@ class Ant3D {
     steering.z += ((target.z - this.z) / targetDistance) * pressure;
     this.energy = clamp(this.energy - dt * 0.006, 0, 1);
     this.lastTacticalAction = threat ? "scoutClose" : "scoutSeek";
+    return true;
+  }
+
+  updateMedic(dt, sim, steering) {
+    if (this.isSortieSoldier && this.sortieTimer <= 0 && this.state !== "return") {
+      this.setState("return");
+      return true;
+    }
+    const patient = sim.findMedicPatient(this);
+    const raid = sim.ensureRaidState();
+    let anchor = patient;
+    if (!anchor && this.squadAnchorX != null && this.squadAnchorZ != null) {
+      anchor = { x: this.squadAnchorX, z: this.squadAnchorZ };
+    }
+    if (!anchor && this.isSortieSoldier) {
+      const target = sim.currentSortieTarget(this.x, this.z);
+      if (target) {
+        const d = distance2(target.x, target.z, sim.nest.x, sim.nest.z) || 1;
+        anchor = {
+          x: target.x + ((sim.nest.x - target.x) / d) * MEDIC_STANDOFF,
+          z: target.z + ((sim.nest.z - target.z) / d) * MEDIC_STANDOFF,
+        };
+      } else if (raid.phase === "warning" && sim.hasRaidDirectionIntel()) {
+        anchor = sim.raidFormationPointForAnt(this, raid);
+      }
+    }
+    if (!anchor) return false;
+
+    const d = distance2(this.x, this.z, anchor.x, anchor.z) || 1;
+    this.sortieTargetX = anchor.x;
+    this.sortieTargetZ = anchor.z;
+    if (patient && d <= 3.2) {
+      this.angle = Math.atan2(patient.x - this.x, patient.z - this.z);
+      this.energy = clamp(this.energy - dt * 0.008, 0, 1);
+      if (this.medicAidCooldown <= 0) {
+        sim.applyMedicAid(this, patient);
+        this.medicAidCooldown = MEDIC_AID_COOLDOWN_SECONDS;
+        this.medicAidTimer = MEDIC_AID_SECONDS;
+        this.medicTargetId = patient.id;
+      }
+      this.medicSignal = 1;
+      this.lastTacticalAction = patient.state === "flee" || patient.fleeTimer > 0 ? "medicEvacuate" : "medicAid";
+      this.skipMoveThisFrame = true;
+      return true;
+    }
+
+    const nearestThreat = sim.findRivalThreat(this.x, this.z, MEDIC_AID_RANGE);
+    if (nearestThreat) {
+      const threatDistance = distance2(this.x, this.z, nearestThreat.x, nearestThreat.z) || 1;
+      if (threatDistance < MEDIC_STANDOFF) {
+        const retreatPressure = 0.9 + (1 - threatDistance / MEDIC_STANDOFF) * 1.35;
+        steering.x += ((this.x - nearestThreat.x) / threatDistance) * retreatPressure;
+        steering.z += ((this.z - nearestThreat.z) / threatDistance) * retreatPressure;
+      }
+    }
+    const pressure = d > 14 ? 2.15 : patient ? 1.42 : 0.92;
+    steering.x += ((anchor.x - this.x) / d) * pressure;
+    steering.z += ((anchor.z - this.z) / d) * pressure;
+    this.energy = clamp(this.energy - dt * 0.006, 0, 1);
+    this.lastTacticalAction = patient ? "medicClose" : "medicFollow";
     return true;
   }
 
@@ -1460,7 +1542,7 @@ class Ant3D {
       }
     }
 
-    if ((this.role === "guard" && this.isSortieSoldier) || this.traits.persistence > 0.72) {
+    if (this.variant !== "medic" && ((this.role === "guard" && this.isSortieSoldier) || this.traits.persistence > 0.72)) {
       const rival = sim.findRivalThreat(this.x, this.z, 18);
       if (rival) {
         const d = distance2(this.x, this.z, rival.x, rival.z) || 1;
@@ -1577,6 +1659,8 @@ class Ant3D {
       shieldPose: this.variant === "shieldHead" ? clamp(this.braceIntent, 0, 1) : 0,
       scoutPose: this.variant === "scout" ? clamp(this.scoutSignal, 0, 1) : 0,
       scoutTargetId: this.scoutTargetId,
+      medicPose: this.variant === "medic" ? clamp(Math.max(this.medicSignal, this.medicAidTimer / MEDIC_AID_SECONDS), 0, 1) : 0,
+      medicTargetId: this.medicTargetId,
       commandPose: this.variant === "captain" ? clamp(this.commandPulse, 0, 1) : 0,
       squadId: this.squadId,
       squadTargetId: this.squadTargetId,
@@ -1815,9 +1899,10 @@ class RivalAnt3D {
       const foodBonus = sim.isNearFood(ant.x, ant.z, 18) ? (this.isRaidRival ? 10 : 7) : 0;
       const exposedBonus = ant.role === "worker" && nestDistance > sim.nest.radius + 18 ? (this.isRaidRival ? 12 : 4) : 0;
       const builderBonus = ant.variant === "builder" ? (this.isRaidRival ? 9 : 5) : 0;
+      const supportPenalty = ant.variant === "medic" ? (this.isRaidRival ? -10 : -7) : 0;
       const guardPenalty = ant.variant === "shieldHead" ? (this.isRaidRival ? -12 : -8) : ant.variant === "heavySoldier" || ant.role === "guard" ? (this.isRaidRival ? -8 : -5) : 0;
       const shieldCoverPenalty = ant.variant === "shieldHead" ? 0 : sim.shieldCoverStrengthAt(ant.x, ant.z) * (this.isRaidRival ? 18 : 12);
-      const score = baseScore - d + carryingBonus + workerBonus + returnBonus + foodBonus + exposedBonus + builderBonus + guardPenalty - shieldCoverPenalty;
+      const score = baseScore - d + carryingBonus + workerBonus + returnBonus + foodBonus + exposedBonus + builderBonus + supportPenalty + guardPenalty - shieldCoverPenalty;
       if (score > bestScore) {
         best = ant;
         bestScore = score;
@@ -1959,6 +2044,7 @@ class RivalAnt3D {
         !clash.ants.includes(ant) &&
         ant.variant !== "shieldHead" &&
         ant.variant !== "scout" &&
+        ant.variant !== "medic" &&
         ant.state !== "stunned" &&
         ant.state !== "flee" &&
         ant.fleeTimer <= 0 &&
@@ -2212,14 +2298,15 @@ class RivalAnt3D {
         continue;
       }
 
-      if (ant.variant === "scout") {
+      if (ant.variant === "scout" || ant.variant === "medic") {
         const shove = Math.min(0.62, overlap * 0.34 + 0.16);
         ant.x += nx * shove;
         ant.z += nz * shove;
         this.x -= nx * shove * 0.18;
         this.z -= nz * shove * 0.18;
-        ant.scoutSignal = Math.max(ant.scoutSignal, 0.45);
-        ant.lastTacticalAction = "scoutEvade";
+        if (ant.variant === "scout") ant.scoutSignal = Math.max(ant.scoutSignal, 0.45);
+        if (ant.variant === "medic") ant.medicSignal = Math.max(ant.medicSignal, 0.55);
+        ant.lastTacticalAction = ant.variant === "medic" ? "medicEvade" : "scoutEvade";
         ant.startFleeHome(this.x, this.z, 1.2 + this.aggression * 0.5);
         this.fightCooldown = Math.max(this.fightCooldown, 0.42);
         ant.keepInWorld(sim);
@@ -2374,6 +2461,14 @@ const ANT_ROLE_LABEL_CONFIG = {
     band: "#2f665e",
     bg: "rgba(20, 34, 33, 0.86)",
     iconBg: "rgba(81, 183, 166, 0.34)",
+  },
+  medic: {
+    text: "救護",
+    asset: "assets/generated/ant-role-builder-20260627.png",
+    accent: "#aee9c9",
+    band: "#4f8064",
+    bg: "rgba(22, 34, 28, 0.86)",
+    iconBg: "rgba(111, 197, 151, 0.34)",
   },
   captain: {
     text: "小隊長",
@@ -2548,6 +2643,13 @@ class AntRenderSystem {
     this.shieldPlateMesh.frustumCulled = false;
     sim.scene.add(this.shieldPlateMesh);
 
+    this.medicPouchGeometry = new THREE.BoxGeometry(1, 1, 1);
+    this.medicPouchMesh = new THREE.InstancedMesh(this.medicPouchGeometry, sim.materials.medicPouch, capacity * 2);
+    this.medicPouchMesh.count = 0;
+    this.medicPouchMesh.castShadow = sim.quality.shadowQuality !== "off";
+    this.medicPouchMesh.frustumCulled = false;
+    sim.scene.add(this.medicPouchMesh);
+
     this.foodMesh = new THREE.InstancedMesh(sim.geometries.foodCrumb, sim.materials.food, capacity);
     this.foodMesh.count = 0;
     this.foodMesh.castShadow = sim.quality.shadowQuality !== "off";
@@ -2573,10 +2675,12 @@ class AntRenderSystem {
       this.appendageMesh.setMatrixAt(i, this.hiddenMatrix);
     }
     for (let i = 0; i < limit; i += 1) this.shieldPlateMesh.setMatrixAt(i, this.hiddenMatrix);
+    for (let i = 0; i < limit * 2; i += 1) this.medicPouchMesh.setMatrixAt(i, this.hiddenMatrix);
     for (let i = 0; i < limit; i += 1) this.foodMesh.setMatrixAt(i, this.hiddenMatrix);
     for (let i = 0; i < limit; i += 1) this.soilMesh.setMatrixAt(i, this.hiddenMatrix);
     this.appendageMesh.count = limit * this.appendageSlotCount;
     this.shieldPlateMesh.count = limit;
+    this.medicPouchMesh.count = limit * 2;
     this.foodMesh.count = limit;
     this.soilMesh.count = limit;
   }
@@ -2620,6 +2724,8 @@ class AntRenderSystem {
     const start = index * this.appendageSlotCount;
     for (let i = 0; i < this.appendageSlotCount; i += 1) this.appendageMesh.setMatrixAt(start + i, this.hiddenMatrix);
     this.shieldPlateMesh.setMatrixAt(index, this.hiddenMatrix);
+    this.medicPouchMesh.setMatrixAt(index * 2, this.hiddenMatrix);
+    this.medicPouchMesh.setMatrixAt(index * 2 + 1, this.hiddenMatrix);
     this.foodMesh.setMatrixAt(index, this.hiddenMatrix);
     this.soilMesh.setMatrixAt(index, this.hiddenMatrix);
   }
@@ -2682,6 +2788,14 @@ class AntRenderSystem {
       this.composeLocalMatrix(renderState, 0, -0.005 + pose * 0.018, 1.56, 1.32, 0.045, 0.56);
       this.shieldPlateMesh.setMatrixAt(index, this.dummy.matrix);
     }
+    if (renderState.variant === "medic") {
+      const pose = clamp(renderState.medicPose ?? 0, 0, 1);
+      const start = index * 2;
+      this.composeLocalMatrix(renderState, -0.42, 0.12 + pose * 0.025, -0.08, 0.18, 0.14, 0.36);
+      this.medicPouchMesh.setMatrixAt(start, this.dummy.matrix);
+      this.composeLocalMatrix(renderState, 0.42, 0.12 + pose * 0.025, -0.08, 0.18, 0.14, 0.36);
+      this.medicPouchMesh.setMatrixAt(start + 1, this.dummy.matrix);
+    }
 
     if (renderState.carrying > 0) {
       this.composeLocalMatrix(renderState, 0, 0.14, 1.9, 0.36, 0.36, 0.36);
@@ -2708,6 +2822,10 @@ class AntRenderSystem {
         scale.x *= 1.12;
         scale.y *= 1.08;
         scale.z *= 1.08;
+      } else if (renderState.variant === "medic") {
+        scale.x *= 0.92;
+        scale.y *= 0.96;
+        scale.z *= 0.95;
       }
     } else if (partName === "gaster") {
       scale.x *= config.abdomenScale;
@@ -2733,6 +2851,10 @@ class AntRenderSystem {
       scale.x *= 1.08;
       scale.y *= 1.1;
       scale.z *= 1.04;
+    } else if (renderState.variant === "medic" && partName === "mesosoma") {
+      scale.x *= 0.96;
+      scale.y *= 0.96;
+      scale.z *= 1.02;
     }
     return scale;
   }
@@ -2828,6 +2950,8 @@ class AntRenderSystem {
     this.appendageMesh.instanceMatrix.needsUpdate = true;
     this.shieldPlateMesh.count = limit;
     this.shieldPlateMesh.instanceMatrix.needsUpdate = true;
+    this.medicPouchMesh.count = limit * 2;
+    this.medicPouchMesh.instanceMatrix.needsUpdate = true;
     this.foodMesh.count = limit;
     this.foodMesh.instanceMatrix.needsUpdate = true;
     this.soilMesh.count = limit;
@@ -2846,10 +2970,12 @@ class AntRenderSystem {
     }
     this.sim.scene.remove(this.appendageMesh);
     this.sim.scene.remove(this.shieldPlateMesh);
+    this.sim.scene.remove(this.medicPouchMesh);
     this.sim.scene.remove(this.foodMesh);
     this.sim.scene.remove(this.soilMesh);
     this.appendageGeometry.dispose();
     this.shieldPlateGeometry.dispose();
+    this.medicPouchGeometry.dispose();
   }
 }
 
@@ -3133,6 +3259,8 @@ class AntColony3D {
       acidSpray: new THREE.MeshBasicMaterial({ color: 0xff5a47, transparent: true, opacity: 0.72, depthWrite: false }),
       acidSplash: new THREE.MeshBasicMaterial({ color: 0xff2f5d, transparent: true, opacity: 0.5, depthWrite: false }),
       scoutMark: new THREE.MeshBasicMaterial({ color: 0x69d7c5, transparent: true, opacity: 0.48, depthWrite: false }),
+      medicAid: new THREE.MeshBasicMaterial({ color: 0xaee9c9, transparent: true, opacity: 0.56, depthWrite: false }),
+      medicPouch: new THREE.MeshStandardMaterial({ color: 0xb9f2d1, roughness: 0.72, emissive: 0x12351f, emissiveIntensity: 0.18 }),
       captainCommand: new THREE.MeshBasicMaterial({ color: 0xf0c65a, transparent: true, opacity: 0.68, depthWrite: false }),
       trailFood: new THREE.MeshBasicMaterial({ color: 0xd9a63f, transparent: true, opacity: 0.2, depthWrite: false }),
       trailAlarm: new THREE.MeshBasicMaterial({ color: 0xd96f58, transparent: true, opacity: 0.24, depthWrite: false }),
@@ -4287,6 +4415,7 @@ class AntColony3D {
     this.colony.shieldHeadAnts = derived.shieldHeads;
     this.colony.acidShooterAnts = derived.acidShooters;
     this.colony.scoutAnts = derived.scouts;
+    this.colony.medicAnts = derived.medics;
     this.colony.captainAnts = derived.captains;
     this.colony.builderAnts = derived.builders;
     this.colony.attackPower = derived.attackPower;
@@ -4329,6 +4458,10 @@ class AntColony3D {
     if (this.colony.scoutAnts < nextDerived.scoutTarget && this.colony.food > nextDerived.antCost * 1.9) {
       this.colony.scoutAnts += 1;
       this.colony.food -= 3.6;
+    }
+    if (this.colony.medicAnts < nextDerived.medicTarget && this.colony.food > nextDerived.antCost * 1.95) {
+      this.colony.medicAnts += 1;
+      this.colony.food -= 3.8;
     }
     if (this.colony.captainAnts < nextDerived.captainTarget && this.colony.food > nextDerived.antCost * 2.15) {
       this.colony.captainAnts += 1;
@@ -4388,6 +4521,7 @@ class AntColony3D {
             ant.variant !== "shieldHead" &&
             ant.variant !== "acidShooter" &&
             ant.variant !== "scout" &&
+            ant.variant !== "medic" &&
             ant.variant !== "captain"
       ) ant.role = "worker";
     }
@@ -4410,6 +4544,7 @@ class AntColony3D {
       shieldHead: 0,
       acidShooter: 0,
       scout: 0,
+      medic: 0,
       captain: 0,
       soldier: 0,
       builder: d.builders,
@@ -4522,9 +4657,10 @@ class AntColony3D {
     if (index < counts.heavySoldier + counts.shieldHead) return "shieldHead";
     if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter) return "acidShooter";
     if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout) return "scout";
-    if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.captain) return "captain";
-    if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.captain + counts.soldier) return "soldier";
-    if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.captain + counts.soldier + counts.builder) return "builder";
+    if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.medic) return "medic";
+    if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.medic + counts.captain) return "captain";
+    if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.medic + counts.captain + counts.soldier) return "soldier";
+    if (index < counts.heavySoldier + counts.shieldHead + counts.acidShooter + counts.scout + counts.medic + counts.captain + counts.soldier + counts.builder) return "builder";
     return "worker";
   }
 
@@ -4596,35 +4732,42 @@ class AntColony3D {
     this.colony.food -= cost;
     this.colony.upgrades[id] = level + 1;
     if (id === "heavySoldierBrood") {
-      this.colony.soldierAnts = Math.max(this.colony.soldierAnts, this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.captainAnts + 1);
+      this.colony.soldierAnts = Math.max(this.colony.soldierAnts, this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.medicAnts + this.colony.captainAnts + 1);
       this.colony.heavySoldierAnts = Math.min(this.colony.soldierAnts, this.colony.heavySoldierAnts + 1);
     } else if (id === "shieldHeadBrood") {
       this.colony.soldierAnts = Math.max(
         this.colony.soldierAnts,
-        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.captainAnts + 1,
+        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.medicAnts + this.colony.captainAnts + 1,
       );
       const shieldSlots = Math.max(0, this.colony.soldierAnts - this.colony.heavySoldierAnts);
       this.colony.shieldHeadAnts = Math.min(shieldSlots, this.colony.shieldHeadAnts + 1);
     } else if (id === "acidShooterBrood") {
       this.colony.soldierAnts = Math.max(
         this.colony.soldierAnts,
-        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.captainAnts + 1,
+        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.medicAnts + this.colony.captainAnts + 1,
       );
       const acidSlots = Math.max(0, this.colony.soldierAnts - this.colony.heavySoldierAnts - this.colony.shieldHeadAnts);
       this.colony.acidShooterAnts = Math.min(acidSlots, this.colony.acidShooterAnts + 1);
     } else if (id === "scoutBrood") {
       this.colony.soldierAnts = Math.max(
         this.colony.soldierAnts,
-        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.captainAnts + 1,
+        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.medicAnts + this.colony.captainAnts + 1,
       );
       const scoutSlots = Math.max(0, this.colony.soldierAnts - this.colony.heavySoldierAnts - this.colony.shieldHeadAnts - this.colony.acidShooterAnts);
       this.colony.scoutAnts = Math.min(scoutSlots, this.colony.scoutAnts + 1);
+    } else if (id === "medicBrood") {
+      this.colony.soldierAnts = Math.max(
+        this.colony.soldierAnts,
+        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.medicAnts + this.colony.captainAnts + 1,
+      );
+      const medicSlots = Math.max(0, this.colony.soldierAnts - this.colony.heavySoldierAnts - this.colony.shieldHeadAnts - this.colony.acidShooterAnts - this.colony.scoutAnts);
+      this.colony.medicAnts = Math.min(medicSlots, this.colony.medicAnts + 1);
     } else if (id === "captainBrood") {
       this.colony.soldierAnts = Math.max(
         this.colony.soldierAnts,
-        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.captainAnts + 1,
+        this.colony.heavySoldierAnts + this.colony.shieldHeadAnts + this.colony.acidShooterAnts + this.colony.scoutAnts + this.colony.medicAnts + this.colony.captainAnts + 1,
       );
-      const captainSlots = Math.max(0, this.colony.soldierAnts - this.colony.heavySoldierAnts - this.colony.shieldHeadAnts - this.colony.acidShooterAnts - this.colony.scoutAnts);
+      const captainSlots = Math.max(0, this.colony.soldierAnts - this.colony.heavySoldierAnts - this.colony.shieldHeadAnts - this.colony.acidShooterAnts - this.colony.scoutAnts - this.colony.medicAnts);
       this.colony.captainAnts = Math.min(captainSlots, this.colony.captainAnts + 1);
     } else if (id === "builderTraining") {
       const availableWorkers = Math.max(0, this.colony.antPopulation - this.colony.woundedAnts - this.colony.soldierAnts);
@@ -4893,6 +5036,7 @@ class AntColony3D {
           ant.variant === "heavySoldier" ? 2.45 :
           ant.variant === "acidShooter" ? -3.65 :
           ant.variant === "scout" ? 1.65 :
+          ant.variant === "medic" ? -5.2 :
           lane % 2 === 0 ? 0.75 : -1.35;
         ant.squadAnchorX = leader.x + fx * roleOffset + sx * sideOffset;
         ant.squadAnchorZ = leader.z + fz * roleOffset + sz * sideOffset;
@@ -4922,19 +5066,20 @@ class AntColony3D {
       ant.variant === "shieldHead" ? 0.84 :
       ant.variant === "acidShooter" ? 1.04 :
       ant.variant === "scout" ? 1.46 :
+      ant.variant === "medic" ? 1.18 :
       ant.variant === "heavySoldier" ? 1.08 :
       1.14;
     const pressure = clamp((d - 1.35) / Math.max(1, CAPTAIN_COHESION_RADIUS * 0.72), 0.34, 2.35) * roleFactor;
     steering.x += ((ant.squadAnchorX - ant.x) / d) * pressure;
     steering.z += ((ant.squadAnchorZ - ant.z) / d) * pressure;
-    if (d > CAPTAIN_COHESION_RADIUS && !ant.lastTacticalAction?.startsWith?.("acid") && !ant.lastTacticalAction?.startsWith?.("scout")) {
+    if (d > CAPTAIN_COHESION_RADIUS && !ant.lastTacticalAction?.startsWith?.("acid") && !ant.lastTacticalAction?.startsWith?.("scout") && !ant.lastTacticalAction?.startsWith?.("medic")) {
       ant.lastTacticalAction = "squadRally";
     }
     return true;
   }
 
   sortieSoldierPool(derived = this.computeDerived()) {
-    return Math.max(0, Math.floor((derived.normalSoldiers ?? 0) + (derived.heavySoldiers ?? 0) + (derived.shieldHeads ?? 0) + (derived.acidShooters ?? 0) + (derived.scouts ?? 0) + (derived.captains ?? 0)));
+    return Math.max(0, Math.floor((derived.normalSoldiers ?? 0) + (derived.heavySoldiers ?? 0) + (derived.shieldHeads ?? 0) + (derived.acidShooters ?? 0) + (derived.scouts ?? 0) + (derived.medics ?? 0) + (derived.captains ?? 0)));
   }
 
   sortieSoldierLimit(derived = this.computeDerived()) {
@@ -4957,6 +5102,7 @@ class AntColony3D {
     const nestShield = Math.max(0, Math.floor((d.shieldHeads ?? 0) - this.deployedSoldierCountByVariant("shieldHead")));
     const nestAcid = Math.max(0, Math.floor((d.acidShooters ?? 0) - this.deployedSoldierCountByVariant("acidShooter")));
     const nestScout = Math.max(0, Math.floor((d.scouts ?? 0) - this.deployedSoldierCountByVariant("scout")));
+    const nestMedic = Math.max(0, Math.floor((d.medics ?? 0) - this.deployedSoldierCountByVariant("medic")));
     const nestCaptain = Math.max(0, Math.floor((d.captains ?? 0) - this.deployedSoldierCountByVariant("captain")));
     const nestNormal = Math.max(0, Math.floor((d.normalSoldiers ?? 0) - this.deployedSoldierCountByVariant("soldier")));
     const heavy = Math.min(nestHeavy, desired);
@@ -4964,8 +5110,9 @@ class AntColony3D {
     const captain = Math.min(nestCaptain, desired - heavy - shield);
     const acid = Math.min(nestAcid, desired - heavy - shield - captain);
     const scout = Math.min(nestScout, desired - heavy - shield - captain - acid);
-    const normal = Math.min(nestNormal, desired - heavy - shield - captain - acid - scout);
-    return { heavy, shield, captain, acid, scout, normal, total: heavy + shield + captain + acid + scout + normal };
+    const medic = Math.min(nestMedic, desired - heavy - shield - captain - acid - scout);
+    const normal = Math.min(nestNormal, desired - heavy - shield - captain - acid - scout - medic);
+    return { heavy, shield, captain, acid, scout, medic, normal, total: heavy + shield + captain + acid + scout + medic + normal };
   }
 
   plannedSortieCount() {
@@ -5040,6 +5187,7 @@ class AntColony3D {
       ...Array.from({ length: composition.captain }, () => "captain"),
       ...Array.from({ length: composition.acid }, () => "acidShooter"),
       ...Array.from({ length: composition.scout }, () => "scout"),
+      ...Array.from({ length: composition.medic }, () => "medic"),
       ...Array.from({ length: composition.normal }, () => "soldier"),
     ];
     const sortieAnts = [];
@@ -5084,7 +5232,8 @@ class AntColony3D {
     const captainText = composition.captain > 0 ? ` / 小隊長${composition.captain}匹` : "";
     const acidText = composition.acid > 0 ? ` / 酸射${composition.acid}匹` : "";
     const scoutText = composition.scout > 0 ? ` / 斥候${composition.scout}匹` : "";
-    this.pushLog(`兵隊出撃: ${count}匹${heavyText}${shieldText}${captainText}${acidText}${scoutText}が巣口から防衛へ${formationText}`);
+    const medicText = composition.medic > 0 ? ` / 救護${composition.medic}匹` : "";
+    this.pushLog(`兵隊出撃: ${count}匹${heavyText}${shieldText}${captainText}${acidText}${scoutText}${medicText}が巣口から防衛へ${formationText}`);
     this.updateStats();
     this.saveColony();
     return true;
@@ -5546,6 +5695,7 @@ class AntColony3D {
       (d.heavySoldiers ?? 0) * 0.06 +
       (d.shieldHeads ?? 0) * 0.05 +
       (d.scouts ?? 0) * 0.035 +
+      (d.medics ?? 0) * 0.025 +
       (d.captains ?? 0) * 0.04;
     const pressure = this.colony.enemyThreat * 0.34 + this.colony.territory * 0.14 + colonyScalePressure - (d.defensePower - 1) * 0.9;
     return Math.floor(clamp(4 + pressure, 4, RAID_RIVAL_CAP));
@@ -5788,6 +5938,7 @@ class AntColony3D {
       if (ant.variant === "shieldHead") this.colony.shieldHeadAnts = Math.max(0, Math.floor(this.colony.shieldHeadAnts) - 1);
       if (ant.variant === "acidShooter") this.colony.acidShooterAnts = Math.max(0, Math.floor(this.colony.acidShooterAnts) - 1);
       if (ant.variant === "scout") this.colony.scoutAnts = Math.max(0, Math.floor(this.colony.scoutAnts) - 1);
+      if (ant.variant === "medic") this.colony.medicAnts = Math.max(0, Math.floor(this.colony.medicAnts) - 1);
       if (ant.variant === "captain") this.colony.captainAnts = Math.max(0, Math.floor(this.colony.captainAnts) - 1);
       this.colony.soldierAnts = Math.max(0, Math.floor(this.colony.soldierAnts) - 1);
     }
@@ -5938,6 +6089,37 @@ class AntColony3D {
       const score = d - scoutBonus - squadBonus;
       if (score < bestScore) {
         best = rival;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  findMedicPatient(medic) {
+    if (!medic || medic.variant !== "medic") return null;
+    let best = null;
+    let bestScore = Infinity;
+    const range = MEDIC_AID_RANGE;
+    for (const ant of this.deployedSoldiers()) {
+      if (ant === medic || ant.variant === "medic") continue;
+      if (!this.shouldRenderAnt(ant)) continue;
+      if (ant.state === "return" || ant.inNest || ant.nestStayTimer > 0) continue;
+      const d = distance2(medic.x, medic.z, ant.x, ant.z);
+      if (d > range) continue;
+      const lowEnergy = 1 - Math.min(ant.energy ?? 1, ant.stamina ?? 1);
+      const nearestThreat = this.findRivalThreat(ant.x, ant.z, 10, ant.squadTargetId);
+      const urgency =
+        lowEnergy * 18 +
+        (ant.state === "clash" || ant.clashTimer > 0 ? 14 : 0) +
+        (ant.fleeTimer > 0 || ant.state === "flee" ? 7 : 0) +
+        (ant.stun > 0 ? 12 : 0) +
+        ((ant.wet ?? 0) > 0.35 ? 5 : 0) +
+        (nearestThreat ? 8 : 0);
+      if (urgency < 5 && d > 5) continue;
+      const sameSquadBonus = medic.squadId && ant.squadId === medic.squadId ? 6 : 0;
+      const score = d - urgency - sameSquadBonus;
+      if (score < bestScore) {
+        best = ant;
         bestScore = score;
       }
     }
@@ -6439,6 +6621,73 @@ class AntColony3D {
     }
   }
 
+  applyMedicAid(medic, patient) {
+    if (!medic || !patient || patient === medic || patient.variant === "medic") return false;
+    if (!this.ants.includes(patient) || !this.shouldRenderAnt(patient)) return false;
+    const d = distance2(medic.x, medic.z, patient.x, patient.z);
+    if (d > MEDIC_AID_RANGE) return false;
+    const urgency = clamp((1 - Math.min(patient.energy ?? 1, patient.stamina ?? 1)) + (patient.stun > 0 ? 0.45 : 0) + (patient.wet > 0.35 ? 0.22 : 0), 0.28, 1);
+    patient.energy = clamp((patient.energy ?? 1) + 0.16 + urgency * 0.09, 0, 1);
+    patient.stamina = clamp(Math.max(patient.stamina ?? 0, patient.energy), 0, 1);
+    patient.wet = Math.max(0, (patient.wet ?? 0) - 0.18 * urgency);
+    if (patient.stun > 0) patient.stun = Math.max(0, patient.stun - 0.42 * urgency);
+    if (patient.state !== "clash" && patient.clashTimer <= 0 && (patient.energy <= MEDIC_EVACUATE_ENERGY || patient.stun > 0 || patient.wet > 0.44)) {
+      patient.startFleeHome(medic.x, medic.z, 2.4 + urgency * 1.4);
+      patient.lastTacticalAction = "medicEvacuated";
+    } else if (patient.lastTacticalAction !== "medicEvacuated") {
+      patient.lastTacticalAction = "medicSupported";
+    }
+    medic.medicSignal = 1;
+    medic.medicTargetId = patient.id;
+    this.addTrail(patient.x, patient.z, "rescue", 0.74);
+    this.addMedicAidEffect(patient.x, patient.z, urgency);
+    return true;
+  }
+
+  addMedicAidEffect(x, z, strength = 1) {
+    const quality = this.quality.effectsQuality ?? 1;
+    if (quality <= 0) return;
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+
+    const aidMaterial = this.materials.medicAid.clone();
+    const ring = new THREE.Mesh(this.geometries.impactRing, aidMaterial);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.13;
+    ring.scale.setScalar(0.86 + strength * 0.58);
+    group.add(ring);
+
+    const crossMaterial = this.materials.medicAid.clone();
+    const bars = [];
+    for (let i = 0; i < 2; i += 1) {
+      const bar = new THREE.Mesh(this.geometries.combatSlash, crossMaterial);
+      bar.rotation.set(0, i === 0 ? Math.PI / 2 : 0, Math.PI / 2);
+      bar.position.set(0, 0.48, 0);
+      bar.scale.set(0.035, 0.58 + strength * 0.2, 0.035);
+      group.add(bar);
+      bars.push(bar);
+    }
+
+    this.scene.add(group);
+    this.dynamicObjects.add(group);
+    this.combatEffects.push({
+      type: "medicAid",
+      age: 0,
+      life: 0.82,
+      strength,
+      radius: 1 + strength * 0.62,
+      group,
+      ring,
+      aidMaterial,
+      crossMaterial,
+      bars,
+    });
+    while (this.combatEffects.length > COMBAT_EFFECT_CAP) {
+      const old = this.combatEffects.shift();
+      this.disposeDynamicItem(old);
+    }
+  }
+
   addCaptainCommandEffect(x, z, members = 1, cohesion = 0, colorHex = 0xf0c65a) {
     const quality = this.quality.effectsQuality ?? 1;
     if (quality <= 0) return;
@@ -6609,6 +6858,18 @@ class AntColony3D {
         effect.markMaterial.opacity = 0.52 * effect.strength * fade;
         effect.ping.scale.y = 0.72 + effect.strength * 0.24 + Math.sin(t * Math.PI) * 0.24;
         effect.pingMaterial.opacity = 0.42 * effect.strength * Math.max(0, 1 - t * 1.6);
+        continue;
+      }
+      if (effect.type === "medicAid") {
+        effect.group.position.y = Math.sin(t * Math.PI) * 0.04;
+        effect.ring.scale.setScalar(effect.radius * (0.62 + t * 0.78));
+        effect.ring.rotation.z = -t * Math.PI * 0.8;
+        effect.aidMaterial.opacity = 0.58 * effect.strength * fade;
+        effect.crossMaterial.opacity = 0.68 * effect.strength * Math.max(0, 1 - t * 1.4);
+        for (const [index, bar] of (effect.bars ?? []).entries()) {
+          bar.rotation.z = Math.PI / 2 + index * Math.PI / 2 + Math.sin(t * Math.PI) * 0.12;
+          bar.scale.y = 0.58 + effect.strength * 0.2 + Math.sin(t * Math.PI) * 0.22;
+        }
         continue;
       }
       if (effect.type === "captainCommand") {
@@ -6855,7 +7116,7 @@ class AntColony3D {
     ui.statGrowthRate.textContent = fmt(d.growthPerSecond * 60, 2);
     ui.statThreat.textContent = fmt(this.colony.enemyThreat, 1);
     ui.colonySummary.textContent =
-      `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 盾頭 ${fmt(d.shieldHeads, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 斥候 ${fmt(d.scouts, 0)} / 小隊長 ${fmt(d.captains, 0)} / 土木 ${fmt(d.builders, 0)}`;
+      `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 盾頭 ${fmt(d.shieldHeads, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 斥候 ${fmt(d.scouts, 0)} / 救護 ${fmt(d.medics, 0)} / 小隊長 ${fmt(d.captains, 0)} / 土木 ${fmt(d.builders, 0)}`;
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     const pendingConstructionLabel = this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 線指定中` : "";
     ui.activeToolLabel.textContent = pendingConstructionLabel || (this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);

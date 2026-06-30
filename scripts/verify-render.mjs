@@ -230,12 +230,13 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           antCount: sim?.ants?.length ?? null,
           colonyAnts: sim?.colony?.antPopulation ?? null,
           deployedSoldiers: sim?.deployedSoldierCount?.() ?? null,
-          variantConfigCount: ["worker", "soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "captain", "builder"].filter((variant) => Boolean(sim?.getAntVariantConfig?.(variant))).length,
+          variantConfigCount: ["worker", "soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "medic", "captain", "builder"].filter((variant) => Boolean(sim?.getAntVariantConfig?.(variant))).length,
           workerVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "worker").length ?? null,
           heavyVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "heavySoldier").length ?? null,
           shieldVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "shieldHead").length ?? null,
           acidVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "acidShooter").length ?? null,
           scoutVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "scout").length ?? null,
+          medicVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "medic").length ?? null,
           captainVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "captain").length ?? null,
           builderVariantCount: sim?.ants?.filter?.((ant) => ant.variant === "builder").length ?? null,
           earthworkCount: sim?.earthworks?.length ?? null,
@@ -299,12 +300,13 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.colonyAnts !== 12 ||
       metrics.antCount !== 11 ||
       metrics.deployedSoldiers !== 0 ||
-      metrics.variantConfigCount !== 8 ||
+      metrics.variantConfigCount !== 9 ||
       metrics.workerVariantCount !== 11 ||
       metrics.heavyVariantCount !== 0 ||
       metrics.shieldVariantCount !== 0 ||
       metrics.acidVariantCount !== 0 ||
       metrics.scoutVariantCount !== 0 ||
+      metrics.medicVariantCount !== 0 ||
       metrics.captainVariantCount !== 0 ||
       metrics.builderVariantCount !== 0 ||
       metrics.earthworkCount !== 0 ||
@@ -371,6 +373,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           shieldHeadBrood: 4,
           acidShooterBrood: 4,
           scoutBrood: 4,
+          medicBrood: 4,
           captainBrood: 3,
           nestGuard: 6,
           sentinelPosts: 4,

@@ -2,7 +2,7 @@ import { RAID_INITIAL_DELAY_SECONDS } from "../config/balance";
 import { UPGRADE_DEFS } from "../config/upgrades";
 import type { ColonyState, RaidState } from "./schema";
 
-export const COLONY_SAVE_VERSION = 10;
+export const COLONY_SAVE_VERSION = 11;
 
 export function createDefaultRaidState(): RaidState {
   return {
@@ -31,6 +31,7 @@ export function createDefaultColony(): ColonyState {
     shieldHeadAnts: 0,
     acidShooterAnts: 0,
     scoutAnts: 0,
+    medicAnts: 0,
     captainAnts: 0,
     builderAnts: 0,
     woundedAnts: 0,

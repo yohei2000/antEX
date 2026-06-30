@@ -8,7 +8,7 @@ describe("colony state modules", () => {
   it("creates the same default colony shape used by the browser game", () => {
     const colony = createDefaultColony();
 
-    expect(colony.version).toBe(10);
+    expect(colony.version).toBe(11);
     expect(colony.food).toBe(36);
     expect(colony.lifetimeFood).toBe(36);
     expect(colony.antPopulation).toBe(12);
@@ -17,6 +17,7 @@ describe("colony state modules", () => {
     expect(colony.shieldHeadAnts).toBe(0);
     expect(colony.acidShooterAnts).toBe(0);
     expect(colony.scoutAnts).toBe(0);
+    expect(colony.medicAnts).toBe(0);
     expect(colony.captainAnts).toBe(0);
     expect(colony.builderAnts).toBe(0);
     expect(colony.raidState.phase).toBe("calm");
@@ -37,6 +38,7 @@ describe("colony state modules", () => {
       shieldHeadAnts: 99,
       acidShooterAnts: 99,
       scoutAnts: 99,
+      medicAnts: 99,
       captainAnts: 99,
       builderAnts: 99,
       nestLevel: 2,
@@ -65,7 +67,7 @@ describe("colony state modules", () => {
       battleLog: ["a", "b", "c", "d", "e", "f"],
     });
 
-    expect(colony.version).toBe(10);
+    expect(colony.version).toBe(11);
     expect(colony.food).toBe(321);
     expect(colony.lifetimeFood).toBe(654);
     expect(colony.antPopulation).toBe(18);
@@ -74,6 +76,7 @@ describe("colony state modules", () => {
     expect(colony.shieldHeadAnts).toBe(0);
     expect(colony.acidShooterAnts).toBe(0);
     expect(colony.scoutAnts).toBe(0);
+    expect(colony.medicAnts).toBe(0);
     expect(colony.captainAnts).toBe(0);
     expect(colony.builderAnts).toBe(0);
     expect(colony.upgrades.storageChambers).toBe(2);
@@ -111,6 +114,7 @@ describe("colony state modules", () => {
     expect(baseDerived.shieldHeads).toBe(0);
     expect(baseDerived.acidShooters).toBe(0);
     expect(baseDerived.scouts).toBe(0);
+    expect(baseDerived.medics).toBe(0);
     expect(baseDerived.captains).toBe(0);
     expect(baseDerived.builders).toBe(0);
     expect(baseDerived.workers).toBe(11);

@@ -13,11 +13,12 @@ test("persists colony state through localStorage", async ({ page }) => {
     sim.colony.food = 321;
     sim.colony.lifetimeFood = 654;
     sim.colony.antPopulation = 18;
-    sim.colony.soldierAnts = 5;
+    sim.colony.soldierAnts = 6;
     sim.colony.heavySoldierAnts = 1;
     sim.colony.shieldHeadAnts = 1;
     sim.colony.acidShooterAnts = 1;
     sim.colony.scoutAnts = 1;
+    sim.colony.medicAnts = 1;
     sim.colony.captainAnts = 1;
     sim.colony.builderAnts = 2;
     sim.colony.nestLevel = 2;
@@ -32,6 +33,7 @@ test("persists colony state through localStorage", async ({ page }) => {
       shieldHeadBrood: 1,
       acidShooterBrood: 1,
       scoutBrood: 1,
+      medicBrood: 1,
       captainBrood: 1,
       builderTraining: 1,
       nestGuard: 0,
@@ -64,6 +66,7 @@ test("persists colony state through localStorage", async ({ page }) => {
       shieldHeadAnts: sim.colony.shieldHeadAnts,
       acidShooterAnts: sim.colony.acidShooterAnts,
       scoutAnts: sim.colony.scoutAnts,
+      medicAnts: sim.colony.medicAnts,
       captainAnts: sim.colony.captainAnts,
       builderAnts: sim.colony.builderAnts,
       nestLevel: sim.colony.nestLevel,
@@ -73,6 +76,7 @@ test("persists colony state through localStorage", async ({ page }) => {
       shieldHeadBrood: sim.colony.upgrades.shieldHeadBrood,
       acidShooterBrood: sim.colony.upgrades.acidShooterBrood,
       scoutBrood: sim.colony.upgrades.scoutBrood,
+      medicBrood: sim.colony.upgrades.medicBrood,
       captainBrood: sim.colony.upgrades.captainBrood,
       builderTraining: sim.colony.upgrades.builderTraining,
       trailPheromones: sim.colony.upgrades.trailPheromones,
@@ -91,11 +95,12 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.food).toBeGreaterThan(320.9);
   expect(restored.lifetimeFood).toBeGreaterThanOrEqual(654);
   expect(restored.antPopulation).toBe(18);
-  expect(restored.soldierAnts).toBe(5);
+  expect(restored.soldierAnts).toBe(6);
   expect(restored.heavySoldierAnts).toBe(1);
   expect(restored.shieldHeadAnts).toBe(1);
   expect(restored.acidShooterAnts).toBe(1);
   expect(restored.scoutAnts).toBe(1);
+  expect(restored.medicAnts).toBe(1);
   expect(restored.captainAnts).toBe(1);
   expect(restored.builderAnts).toBe(2);
   expect(restored.nestLevel).toBe(2);
@@ -105,6 +110,7 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.shieldHeadBrood).toBe(1);
   expect(restored.acidShooterBrood).toBe(1);
   expect(restored.scoutBrood).toBe(1);
+  expect(restored.medicBrood).toBe(1);
   expect(restored.captainBrood).toBe(1);
   expect(restored.builderTraining).toBe(1);
   expect(restored.trailPheromones).toBe(0);
@@ -156,6 +162,7 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
       shieldHeadAnts: sim.colony.shieldHeadAnts,
       acidShooterAnts: sim.colony.acidShooterAnts,
       scoutAnts: sim.colony.scoutAnts,
+      medicAnts: sim.colony.medicAnts,
       captainAnts: sim.colony.captainAnts,
       builderAnts: sim.colony.builderAnts,
       nextEarthworkId: sim.colony.nextEarthworkId,
@@ -163,6 +170,7 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
       shieldHeadBrood: sim.colony.upgrades.shieldHeadBrood,
       acidShooterBrood: sim.colony.upgrades.acidShooterBrood,
       scoutBrood: sim.colony.upgrades.scoutBrood,
+      medicBrood: sim.colony.upgrades.medicBrood,
       captainBrood: sim.colony.upgrades.captainBrood,
       builderTraining: sim.colony.upgrades.builderTraining,
       renderedAnts: sim.ants.length,
@@ -173,11 +181,12 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
     };
   });
 
-  expect(migrated.version).toBe(10);
+  expect(migrated.version).toBe(11);
   expect(migrated.heavySoldierAnts).toBe(0);
   expect(migrated.shieldHeadAnts).toBe(0);
   expect(migrated.acidShooterAnts).toBe(0);
   expect(migrated.scoutAnts).toBe(0);
+  expect(migrated.medicAnts).toBe(0);
   expect(migrated.captainAnts).toBe(0);
   expect(migrated.builderAnts).toBe(0);
   expect(migrated.nextEarthworkId).toBe(1);
@@ -185,6 +194,7 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
   expect(migrated.shieldHeadBrood).toBe(0);
   expect(migrated.acidShooterBrood).toBe(0);
   expect(migrated.scoutBrood).toBe(0);
+  expect(migrated.medicBrood).toBe(0);
   expect(migrated.captainBrood).toBe(0);
   expect(migrated.builderTraining).toBe(0);
   expect(migrated.renderedAnts).toBe(12);

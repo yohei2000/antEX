@@ -62,7 +62,8 @@ export function migrateColony(raw: unknown): ColonyState {
   next.shieldHeadAnts = Math.floor(clamp(Number(next.shieldHeadAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts)));
   next.acidShooterAnts = Math.floor(clamp(Number(next.acidShooterAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts - next.shieldHeadAnts)));
   next.scoutAnts = Math.floor(clamp(Number(next.scoutAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts - next.shieldHeadAnts - next.acidShooterAnts)));
-  next.captainAnts = Math.floor(clamp(Number(next.captainAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts - next.shieldHeadAnts - next.acidShooterAnts - next.scoutAnts)));
+  next.medicAnts = Math.floor(clamp(Number(next.medicAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts - next.shieldHeadAnts - next.acidShooterAnts - next.scoutAnts)));
+  next.captainAnts = Math.floor(clamp(Number(next.captainAnts) || 0, 0, Math.max(0, next.soldierAnts - next.heavySoldierAnts - next.shieldHeadAnts - next.acidShooterAnts - next.scoutAnts - next.medicAnts)));
   next.builderAnts = Math.floor(clamp(Number(next.builderAnts) || 0, 0, Math.max(0, next.antPopulation - next.soldierAnts)));
   next.woundedAnts = Math.floor(clamp(Number(next.woundedAnts) || 0, 0, next.antPopulation));
   next.nestLevel = Math.floor(clamp(Number(next.nestLevel) || 1, 1, 999));

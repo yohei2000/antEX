@@ -20,7 +20,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       antPopulation: sim.colony.antPopulation,
       renderedAnts: sim.ants.length,
       deployedSoldiers: sim.deployedSoldierCount(),
-      variantConfigCount: ["worker", "soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "captain", "builder"].filter((variant) =>
+      variantConfigCount: ["worker", "soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "medic", "captain", "builder"].filter((variant) =>
         Boolean(sim.getAntVariantConfig(variant)),
       ).length,
       variantCounts: sim.ants.reduce((counts: Record<string, number>, ant: any) => {
@@ -60,7 +60,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.antPopulation).toBe(12);
   expect(metrics.renderedAnts).toBe(11);
   expect(metrics.deployedSoldiers).toBe(0);
-  expect(metrics.variantConfigCount).toBe(8);
+  expect(metrics.variantConfigCount).toBe(9);
   expect(metrics.variantCounts.worker).toBe(11);
   expect(metrics.rivalAnts).toBe(0);
   expect(metrics.raidPhase).toBe("calm");
@@ -495,7 +495,7 @@ test("soldier tab deploys nest soldiers on player command", async ({ page }) => 
   expect(result.logText).toContain("兵隊出撃");
 });
 
-test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builders unlock without replacing existing ants", async ({ page }) => {
+test("heavy soldiers, shield heads, acid shooters, scouts, medics, captains, and builders unlock without replacing existing ants", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -505,7 +505,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
     sim.colony.lifetimeFood = 100000;
     sim.colony.antPopulation = 40;
     sim.colony.woundedAnts = 0;
-    sim.colony.soldierAnts = 10;
+    sim.colony.soldierAnts = 12;
     sim.colony.nestLevel = 3;
     sim.colony.territory = 4;
     sim.colony.upgrades.soldierTraining = 2;
@@ -514,6 +514,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
     const shieldBought = sim.buyUpgrade("shieldHeadBrood");
     const acidBought = sim.buyUpgrade("acidShooterBrood");
     const scoutBought = sim.buyUpgrade("scoutBrood");
+    const medicBought = sim.buyUpgrade("medicBrood");
     const captainBought = sim.buyUpgrade("captainBrood");
     const builderBought = sim.buyUpgrade("builderTraining");
     sim.computeDerived();
@@ -522,6 +523,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
     const surfaceShieldBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "shieldHead" && sim.shouldRenderAnt(ant)).length;
     const surfaceAcidBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "acidShooter" && sim.shouldRenderAnt(ant)).length;
     const surfaceScoutBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "scout" && sim.shouldRenderAnt(ant)).length;
+    const surfaceMedicBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "medic" && sim.shouldRenderAnt(ant)).length;
     const surfaceCaptainBeforeSortie = sim.ants.filter((ant: any) => ant.variant === "captain" && sim.shouldRenderAnt(ant)).length;
     const sortieLimitBefore = sim.sortieSoldierLimit();
     const availableSortieBefore = sim.availableSortieSoldiers();
@@ -536,7 +538,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
     }, {});
     const visibleRoleLabels = sim.roleLabelSystem.sprites.filter((sprite: any) => sprite.visible).length;
     const expectedRoleLabels = sim.ants.filter((ant: any) =>
-      sim.shouldRenderAnt(ant) && !ant.isRival && ["soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "captain", "builder"].includes(ant.variant),
+      sim.shouldRenderAnt(ant) && !ant.isRival && ["soldier", "heavySoldier", "shieldHead", "acidShooter", "scout", "medic", "captain", "builder"].includes(ant.variant),
     ).length;
     const roleLabelBands = [...sim.roleLabelSystem.textures.entries()].map(([, texture]: any) => {
       const sample = texture.image.getContext("2d").getImageData(24, 64, 1, 1).data;
@@ -547,6 +549,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
       shieldBought,
       acidBought,
       scoutBought,
+      medicBought,
       captainBought,
       builderBought,
       sameFirstObject: sim.ants[0] === first,
@@ -559,6 +562,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
       shieldCount: sim.colony.shieldHeadAnts,
       acidCount: sim.colony.acidShooterAnts,
       scoutCount: sim.colony.scoutAnts,
+      medicCount: sim.colony.medicAnts,
       captainCount: sim.colony.captainAnts,
       builderCount: sim.colony.builderAnts,
       builderTarget: sim.computeDerived().builderTarget,
@@ -566,6 +570,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
       surfaceShieldBeforeSortie,
       surfaceAcidBeforeSortie,
       surfaceScoutBeforeSortie,
+      surfaceMedicBeforeSortie,
       surfaceCaptainBeforeSortie,
       sortieStarted,
       deployedCount: deployed.length,
@@ -573,6 +578,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
       deployedShieldCount: deployed.filter((ant: any) => ant.variant === "shieldHead").length,
       deployedAcidCount: deployed.filter((ant: any) => ant.variant === "acidShooter").length,
       deployedScoutCount: deployed.filter((ant: any) => ant.variant === "scout").length,
+      deployedMedicCount: deployed.filter((ant: any) => ant.variant === "medic").length,
       deployedCaptainCount: deployed.filter((ant: any) => ant.variant === "captain").length,
       idleBuildersInNest: builders.every((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z) < sim.nest.radius * 0.6),
       surfaceBuilders: sim.renderAntBuffer.filter((ant: any) => ant.variant === "builder").length,
@@ -584,6 +590,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
       shieldConfig: sim.getAntVariantConfig("shieldHead"),
       acidConfig: sim.getAntVariantConfig("acidShooter"),
       scoutConfig: sim.getAntVariantConfig("scout"),
+      medicConfig: sim.getAntVariantConfig("medic"),
       captainConfig: sim.getAntVariantConfig("captain"),
       soldierConfig: sim.getAntVariantConfig("soldier"),
       builderConfig: sim.getAntVariantConfig("builder"),
@@ -600,6 +607,7 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
   expect(result.shieldBought).toBe(true);
   expect(result.acidBought).toBe(true);
   expect(result.scoutBought).toBe(true);
+  expect(result.medicBought).toBe(true);
   expect(result.captainBought).toBe(true);
   expect(result.builderBought).toBe(true);
   expect(result.sameFirstObject).toBe(true);
@@ -609,12 +617,14 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
   expect(result.counts.shieldHead).toBeGreaterThanOrEqual(1);
   expect(result.counts.acidShooter).toBeGreaterThanOrEqual(1);
   expect(result.counts.scout).toBeGreaterThanOrEqual(1);
+  expect(result.counts.medic).toBeGreaterThanOrEqual(1);
   expect(result.counts.captain).toBeGreaterThanOrEqual(1);
   expect(result.counts.builder).toBeGreaterThanOrEqual(1);
   expect(result.heavyCount).toBeGreaterThanOrEqual(1);
   expect(result.shieldCount).toBeGreaterThanOrEqual(1);
   expect(result.acidCount).toBeGreaterThanOrEqual(1);
   expect(result.scoutCount).toBeGreaterThanOrEqual(1);
+  expect(result.medicCount).toBeGreaterThanOrEqual(1);
   expect(result.captainCount).toBeGreaterThanOrEqual(1);
   expect(result.builderCount).toBe(2);
   expect(result.builderTarget).toBe(2);
@@ -622,13 +632,15 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
   expect(result.surfaceShieldBeforeSortie).toBe(0);
   expect(result.surfaceAcidBeforeSortie).toBe(0);
   expect(result.surfaceScoutBeforeSortie).toBe(0);
+  expect(result.surfaceMedicBeforeSortie).toBe(0);
   expect(result.surfaceCaptainBeforeSortie).toBe(0);
   expect(result.sortieStarted).toBe(true);
-  expect(result.deployedCount).toBe(5);
+  expect(result.deployedCount).toBe(6);
   expect(result.deployedHeavyCount).toBe(1);
   expect(result.deployedShieldCount).toBe(1);
   expect(result.deployedAcidCount).toBe(1);
   expect(result.deployedScoutCount).toBe(1);
+  expect(result.deployedMedicCount).toBe(1);
   expect(result.deployedCaptainCount).toBe(1);
   expect(result.idleBuildersInNest).toBe(true);
   expect(result.surfaceBuilders).toBe(0);
@@ -644,6 +656,9 @@ test("heavy soldiers, shield heads, acid shooters, scouts, captains, and builder
   expect(result.scoutConfig.forageEfficiency).toBe(0);
   expect(result.scoutConfig.attack).toBeLessThan(result.soldierConfig.attack);
   expect(result.scoutConfig.speed).toBeGreaterThan(result.soldierConfig.speed);
+  expect(result.medicConfig.forageEfficiency).toBe(0);
+  expect(result.medicConfig.attack).toBeLessThan(result.soldierConfig.attack);
+  expect(result.medicConfig.speed).toBeGreaterThan(result.heavyConfig.speed);
   expect(result.captainConfig.forageEfficiency).toBe(0);
   expect(result.captainConfig.attack).toBeLessThan(result.soldierConfig.attack);
   expect(result.captainConfig.hp).toBeGreaterThan(result.workerConfig.hp);
@@ -777,6 +792,112 @@ test("acid shooters stop to spray nearby rivals and apply a debuff", async ({ pa
   expect(result.clashStarted).toBe(false);
   expect(result.rivalFightCooldown).toBeGreaterThan(0);
   expect(result.alarmTrails).toBeGreaterThanOrEqual(1);
+});
+
+test("medic ants aid exhausted sortie soldiers without joining clashes", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 40;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 4;
+    sim.colony.heavySoldierAnts = 0;
+    sim.colony.shieldHeadAnts = 0;
+    sim.colony.acidShooterAnts = 0;
+    sim.colony.scoutAnts = 0;
+    sim.colony.medicAnts = 1;
+    sim.colony.captainAnts = 0;
+    sim.colony.nestLevel = 3;
+    sim.colony.upgrades.soldierTraining = 1;
+    sim.colony.upgrades.medicBrood = 1;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.soldierSortieCooldown = 0;
+    const sortieStarted = sim.startSoldierSortie();
+    const medic = sim.deployedSoldiers().find((ant: any) => ant.variant === "medic");
+    const patient = sim.deployedSoldiers().find((ant: any) => ant.variant === "soldier");
+    if (!medic || !patient) return { sortieStarted, medicFound: Boolean(medic), patientFound: Boolean(patient) };
+
+    medic.x = 0;
+    medic.z = 0;
+    medic.prevX = medic.x;
+    medic.prevZ = medic.z;
+    medic.state = "explore";
+    medic.sortieTimer = 30;
+    medic.medicAidCooldown = 0;
+    medic.medicAidTimer = 0;
+    medic.medicTargetId = null;
+    patient.x = 1.4;
+    patient.z = 0;
+    patient.prevX = patient.x;
+    patient.prevZ = patient.z;
+    patient.state = "explore";
+    patient.sortieTimer = 30;
+    patient.energy = 0.12;
+    patient.stamina = 0.12;
+    patient.stun = 0.35;
+    patient.wet = 0.5;
+    const beforeEnergy = patient.energy;
+
+    const chosen = sim.findMedicPatient(medic);
+    medic.updateMedic(1 / 60, sim, { x: 0, z: 0 });
+    sim.renderGame(1);
+    const aidEffect = sim.combatEffects.find((effect: any) => effect.type === "medicAid");
+    const renderState = medic.renderState(sim, 1);
+    const visibleMedicPouches = sim.antRenderer.medicPouchMesh.count;
+    const visibleRoleLabels = sim.roleLabelSystem.sprites.filter((sprite: any) => sprite.visible).length;
+
+    return {
+      sortieStarted,
+      medicFound: true,
+      patientFound: true,
+      chosenId: chosen?.id ?? null,
+      patientId: patient.id,
+      medicAction: medic.lastTacticalAction,
+      patientAction: patient.lastTacticalAction,
+      patientState: patient.state,
+      patientFleeTimer: patient.fleeTimer,
+      beforeEnergy,
+      afterEnergy: patient.energy,
+      afterStun: patient.stun,
+      afterWet: patient.wet,
+      medicTargetId: medic.medicTargetId,
+      medicPose: renderState.medicPose,
+      aidEffectCount: sim.combatEffects.filter((effect: any) => effect.type === "medicAid").length,
+      aidColor: aidEffect?.aidMaterial?.color?.getHexString?.() ?? "",
+      crossBarCount: aidEffect?.bars?.length ?? 0,
+      rescueTrails: sim.trails.filter((trail: any) => trail.kind === "rescue").length,
+      clashStarted: medic.state === "clash" || patient.state === "clash",
+      visibleMedicPouches,
+      visibleRoleLabels,
+    };
+  });
+
+  expect(result.sortieStarted).toBe(true);
+  expect(result.medicFound).toBe(true);
+  expect(result.patientFound).toBe(true);
+  expect(result.chosenId).toBe(result.patientId);
+  expect(result.medicAction).toBe("medicEvacuate");
+  expect(result.patientAction).toBe("medicEvacuated");
+  expect(result.patientState).toBe("flee");
+  expect(result.patientFleeTimer).toBeGreaterThan(0);
+  expect(result.afterEnergy).toBeGreaterThan(result.beforeEnergy);
+  expect(result.afterStun).toBeLessThan(0.35);
+  expect(result.afterWet).toBeLessThan(0.5);
+  expect(result.medicTargetId).toBe(result.patientId);
+  expect(result.medicPose).toBeGreaterThan(0.8);
+  expect(result.aidEffectCount).toBeGreaterThanOrEqual(1);
+  expect(result.aidColor).toBe("aee9c9");
+  expect(result.crossBarCount).toBe(2);
+  expect(result.rescueTrails).toBeGreaterThanOrEqual(1);
+  expect(result.clashStarted).toBe(false);
+  expect(result.visibleMedicPouches).toBeGreaterThanOrEqual(2);
+  expect(result.visibleRoleLabels).toBeGreaterThanOrEqual(1);
 });
 
 test("scout ants mark enemies so sortie ants prioritize the same target", async ({ page }) => {
@@ -2330,6 +2451,7 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
       shieldHeadBrood: 4,
       acidShooterBrood: 4,
       scoutBrood: 4,
+      medicBrood: 4,
       captainBrood: 3,
       nestGuard: 6,
       sentinelPosts: 4,

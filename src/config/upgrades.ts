@@ -203,6 +203,17 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
     requires: { ants: 24, nestLevel: 2, upgrades: { soldierTraining: 1 } },
   },
   {
+    id: "medicBrood",
+    branch: "defense",
+    name: "救護アリを育てる",
+    desc: "負傷した味方を見つけ、後方へ退避させる支援兵を育てる",
+    effect: "出撃時に消耗した味方を支援し、危険な前線から戻しやすくする",
+    max: 4,
+    baseCost: 240,
+    costScale: 1.9,
+    requires: { ants: 26, nestLevel: 2, upgrades: { soldierTraining: 1 } },
+  },
+  {
     id: "captainBrood",
     branch: "defense",
     name: "小隊長アリを育てる",
