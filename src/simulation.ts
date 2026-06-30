@@ -57,6 +57,7 @@ import { BARRACKS_QUEUE_CAP, BARRACKS_TRAINING_VARIANTS, getBarracksTrainingDef,
 import { getConstructionDef, isConstructionKind, normalizeConstructionKind } from "./config/construction";
 import { UPGRADE_BRANCHES, UPGRADE_DEFS, upgradeCost, upgradeLevel, upgradeName } from "./config/upgrades";
 import { ANT_VARIANTS, ANT_VARIANT_CONFIG, getAntVariantConfig, normalizeAntVariant } from "./config/variants";
+import { VoxelBuildingRenderer } from "./render/VoxelBuildingRenderer";
 import { clamp } from "./shared/math";
 import { createDefaultColony } from "./state/colony";
 import { computeDerivedColony } from "./state/derived";
@@ -90,6 +91,7 @@ const ui = {
   constructionTrailBtn: document.querySelector("#constructionTrailBtn"),
   constructionBarricadeBtn: document.querySelector("#constructionBarricadeBtn"),
   constructionWallBtn: document.querySelector("#constructionWallBtn"),
+  constructionWallConfirmBtn: document.querySelector("#constructionWallConfirmBtn"),
   constructionSentryBtn: document.querySelector("#constructionSentryBtn"),
   constructionStatus: document.querySelector("#constructionStatus"),
   constructionCrew: document.querySelector("#constructionCrew"),
@@ -3028,6 +3030,11 @@ class AntColony3D {
     this.assetService.preloadProceduralAssets();
     this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
+    this.voxelBuildingRenderer = new VoxelBuildingRenderer({
+      geometries: this.geometries,
+      materials: this.materials,
+      shadowsEnabled: this.quality.shadowQuality !== "off",
+    });
     this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP);
     this.squadRingSystem = new SquadRingSystem(this, DISPLAY_ANT_CAP);
     this.roleLabelSystem = new AntRoleLabelSystem(this, DISPLAY_ANT_CAP);
@@ -3089,6 +3096,7 @@ class AntColony3D {
       combatSlash: new THREE.CylinderGeometry(1, 1, 1, 6, 1),
       nestRim: new THREE.TorusGeometry(1, 0.11, 8, 36),
       soilPebble: new THREE.DodecahedronGeometry(1, 0),
+      earthworkVoxel: new THREE.BoxGeometry(1, 1, 1),
       terrainBump: new THREE.SphereGeometry(1, 12, 8),
       stoneRock: new THREE.DodecahedronGeometry(1, 0),
     };
@@ -3145,10 +3153,15 @@ class AntColony3D {
       corpseMark: new THREE.MeshBasicMaterial({ color: 0x5b271f, transparent: true, opacity: 0.34, depthWrite: false }),
       trailRescue: new THREE.MeshBasicMaterial({ color: 0x51b7a6, transparent: true, opacity: 0.22, depthWrite: false }),
       trailWater: new THREE.MeshBasicMaterial({ color: 0x55aee0, transparent: true, opacity: 0.18, depthWrite: false }),
-      earthworkTrail: new THREE.MeshBasicMaterial({ color: 0xb68b43, transparent: true, opacity: 0.3, depthWrite: false }),
-      earthworkBarricade: new THREE.MeshBasicMaterial({ color: 0x8a6335, transparent: true, opacity: 0.28, depthWrite: false }),
-      earthworkWall: new THREE.MeshBasicMaterial({ color: 0x6f4b29, transparent: true, opacity: 0.36, depthWrite: false }),
-      earthworkSentry: new THREE.MeshBasicMaterial({ color: 0x9b7442, transparent: true, opacity: 0.32, depthWrite: false }),
+      earthworkTrail: new THREE.MeshBasicMaterial({ color: 0x6e7948, transparent: true, opacity: 0.3, depthWrite: false }),
+      earthworkBarricade: new THREE.MeshBasicMaterial({ color: 0x5d4933, transparent: true, opacity: 0.3, depthWrite: false }),
+      earthworkWall: new THREE.MeshBasicMaterial({ color: 0x7a543a, transparent: true, opacity: 0.34, depthWrite: false }),
+      earthworkSentry: new THREE.MeshBasicMaterial({ color: 0x596a5c, transparent: true, opacity: 0.32, depthWrite: false }),
+      earthworkVoxel: new THREE.MeshStandardMaterial({ color: 0x7c6440, roughness: 0.94 }),
+      earthworkVoxelTrail: new THREE.MeshStandardMaterial({ color: 0xa89b63, roughness: 0.92 }),
+      earthworkVoxelBarricade: new THREE.MeshStandardMaterial({ color: 0x765336, roughness: 0.92 }),
+      earthworkVoxelWall: new THREE.MeshStandardMaterial({ color: 0x946848, roughness: 0.94 }),
+      earthworkVoxelSentry: new THREE.MeshStandardMaterial({ color: 0x7b8068, roughness: 0.94 }),
       wallPlacementLine: new THREE.MeshBasicMaterial({ color: 0xf0c857, transparent: true, opacity: 0.9, depthWrite: false }),
       wallPlacementMarker: new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 0.92, depthWrite: false }),
     };
@@ -3614,9 +3627,19 @@ class AntColony3D {
   }
 
   startConstruction(kind) {
-    if (kind === "earthWall") return this.beginConstructionPlacement(kind);
+    if (this.constructionUsesPlacement(kind)) return this.beginConstructionPlacement(kind);
     this.pendingConstructionKind = null;
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
     return this.commitConstruction(kind, this.constructionTarget(kind));
+  }
+
+  constructionUsesPlacement(kind) {
+    return kind === "earthWall" || kind === "lowBarricade" || kind === "sentryMound";
+  }
+
+  isPointPlacementConstruction(kind) {
+    return kind === "lowBarricade" || kind === "sentryMound";
   }
 
   beginConstructionPlacement(kind) {
@@ -3628,19 +3651,62 @@ class AntColony3D {
       return false;
     }
     this.pendingConstructionKind = normalizeConstructionKind(kind);
-    this.wallPlacementDraft = null;
+    this.wallPlacementDraft = kind === "earthWall" ? { points: [], hover: null } : null;
     this.clearWallPlacementPreview();
-    this.constructionMessage = `${def.label}の線指定中`;
+    this.constructionMessage = kind === "earthWall" ? `${def.label}の一筆線指定中` : `${def.label}の場所指定中 / 地面をクリック`;
     this.updateStats();
     return true;
   }
 
   confirmConstructionPlacement(start, end = null, kind = this.pendingConstructionKind) {
     if (!start || !isConstructionKind(kind)) return false;
+    if (kind === "earthWall") {
+      if (end) {
+        this.wallPlacementDraft = { points: [this.snapWallPlacementPoint(start), this.snapWallPlacementPoint(end)], hover: null };
+        return this.confirmWallPlacementDraft(kind);
+      }
+      this.wallPlacementDraft = { points: [this.snapWallPlacementPoint(start)], hover: null };
+      this.updateWallPlacementPreview();
+      return false;
+    }
     const target = this.constructionTarget(kind, end ? { start, end } : start);
     this.wallPlacementDraft = null;
     this.clearWallPlacementPreview();
+    if (!target) return false;
     return this.commitConstruction(kind, target);
+  }
+
+  confirmWallPlacementDraft(kind = this.pendingConstructionKind) {
+    if (kind !== "earthWall") return false;
+    const targets = this.wallPlacementTargetsFromDraft(false);
+    if (targets.length <= 0) {
+      this.constructionMessage = "土壁の頂点を2つ以上指定してください";
+      this.updateStats();
+      return false;
+    }
+    const checked = this.canStartConstruction(kind);
+    if (!checked.ok) {
+      this.constructionMessage = checked.reason;
+      this.updateStats();
+      return false;
+    }
+    const def = getConstructionDef(kind);
+    const tasks = [];
+    for (const target of targets) {
+      const task = this.createBuildTask(kind, target.x, target.z, target);
+      if (task) tasks.push(task);
+    }
+    this.pendingConstructionKind = null;
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
+    const metrics = this.wallPlacementMetrics(targets, this.wallPlacementPoints(false));
+    const strokeLabel = `一筆線 / 頂点${fmt(metrics.vertexCount, 0)} / 全長${fmt(metrics.totalLength, 0)}`;
+    this.constructionMessage = `${def.startMessage} / ${strokeLabel}`;
+    this.pushLog(`${def.startLog} / ${strokeLabel}`);
+    this.syncEarthworksToColony();
+    this.updateStats();
+    this.saveColony();
+    return tasks.length > 0;
   }
 
   commitConstruction(kind, target) {
@@ -3675,6 +3741,9 @@ class AntColony3D {
       const start = placementPoint.start ?? placementPoint;
       const end = placementPoint.end ?? placementPoint;
       return this.wallTargetFromLine(start, end);
+    }
+    if ((kind === "lowBarricade" || kind === "sentryMound") && placementPoint) {
+      return this.pointConstructionTarget(kind, placementPoint);
     }
     if (kind === "sentryMound") {
       const completed = this.earthworks.filter((earthwork) => earthwork.kind === "sentryMound" && earthwork.strength > 0.82).length;
@@ -3733,25 +3802,8 @@ class AntColony3D {
   }
 
   addEarthwork(config) {
-    const material =
-      config.kind === "earthWall" ? this.materials.earthworkWall.clone() :
-      config.kind === "lowBarricade" ? this.materials.earthworkBarricade.clone() :
-      config.kind === "sentryMound" ? this.materials.earthworkSentry.clone() :
-      this.materials.earthworkTrail.clone();
-    const group = new THREE.Group();
-    group.position.set(config.x, 0, config.z);
-    group.rotation.y = config.rotation ?? 0;
-    const mesh = new THREE.Mesh(this.geometries.trailCircle, material);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(0, config.kind === "earthWall" ? 0.22 : config.kind === "sentryMound" ? 0.12 : config.kind === "lowBarricade" ? 0.075 : 0.05, 0);
-    if (config.kind === "earthWall") mesh.scale.set(config.radius * 1.16, config.radius * 0.14, 1);
-    else if (config.kind === "sentryMound") mesh.scale.set(config.radius * 0.72, config.radius * 0.5, 1);
-    else if (config.kind === "lowBarricade") mesh.scale.set(config.radius * 0.95, config.radius * 0.28, 1);
-    else mesh.scale.set(config.radius * 1.35, config.radius * 0.36, 1);
-    mesh.visible = false;
-    group.add(mesh);
-    const details = this.createEarthworkDetails(config.kind, config.radius);
-    for (const detail of details) group.add(detail.mesh);
+    const voxelView = this.voxelBuildingRenderer.createEarthwork(config);
+    const { group, footprint: mesh } = voxelView;
     this.scene.add(group);
     this.dynamicObjects.add(group);
     const earthwork = {
@@ -3767,90 +3819,11 @@ class AntColony3D {
       rotation: config.rotation ?? 0,
       group,
       mesh,
-      details,
+      voxelView,
     };
+    this.voxelBuildingRenderer.update(earthwork.voxelView, earthwork.kind, earthwork.radius, earthwork.strength);
     this.earthworks.push(earthwork);
     return earthwork;
-  }
-
-  createEarthworkDetails(kind, radius) {
-    const details = [];
-    if (kind === "earthWall") {
-      const count = 54;
-      for (let i = 0; i < count; i += 1) {
-        const t = count === 1 ? 0.5 : i / (count - 1);
-        const layer = i % 5;
-        const localX = (t - 0.5) * radius * 2.12 + Math.sin(i * 1.21) * 0.24;
-        const localZ = (layer - 2) * radius * 0.028 + Math.cos(i * 0.77) * 0.08;
-        const scale = 0.24 + (layer % 3) * 0.035 + (i % 5) * 0.014;
-        const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
-        mesh.position.set(localX, 0.25 + layer * 0.095 + scale * 0.32, localZ);
-        mesh.scale.set(scale * 1.1, scale * 1.55, scale * 0.7);
-        mesh.rotation.set(Math.sin(i * 0.9) * 0.16, (i * 1.67) % Math.PI, Math.cos(i * 1.1) * 0.12);
-        mesh.castShadow = this.quality.shadowQuality !== "off";
-        mesh.receiveShadow = this.quality.shadowQuality !== "off";
-        mesh.visible = false;
-        details.push({ mesh, threshold: 0.05 + t * 0.88 });
-      }
-      return details;
-    }
-    if (kind === "sentryMound") {
-      const count = 22;
-      for (let i = 0; i < count; i += 1) {
-        const ring = i < 6 ? 0.22 : i < 14 ? 0.46 : 0.72;
-        const angle = i * 2.399 + ring * 1.7;
-        const jitter = 0.78 + ((i * 37) % 11) * 0.018;
-        const localX = Math.cos(angle) * radius * ring * jitter;
-        const localZ = Math.sin(angle) * radius * ring * jitter * 0.72;
-        const scale = 0.24 + (1 - ring) * 0.22 + (i % 4) * 0.025;
-        const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
-        mesh.position.set(localX, 0.16 + (1 - ring) * 0.32 + scale * 0.32, localZ);
-        mesh.scale.set(scale * 1.08, scale * (1.22 + (1 - ring) * 0.58), scale * 0.86);
-        mesh.rotation.set(Math.sin(i * 0.8) * 0.15, (i * 1.41) % Math.PI, Math.cos(i * 1.2) * 0.12);
-        mesh.castShadow = this.quality.shadowQuality !== "off";
-        mesh.receiveShadow = this.quality.shadowQuality !== "off";
-        mesh.visible = false;
-        details.push({ mesh, threshold: 0.08 + (i / count) * 0.72 });
-      }
-      return details;
-    }
-    if (kind === "lowBarricade") {
-      const count = 26;
-      for (let i = 0; i < count; i += 1) {
-        const t = count === 1 ? 0.5 : i / (count - 1);
-        const arc = -1.18 + t * 2.36;
-        const lane = i % 3;
-        const localX = Math.sin(arc) * radius * (0.78 + lane * 0.035);
-        const localZ = Math.cos(arc) * radius * 0.32 + (lane - 1) * 0.34;
-        const scale = 0.28 + (i % 5) * 0.035;
-        const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
-        mesh.position.set(localX, 0.12 + scale * 0.18, localZ);
-        mesh.scale.set(scale * 1.15, scale * 0.7, scale);
-        mesh.rotation.set(Math.sin(i * 1.3) * 0.32, (i * 2.17) % Math.PI, Math.cos(i * 0.9) * 0.28);
-        mesh.castShadow = this.quality.shadowQuality !== "off";
-        mesh.receiveShadow = this.quality.shadowQuality !== "off";
-        mesh.visible = false;
-        details.push({ mesh, threshold: 0.08 + t * 0.86 });
-      }
-      return details;
-    }
-    const count = 30;
-    for (let i = 0; i < count; i += 1) {
-      const t = count === 1 ? 0.5 : i / (count - 1);
-      const side = i % 2 === 0 ? -1 : 1;
-      const localX = (t - 0.5) * radius * 2.15 + Math.sin(i * 1.7) * 0.42;
-      const localZ = side * (radius * 0.26 + (i % 4) * 0.11);
-      const scale = 0.16 + (i % 4) * 0.03;
-      const mesh = new THREE.Mesh(this.geometries.soilPebble, this.materials.nestLoose);
-      mesh.position.set(localX, 0.06 + scale * 0.12, localZ);
-      mesh.scale.set(scale * 1.15, scale * 0.46, scale * 0.9);
-      mesh.rotation.set(Math.sin(i * 0.8) * 0.16, (i * 1.91) % Math.PI, Math.cos(i * 1.2) * 0.12);
-      mesh.castShadow = this.quality.shadowQuality !== "off";
-      mesh.receiveShadow = this.quality.shadowQuality !== "off";
-      mesh.visible = false;
-      details.push({ mesh, threshold: 0.04 + t * 0.9 });
-    }
-    return details;
   }
 
   normalizeBuildTaskClaims(task) {
@@ -4022,18 +3995,8 @@ class AntColony3D {
 
   updateEarthworks() {
     for (const earthwork of this.earthworks ?? []) {
-      if (!earthwork.mesh) continue;
       earthwork.strength = clamp(earthwork.progress / Math.max(earthwork.maxProgress, 0.001), 0, 1);
-      earthwork.mesh.visible = earthwork.strength > 0.02;
-      earthwork.mesh.material.opacity = (earthwork.kind === "earthWall" ? 0.42 : earthwork.kind === "sentryMound" ? 0.34 : earthwork.kind === "lowBarricade" ? 0.28 : 0.3) * Math.max(0.15, earthwork.strength);
-      const scale = 0.78 + earthwork.strength * 0.22;
-      if (earthwork.kind === "earthWall") earthwork.mesh.scale.set(earthwork.radius * 1.16 * scale, earthwork.radius * 0.14 * scale, 1);
-      else if (earthwork.kind === "sentryMound") earthwork.mesh.scale.set(earthwork.radius * 0.72 * scale, earthwork.radius * 0.5 * scale, 1);
-      else if (earthwork.kind === "lowBarricade") earthwork.mesh.scale.set(earthwork.radius * 0.95 * scale, earthwork.radius * 0.28 * scale, 1);
-      else earthwork.mesh.scale.set(earthwork.radius * 1.35 * scale, earthwork.radius * 0.36 * scale, 1);
-      for (const detail of earthwork.details ?? []) {
-        detail.mesh.visible = earthwork.strength >= detail.threshold;
-      }
+      if (earthwork.voxelView) this.voxelBuildingRenderer.update(earthwork.voxelView, earthwork.kind, earthwork.radius, earthwork.strength);
     }
     this.buildTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
   }
@@ -4234,6 +4197,7 @@ class AntColony3D {
     ui.constructionTrailBtn?.addEventListener("click", () => this.startConstruction("trailReinforce"));
     ui.constructionBarricadeBtn?.addEventListener("click", () => this.startConstruction("lowBarricade"));
     ui.constructionWallBtn?.addEventListener("click", () => this.startConstruction("earthWall"));
+    ui.constructionWallConfirmBtn?.addEventListener("click", () => this.confirmWallPlacementDraft());
     ui.constructionSentryBtn?.addEventListener("click", () => this.startConstruction("sentryMound"));
     ui.constructionProgressList?.addEventListener("click", (event) => {
       const button = event.target.closest("[data-build-task][data-crew-delta]");
@@ -5589,10 +5553,7 @@ class AntColony3D {
     const point = this.screenToGround(event.clientX, event.clientY);
     if (!point) return;
     this.pointerStart = { screenX: event.clientX, screenY: event.clientY, ...point };
-    if (this.pendingConstructionKind === "earthWall") {
-      this.wallPlacementDraft = { start: point, end: point };
-      this.updateWallPlacementPreview();
-    }
+    if (this.pendingConstructionKind === "earthWall" && !this.wallPlacementDraft) this.wallPlacementDraft = { points: [], hover: null };
   }
 
   onPointerMove(event) {
@@ -5612,12 +5573,18 @@ class AntColony3D {
     const dy = event.clientY - previous.y;
     if (Math.abs(dx) + Math.abs(dy) > 2) this.dragMoved = true;
 
-    if (this.pendingConstructionKind === "earthWall" && this.wallPlacementDraft?.start) {
+    if (this.pendingConstructionKind === "earthWall") {
       const point = this.screenToGround(event.clientX, event.clientY);
       if (point) {
-        this.wallPlacementDraft.end = point;
+        if (!this.wallPlacementDraft) this.wallPlacementDraft = { points: [], hover: null };
+        this.wallPlacementDraft.hover = this.snapWallPlacementPoint(point);
         this.updateWallPlacementPreview();
       }
+      return;
+    }
+    if (this.isPointPlacementConstruction(this.pendingConstructionKind)) {
+      const point = this.screenToGround(event.clientX, event.clientY);
+      if (point) this.updateConstructionPlacementPreview(point);
       return;
     }
 
@@ -5629,8 +5596,7 @@ class AntColony3D {
     event.preventDefault();
     const point = this.screenToGround(event.clientX, event.clientY);
     if (point && this.pendingConstructionKind === "earthWall") {
-      const start = this.wallPlacementDraft?.start ?? point;
-      this.confirmConstructionPlacement(start, point, this.pendingConstructionKind);
+      if (!this.dragMoved) this.addWallPlacementVertex(point);
     } else if (point && !this.dragMoved && this.pendingConstructionKind) {
       this.confirmConstructionPlacement(point, null, this.pendingConstructionKind);
     } else if (point && !this.dragMoved) {
@@ -6364,30 +6330,15 @@ class AntColony3D {
 
   wallTargetFromLine(start, end) {
     if (!start || !end) return null;
-    const limits = this.earthWallLineLimits();
     const dx = end.x - start.x;
     const dz = end.z - start.z;
     const rawLength = Math.hypot(dx, dz);
+    if (rawLength < 1.6) return null;
     const fallbackAngle = Math.atan2(start.z - this.nest.z, start.x - this.nest.x) + Math.PI / 2;
     const angle = rawLength > 0.001 ? Math.atan2(dz, dx) : fallbackAngle;
-    const length = clamp(rawLength, limits.minLength, limits.maxLength);
-    let midX = (start.x + end.x) / 2;
-    let midZ = (start.z + end.z) / 2;
-    const nestDx = midX - this.nest.x;
-    const nestDz = midZ - this.nest.z;
-    const nestDistance = Math.hypot(nestDx, nestDz) || 1;
-    const minNestDistance = this.nest.radius + 7.5;
-    if (nestDistance < minNestDistance) {
-      const pushX = Math.abs(nestDx) + Math.abs(nestDz) > 0.001 ? nestDx / nestDistance : Math.cos(angle + Math.PI / 2);
-      const pushZ = Math.abs(nestDx) + Math.abs(nestDz) > 0.001 ? nestDz / nestDistance : Math.sin(angle + Math.PI / 2);
-      midX = this.nest.x + pushX * minNestDistance;
-      midZ = this.nest.z + pushZ * minNestDistance;
-    }
-    const d = Math.hypot(midX, midZ) || 1;
-    const maxCenterDistance = this.worldRadius - length * 0.55 - 3;
-    const centerDistance = Math.min(d, Math.max(12, maxCenterDistance));
-    const x = (midX / d) * centerDistance;
-    const z = (midZ / d) * centerDistance;
+    const length = rawLength;
+    const x = (start.x + end.x) / 2;
+    const z = (start.z + end.z) / 2;
     const radius = length / 2.32;
     return {
       x,
@@ -6399,47 +6350,235 @@ class AntColony3D {
     };
   }
 
-  updateWallPlacementPreview() {
-    this.clearWallPlacementPreview();
-    if (!this.wallPlacementDraft?.start || !this.wallPlacementDraft?.end) return;
-    const target = this.wallTargetFromLine(this.wallPlacementDraft.start, this.wallPlacementDraft.end);
-    if (!target) return;
-    const material = this.materials.earthworkWall.clone();
-    material.opacity = 0.58;
-    const mesh = new THREE.Mesh(this.geometries.trailCircle, material);
+  pointConstructionTarget(kind, placementPoint) {
+    const def = getConstructionDef(kind);
+    const point = placementPoint.start ?? placementPoint;
+    const x = point.x;
+    const z = point.z;
+    const rotation = Math.atan2(z - this.nest.z, x - this.nest.x);
+    return { x, z, radius: def.targetRadius, maxProgress: def.buildCost, rotation };
+  }
+
+  wallPlacementPoints(includeHover = false) {
+    const draft = this.wallPlacementDraft;
+    if (!draft) return [];
+    if (Array.isArray(draft.points)) {
+      const points = draft.points.filter(Boolean).map((point) => ({ x: point.x, z: point.z }));
+      if (includeHover && draft.hover && points.length > 0 && distance2(points[points.length - 1].x, points[points.length - 1].z, draft.hover.x, draft.hover.z) > 0.6) {
+        points.push({ x: draft.hover.x, z: draft.hover.z });
+      }
+      return points;
+    }
+    const points = [];
+    if (draft.start) points.push({ x: draft.start.x, z: draft.start.z });
+    if (draft.end && (!draft.start || distance2(draft.start.x, draft.start.z, draft.end.x, draft.end.z) > 0.6)) points.push({ x: draft.end.x, z: draft.end.z });
+    return points;
+  }
+
+  wallPlacementTargetsFromDraft(includeHover = false) {
+    return this.wallTargetsFromPoints(this.wallPlacementPoints(includeHover));
+  }
+
+  wallTargetsFromPoints(points) {
+    const targets = [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index];
+      const end = points[index + 1];
+      targets.push(...this.wallTargetsFromSegment(start, end));
+    }
+    return targets;
+  }
+
+  wallTargetsFromSegment(start, end) {
+    if (!start || !end) return [];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const rawLength = Math.hypot(dx, dz);
+    if (rawLength < 1.6) return [];
+    const limits = this.earthWallLineLimits();
+    const chunkCount = Math.max(1, Math.ceil(rawLength / limits.maxLength));
+    const targets = [];
+    for (let index = 0; index < chunkCount; index += 1) {
+      const from = index / chunkCount;
+      const to = (index + 1) / chunkCount;
+      const chunkStart = { x: start.x + dx * from, z: start.z + dz * from };
+      const chunkEnd = { x: start.x + dx * to, z: start.z + dz * to };
+      const target = this.wallTargetFromLine(chunkStart, chunkEnd);
+      if (target) targets.push(target);
+    }
+    return targets;
+  }
+
+  wallPlacementTotalCost(targets = this.wallPlacementTargetsFromDraft(false)) {
+    return targets.reduce((sum, target) => sum + (target?.maxProgress ?? 0), 0);
+  }
+
+  wallPlacementTotalLength(targets = this.wallPlacementTargetsFromDraft(false)) {
+    return targets.reduce((sum, target) => sum + (target?.length ?? 0), 0);
+  }
+
+  wallPlacementMetrics(targets = this.wallPlacementTargetsFromDraft(false), points = this.wallPlacementPoints(false)) {
+    return {
+      vertexCount: points.length,
+      targetCount: targets.length,
+      totalLength: this.wallPlacementTotalLength(targets),
+      cost: this.wallPlacementTotalCost(targets),
+    };
+  }
+
+  addWallPlacementVertex(point) {
+    if (this.pendingConstructionKind !== "earthWall" || !point) return false;
+    if (!this.wallPlacementDraft || !Array.isArray(this.wallPlacementDraft.points)) {
+      this.wallPlacementDraft = { points: [], hover: null };
+    }
+    const snapped = this.snapWallPlacementPoint(point);
+    const points = this.wallPlacementDraft.points;
+    const last = points[points.length - 1];
+    if (!last || distance2(last.x, last.z, snapped.x, snapped.z) > 0.9) {
+      points.push(snapped);
+    } else {
+      points[points.length - 1] = snapped;
+    }
+    this.wallPlacementDraft.hover = snapped;
+    this.updateWallPlacementPreview();
+    return true;
+  }
+
+  snapWallPlacementPoint(point) {
+    if (!point) return point;
+    const snapDistance = Math.max(2.8, getConstructionDef("earthWall").targetRadius * 0.22);
+    let best = { point: { x: point.x, z: point.z }, distance: snapDistance };
+    const consider = (candidate) => {
+      if (!candidate) return;
+      const d = distance2(point.x, point.z, candidate.x, candidate.z);
+      if (d < best.distance) best = { point: { x: candidate.x, z: candidate.z }, distance: d };
+    };
+
+    for (const draftPoint of this.wallPlacementPoints(false)) consider(draftPoint);
+
+    for (const earthwork of this.earthworks ?? []) {
+      if (earthwork.kind !== "earthWall") continue;
+      const metrics = this.earthWallMetrics(earthwork);
+      const local = this.earthWallLocal(earthwork, point.x, point.z);
+      const along = clamp(local.along, -metrics.halfLength, metrics.halfLength);
+      if (Math.abs(local.across) <= snapDistance && Math.abs(local.along) <= metrics.halfLength + snapDistance) {
+        consider(this.earthWallWorldPoint(earthwork, along, 0));
+      }
+      consider(this.earthWallWorldPoint(earthwork, -metrics.halfLength, 0));
+      consider(this.earthWallWorldPoint(earthwork, metrics.halfLength, 0));
+    }
+
+    return best.point;
+  }
+
+  constructionPreviewMaterial(kind, opacity = 0.52) {
+    const source =
+      kind === "earthWall" ? this.materials.earthworkWall :
+      kind === "sentryMound" ? this.materials.earthworkSentry :
+      kind === "lowBarricade" ? this.materials.earthworkBarricade :
+      this.materials.earthworkTrail;
+    const material = source.clone();
+    material.transparent = true;
+    material.opacity = opacity;
+    material.depthWrite = false;
+    return material;
+  }
+
+  createConstructionPlacementFootprint(kind, target, opacity = 0.52) {
+    const mesh = new THREE.Mesh(this.geometries.trailCircle, this.constructionPreviewMaterial(kind, opacity));
+    mesh.name = `${kind}-placement-footprint`;
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(target.x, 0.32, target.z);
-    mesh.rotation.y = target.rotation;
-    mesh.scale.set(target.radius * 1.16, target.radius * 0.14, 1);
-    this.scene.add(mesh);
-    this.wallPlacementPreview = mesh;
-    this.wallPlacementGuide = this.createWallPlacementGuide(target);
-    this.scene.add(this.wallPlacementGuide);
-    this.constructionMessage = `土壁の線指定中 / 工数 ${fmt(target.maxProgress, 1)}`;
+    mesh.rotation.y = kind === "earthWall" ? -target.rotation : target.rotation;
+    if (kind === "earthWall") mesh.scale.set(target.radius * 1.16, target.radius * 0.14, 1);
+    else if (kind === "sentryMound") mesh.scale.set(target.radius * 0.72, target.radius * 0.5, 1);
+    else if (kind === "lowBarricade") mesh.scale.set(target.radius * 0.95, target.radius * 0.28, 1);
+    else mesh.scale.set(target.radius * 1.35, target.radius * 0.36, 1);
+    return mesh;
+  }
+
+  updateConstructionPlacementPreview(point) {
+    const kind = this.pendingConstructionKind;
+    if (!this.isPointPlacementConstruction(kind) || !point) return;
+    this.clearWallPlacementPreview();
+    const target = this.constructionTarget(kind, point);
+    if (!target) return;
+    const group = new THREE.Group();
+    group.name = "construction-placement-preview";
+    group.add(this.createConstructionPlacementFootprint(kind, target, 0.5));
+
+    const marker = new THREE.Mesh(this.geometries.wallPlacementMarker, this.materials.wallPlacementMarker.clone());
+    marker.name = `${kind}-placement-point`;
+    marker.position.set(target.x, 0.76, target.z);
+    marker.scale.set(0.9, 0.22, 0.9);
+    marker.renderOrder = 21;
+    group.add(marker);
+
+    this.scene.add(group);
+    this.wallPlacementPreview = group;
+    const def = getConstructionDef(kind);
+    this.constructionMessage = `${def.label}の場所指定中 / クリックで発注 / 工数 ${fmt(def.buildCost, 1)}`;
     this.updateStats();
   }
 
-  createWallPlacementGuide(target) {
+  updateWallPlacementPreview() {
+    this.clearWallPlacementPreview();
+    const targets = this.wallPlacementTargetsFromDraft(true);
+    const fixedTargets = this.wallPlacementTargetsFromDraft(false);
+    const points = this.wallPlacementPoints(true);
+    if (points.length <= 0) {
+      this.constructionMessage = "土壁の開始点をクリック";
+      this.updateStats();
+      return;
+    }
+
+    const previewGroup = new THREE.Group();
+    previewGroup.name = "earth-wall-placement-preview";
+    for (const target of targets) {
+      const mesh = this.createConstructionPlacementFootprint("earthWall", target, 0.52);
+      mesh.name = "earth-wall-placement-footprint";
+      previewGroup.add(mesh);
+    }
+    this.scene.add(previewGroup);
+    this.wallPlacementPreview = previewGroup;
+
+    this.wallPlacementGuide = this.createWallPlacementGuide(points);
+    this.scene.add(this.wallPlacementGuide);
+    const fixedPoints = this.wallPlacementPoints(false);
+    const metrics = this.wallPlacementMetrics(fixedTargets, fixedPoints);
+    this.constructionMessage = metrics.targetCount > 0
+      ? `土壁の一筆線を作成中 / 頂点 ${fmt(metrics.vertexCount, 0)} / 全長 ${fmt(metrics.totalLength, 0)} / 工数 ${fmt(metrics.cost, 1)}`
+      : "土壁の開始点を指定中 / 次のクリックで一筆線を伸ばす";
+    this.updateStats();
+  }
+
+  createWallPlacementGuide(points = []) {
     const group = new THREE.Group();
     group.name = "earth-wall-placement-guide";
-    const line = new THREE.Mesh(this.geometries.wallPlacementLine, this.materials.wallPlacementLine.clone());
-    line.name = "earth-wall-placement-line";
-    line.position.set(target.x, 0.68, target.z);
-    line.rotation.y = target.rotation;
-    line.scale.set(target.length, 0.08, 0.42);
-    line.renderOrder = 20;
-    group.add(line);
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index];
+      const end = points[index + 1];
+      if (distance2(start.x, start.z, end.x, end.z) < 1.6) continue;
+      const dx = end.x - start.x;
+      const dz = end.z - start.z;
+      const length = Math.hypot(dx, dz);
+      const line = new THREE.Mesh(this.geometries.wallPlacementLine, this.materials.wallPlacementLine.clone());
+      line.name = "earth-wall-placement-line";
+      line.position.set((start.x + end.x) / 2, 0.68 + index * 0.006, (start.z + end.z) / 2);
+      line.rotation.y = -Math.atan2(dz, dx);
+      line.scale.set(length, 0.08, 0.42);
+      line.renderOrder = 20;
+      group.add(line);
+    }
 
-    const dx = Math.cos(target.rotation) * target.length * 0.5;
-    const dz = Math.sin(target.rotation) * target.length * 0.5;
-    for (const sign of [-1, 1]) {
+    points.forEach((point, index) => {
       const marker = new THREE.Mesh(this.geometries.wallPlacementMarker, this.materials.wallPlacementMarker.clone());
-      marker.name = sign < 0 ? "earth-wall-placement-start" : "earth-wall-placement-end";
-      marker.position.set(target.x + dx * sign, 0.76, target.z + dz * sign);
-      marker.scale.set(0.92, 0.22, 0.92);
+      marker.name = index === 0 ? "earth-wall-placement-start" : index === points.length - 1 ? "earth-wall-placement-end" : "earth-wall-placement-vertex";
+      marker.position.set(point.x, 0.76, point.z);
+      marker.scale.set(index === 0 ? 1.02 : 0.86, 0.22, index === 0 ? 1.02 : 0.86);
       marker.renderOrder = 21;
       group.add(marker);
-    }
+    });
 
     return group;
   }
@@ -6907,18 +7046,42 @@ class AntColony3D {
     const detail = getConstructionDef(kind);
     const isPending = this.pendingConstructionKind === kind;
     button.disabled = !commandState.ok && !isPending;
-    const draftTarget = isPending && this.wallPlacementDraft?.start && this.wallPlacementDraft?.end
-      ? this.wallTargetFromLine(this.wallPlacementDraft.start, this.wallPlacementDraft.end)
-      : null;
-    const draftCost = draftTarget?.maxProgress ?? detail.buildCost;
-    button.title = isPending ? `${detail.command}: 線指定中 / ドラッグで長さ指定 / 工数 ${fmt(draftCost, 1)}` : this.constructionButtonTitle(kind, commandState);
+    const draftTargets = isPending && kind === "earthWall" ? this.wallPlacementTargetsFromDraft(false) : [];
+    const draftMetrics = isPending && kind === "earthWall" ? this.wallPlacementMetrics(draftTargets, this.wallPlacementPoints(false)) : null;
+    const draftCost = draftMetrics && draftMetrics.targetCount > 0 ? draftMetrics.cost : detail.buildCost;
+    button.title = isPending && kind === "earthWall"
+      ? `${detail.command}: 一筆書きで土壁を指定 / クリックで頂点追加 / 全長 ${fmt(draftMetrics?.totalLength ?? 0, 0)} / 工数 ${fmt(draftCost, 1)}`
+      : isPending
+        ? `${detail.command}: 地面をクリックして設置場所を指定 / 工数 ${fmt(detail.buildCost, 1)}`
+        : this.constructionButtonTitle(kind, commandState);
     const main = button.querySelector(".button-main");
     const sub = button.querySelector(".button-sub");
     if (main) main.textContent = detail.command;
     if (sub) {
       const costLabel = kind === "earthWall" ? `基準工数${fmt(detail.buildCost, 1)} / 長さで変動` : `工数${fmt(detail.buildCost, 1)}`;
-      sub.textContent = isPending ? `線指定中 / 工数${fmt(draftCost, 1)} / 長さで変動` : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
+      sub.textContent = isPending && kind === "earthWall"
+        ? `一筆線指定中 / ${fmt(draftMetrics?.vertexCount ?? 0, 0)}点 / 工数${fmt(draftCost, 1)}`
+        : isPending
+          ? `場所指定中 / 工数${fmt(detail.buildCost, 1)} / クリックで発注`
+          : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
     }
+  }
+
+  updateWallPlacementConfirmButton() {
+    const button = ui.constructionWallConfirmBtn;
+    if (!button) return;
+    const isPending = this.pendingConstructionKind === "earthWall";
+    const targets = isPending ? this.wallPlacementTargetsFromDraft(false) : [];
+    const metrics = this.wallPlacementMetrics(targets, this.wallPlacementPoints(false));
+    button.hidden = !isPending;
+    button.disabled = metrics.targetCount <= 0;
+    button.title = metrics.targetCount > 0
+      ? `土壁を確定: 一筆線 / 全長 ${fmt(metrics.totalLength, 0)} / 工数 ${fmt(metrics.cost, 1)}`
+      : "土壁の頂点を2つ以上指定";
+    const main = button.querySelector(".button-main");
+    const sub = button.querySelector(".button-sub");
+    if (main) main.textContent = metrics.targetCount > 0 ? "土壁の一筆線を決定" : "土壁の開始点を指定";
+    if (sub) sub.textContent = metrics.targetCount > 0 ? `${fmt(metrics.vertexCount, 0)}点 / 全長${fmt(metrics.totalLength, 0)} / 工数${fmt(metrics.cost, 1)}` : "地面をクリックして開始点を置く";
   }
 
   constructionAssignees(task) {
@@ -7147,7 +7310,9 @@ class AntColony3D {
     ui.colonySummary.textContent =
       `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 盾頭 ${fmt(d.shieldHeads, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 斥候 ${fmt(d.scouts, 0)} / 小隊長 ${fmt(d.captains, 0)} / 土木 ${fmt(d.builders, 0)}`;
     ui.growthFill.style.width = `${Math.round(activeBarracksProgress * 100)}%`;
-    const pendingConstructionLabel = this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 線指定中` : "";
+    const pendingConstructionLabel = this.pendingConstructionKind === "earthWall"
+      ? `${this.constructionLabel(this.pendingConstructionKind)} 一筆線指定中`
+      : this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 場所指定中` : "";
     ui.activeToolLabel.textContent = pendingConstructionLabel || (this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);
     if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);
     if (ui.constructionActive) ui.constructionActive.textContent = fmt(activeConstruction, 0);
@@ -7156,6 +7321,7 @@ class AntColony3D {
     this.updateConstructionCommandButton(ui.constructionBarricadeBtn, "lowBarricade", barricadeCommand);
     this.updateConstructionCommandButton(ui.constructionWallBtn, "earthWall", wallCommand);
     this.updateConstructionCommandButton(ui.constructionSentryBtn, "sentryMound", sentryCommand);
+    this.updateWallPlacementConfirmButton();
     if (ui.constructionStatus) {
       const activeProgress = this.buildTasks
         .filter((task) => task.progress < task.maxProgress)
