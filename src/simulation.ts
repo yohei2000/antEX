@@ -2289,6 +2289,7 @@ class RivalAnt3D {
     if (this.defeated || this.leftRaid || this.retreat > 0) return false;
     let resolved = false;
     for (const ant of sim.ants) {
+      if (!sim.shouldRenderAnt(ant)) continue;
       if (ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0 || ant.stun > 0) continue;
       const contact = RIVAL_CONTACT_RADIUS + this.scale * 0.52;
       const dx = ant.x - this.x;
@@ -3130,6 +3131,7 @@ class AntColony3D {
     this.colonyCorpses = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.raidNotice = { message: "", kind: "warning", timer: 0 };
+    this.raidNestBreachEvents = 0;
     this.constructionMessage = "待機";
     this.renderAntBuffer = [];
     this.soldierSortieCooldown = 0;
@@ -4412,6 +4414,7 @@ class AntColony3D {
     for (const rival of this.rivalAnts) this.antRenderer?.releaseRenderObject(rival);
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
+    this.raidNestBreachEvents = 0;
     this.constructionMessage = "待機";
     this.pendingConstructionKind = null;
     this.wallPlacementDraft = null;
@@ -5857,6 +5860,7 @@ class AntColony3D {
     raid.enemyCasualties = 0;
     raid.startFallenAnts = Math.floor(this.colony.fallenAnts ?? 0);
     raid.lastOutcome = "warning";
+    this.raidNestBreachEvents = 0;
     const hasIntel = this.hasRaidDirectionIntel();
     this.emitRaidSignal(raid, 0.88);
     if (hasIntel) {
@@ -5871,6 +5875,7 @@ class AntColony3D {
   beginRaid() {
     const raid = this.ensureRaidState();
     this.clearRaidRivals();
+    this.raidNestBreachEvents = 0;
     const count = Math.floor(clamp(raid.activeCount || this.raidEnemyCount(), 1, RAID_RIVAL_CAP));
     for (let i = 0; i < count; i += 1) {
       const rival = new RivalAnt3D(i + 1, this, {
@@ -6026,16 +6031,20 @@ class AntColony3D {
       this.showRaidNotice(`敵アリ撃退: 味方死亡${deaths} / 敵撃破${raid.enemyCasualties}`, "repelled");
     } else {
       const defense = this.computeDerived().defensePower;
+      const nestWasBreached = (this.raidNestBreachEvents ?? 0) > 0;
       const loss = Math.min(this.colony.food, Math.max(2, count * 4.8 + this.colony.enemyThreat * 0.32) / defense);
-      const wounded = defense >= 1.65 ? Math.min(1, count) : Math.min(this.colony.antPopulation - 1, Math.ceil(count * 0.45));
+      const wounded = nestWasBreached
+        ? defense >= 1.65 ? Math.min(1, count) : Math.min(this.colony.antPopulation - 1, Math.ceil(count * 0.45))
+        : 0;
       this.colony.food = Math.max(0, this.colony.food - loss);
       this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + wounded);
-      this.applyRaidCasualties(Math.max(0, Math.ceil(count * 0.16) - raid.casualties), "breach");
+      if (nestWasBreached) this.applyRaidCasualties(Math.max(0, Math.ceil(count * 0.16) - raid.casualties), "breach");
       const deaths = this.raidDeathCount(raid);
       raid.casualties = deaths;
       this.colony.enemyThreat += 0.65 + count * 0.12;
-      this.pushLog(`襲撃被害: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${deaths}`);
-      this.showRaidNotice(`襲撃被害: 食料-${fmt(loss, 0)} / 死亡${deaths}`, "warning");
+      const damageLabel = nestWasBreached ? "襲撃被害" : "餌場被害";
+      this.pushLog(`${damageLabel}: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${deaths}`);
+      this.showRaidNotice(`${damageLabel}: 食料-${fmt(loss, 0)} / 死亡${deaths}`, "warning");
     }
     this.clearRaidRivals();
     this.recallSortieSoldiers("raid-clear");
@@ -6088,12 +6097,13 @@ class AntColony3D {
     for (let i = 0; i < count; i += 1) {
       if (!this.canLoseAnt()) break;
       const candidates = this.ants
-        .filter((ant) => ant)
+        .filter((ant) => ant && this.shouldRenderAnt(ant))
         .sort((a, b) => {
           const roleRank = (a.role === "guard" ? 2 : a.role === "worker" ? 0 : 1) - (b.role === "guard" ? 2 : b.role === "worker" ? 0 : 1);
           if (roleRank) return roleRank;
           return a.energy - b.energy;
         });
+      if (candidates.length <= 0) break;
       if (!this.killAnt(candidates[0], reason === "breach" ? { isRaidRival: true } : null)) break;
       losses += 1;
     }
@@ -6137,6 +6147,7 @@ class AntColony3D {
     raid.breachTimer += dt * pressure;
     if (raid.breachTimer < 7.2) return;
     raid.breachTimer = 0;
+    if (nestPressure > 0) this.raidNestBreachEvents = Math.floor((this.raidNestBreachEvents ?? 0) + 1);
     const defense = this.computeDerived().defensePower;
     const loss = Math.min(this.colony.food, (1.8 + pressure * 1.4 + this.colony.enemyThreat * 0.08) / defense);
     this.colony.food = Math.max(0, this.colony.food - loss);

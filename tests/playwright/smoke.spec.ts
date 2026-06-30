@@ -3450,3 +3450,156 @@ test("raid food pressure damages food without killing ants inside the nest", asy
   expect(result.after.log).toContain("餌場");
   expect(result.after.log).not.toContain("死亡1");
 });
+
+test("raid held at food resolves without hidden nest casualties", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 12;
+    sim.colony.woundedAnts = 0;
+    sim.colony.enemyThreat = 50;
+    sim.colony.fallenAnts = 2;
+    sim.syncAntPopulation();
+    for (const ant of sim.ants) {
+      ant.inNest = true;
+      ant.nestStayTimer = 30;
+      ant.state = "explore";
+      ant.stun = 0;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.x = sim.nest.x;
+      ant.z = sim.nest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 2,
+      lastOutcome: "warning",
+    };
+    sim.raidNestBreachEvents = 0;
+    sim.updateRaid(0.01);
+    const food = sim.food.find((item: any) =>
+      Math.hypot(item.x - sim.nest.x, item.z - sim.nest.z) > sim.nest.radius + 30,
+    ) ?? sim.food[0];
+    const rival = sim.raidRivals()[0];
+    rival.x = food.x;
+    rival.z = food.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    const before = {
+      food: sim.colony.food,
+      population: sim.colony.antPopulation,
+      wounded: sim.colony.woundedAnts,
+      fallen: sim.colony.fallenAnts,
+      ants: sim.ants.length,
+    };
+    sim.resolveRaid("held");
+    return {
+      before,
+      after: {
+        food: sim.colony.food,
+        population: sim.colony.antPopulation,
+        wounded: sim.colony.woundedAnts,
+        fallen: sim.colony.fallenAnts,
+        ants: sim.ants.length,
+        casualties: sim.colony.raidState.casualties,
+        log: sim.colony.battleLog.join("\n"),
+      },
+    };
+  });
+
+  expect(result.after.food).toBeLessThan(result.before.food);
+  expect(result.after.population).toBe(result.before.population);
+  expect(result.after.wounded).toBe(result.before.wounded);
+  expect(result.after.fallen).toBe(result.before.fallen);
+  expect(result.after.ants).toBe(result.before.ants);
+  expect(result.after.casualties).toBe(0);
+  expect(result.after.log).toContain("餌場被害");
+  expect(result.after.log).not.toContain("死亡1");
+});
+
+test("raid rivals ignore ants that are still inside the nest", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: sim.colony.fallenAnts,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    for (const ant of sim.ants) {
+      ant.inNest = true;
+      ant.nestStayTimer = 30;
+      ant.state = "explore";
+      ant.stun = 0;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.x = sim.nest.x;
+      ant.z = sim.nest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    rival.x = sim.nest.x;
+    rival.z = sim.nest.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.fightCooldown = 0;
+    rival.defeated = false;
+    rival.leftRaid = false;
+    const before = {
+      population: sim.colony.antPopulation,
+      fallen: sim.colony.fallenAnts,
+      ants: sim.ants.length,
+    };
+    const resolved = rival.resolveAntContacts(sim);
+    return {
+      resolved,
+      rivalHasClash: Boolean(rival.clash),
+      anyAntInClash: sim.ants.some((ant: any) => ant.clashRival === rival || ant.state === "clash"),
+      before,
+      after: {
+        population: sim.colony.antPopulation,
+        fallen: sim.colony.fallenAnts,
+        ants: sim.ants.length,
+        casualties: sim.colony.raidState.casualties,
+      },
+    };
+  });
+
+  expect(result.resolved).toBe(false);
+  expect(result.rivalHasClash).toBe(false);
+  expect(result.anyAntInClash).toBe(false);
+  expect(result.after.population).toBe(result.before.population);
+  expect(result.after.fallen).toBe(result.before.fallen);
+  expect(result.after.ants).toBe(result.before.ants);
+  expect(result.after.casualties).toBe(0);
+});
