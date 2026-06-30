@@ -1265,7 +1265,69 @@ test("construction tab issues earthwork commands separately from growth", async 
 
   await page.locator("#constructionTrailBtn").click();
   await page.locator("#constructionBarricadeBtn").click();
+  const pendingBarricade = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const point = { x: sim.nest.x + 18, z: sim.nest.z - 12 };
+    sim.updateConstructionPlacementPreview(point);
+    sim.updateStats();
+    const previewChildren = sim.wallPlacementPreview?.children ?? [];
+    return {
+      pendingKind: sim.pendingConstructionKind,
+      taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
+      barricadeButtonText: (document.querySelector("#constructionBarricadeBtn") as HTMLButtonElement).textContent,
+      activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
+      hasPlacementPreview: Boolean(sim.wallPlacementPreview),
+      hasPlacementGuide: Boolean(sim.wallPlacementGuide),
+      previewChildNames: previewChildren.map((child: any) => child.name).sort(),
+      target: sim.constructionTarget("lowBarricade", point),
+    };
+  });
+  expect(pendingBarricade.pendingKind).toBe("lowBarricade");
+  expect(pendingBarricade.taskKinds).toEqual(["trailReinforce"]);
+  expect(pendingBarricade.barricadeButtonText).toContain("場所指定中");
+  expect(pendingBarricade.activeToolLabel).toContain("場所指定中");
+  expect(pendingBarricade.hasPlacementPreview).toBe(true);
+  expect(pendingBarricade.hasPlacementGuide).toBe(false);
+  expect(pendingBarricade.previewChildNames).toContain("lowBarricade-placement-footprint");
+  expect(pendingBarricade.previewChildNames).toContain("lowBarricade-placement-point");
+  expect(pendingBarricade.target.x).toBeCloseTo(-24, 5);
+  expect(pendingBarricade.target.z).toBeCloseTo(0, 5);
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.confirmConstructionPlacement({ x: sim.nest.x + 18, z: sim.nest.z - 12 }, null, "lowBarricade");
+  });
+
   await page.locator("#constructionSentryBtn").click();
+  const pendingSentry = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const point = { x: sim.nest.x - 16, z: sim.nest.z + 28 };
+    sim.updateConstructionPlacementPreview(point);
+    sim.updateStats();
+    const previewChildren = sim.wallPlacementPreview?.children ?? [];
+    return {
+      pendingKind: sim.pendingConstructionKind,
+      taskKinds: sim.buildTasks.map((task: any) => task.kind).sort(),
+      sentryButtonText: (document.querySelector("#constructionSentryBtn") as HTMLButtonElement).textContent,
+      activeToolLabel: (document.querySelector("#activeToolLabel") as HTMLElement).textContent,
+      hasPlacementPreview: Boolean(sim.wallPlacementPreview),
+      previewChildNames: previewChildren.map((child: any) => child.name).sort(),
+      target: sim.constructionTarget("sentryMound", point),
+    };
+  });
+  expect(pendingSentry.pendingKind).toBe("sentryMound");
+  expect(pendingSentry.taskKinds).toEqual(["lowBarricade", "trailReinforce"]);
+  expect(pendingSentry.sentryButtonText).toContain("場所指定中");
+  expect(pendingSentry.activeToolLabel).toContain("場所指定中");
+  expect(pendingSentry.hasPlacementPreview).toBe(true);
+  expect(pendingSentry.previewChildNames).toContain("sentryMound-placement-footprint");
+  expect(pendingSentry.previewChildNames).toContain("sentryMound-placement-point");
+  expect(pendingSentry.target.x).toBeCloseTo(-58, 5);
+  expect(pendingSentry.target.z).toBeCloseTo(40, 5);
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.confirmConstructionPlacement({ x: sim.nest.x - 16, z: sim.nest.z + 28 }, null, "sentryMound");
+  });
+
   await page.locator("#constructionWallBtn").click();
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;

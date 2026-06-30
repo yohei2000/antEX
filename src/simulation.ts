@@ -3500,9 +3500,19 @@ class AntColony3D {
   }
 
   startConstruction(kind) {
-    if (kind === "earthWall") return this.beginConstructionPlacement(kind);
+    if (this.constructionUsesPlacement(kind)) return this.beginConstructionPlacement(kind);
     this.pendingConstructionKind = null;
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
     return this.commitConstruction(kind, this.constructionTarget(kind));
+  }
+
+  constructionUsesPlacement(kind) {
+    return kind === "earthWall" || kind === "lowBarricade" || kind === "sentryMound";
+  }
+
+  isPointPlacementConstruction(kind) {
+    return kind === "lowBarricade" || kind === "sentryMound";
   }
 
   beginConstructionPlacement(kind) {
@@ -3514,9 +3524,9 @@ class AntColony3D {
       return false;
     }
     this.pendingConstructionKind = normalizeConstructionKind(kind);
-    this.wallPlacementDraft = { points: [], hover: null };
+    this.wallPlacementDraft = kind === "earthWall" ? { points: [], hover: null } : null;
     this.clearWallPlacementPreview();
-    this.constructionMessage = `${def.label}の一筆線指定中`;
+    this.constructionMessage = kind === "earthWall" ? `${def.label}の一筆線指定中` : `${def.label}の場所指定中 / 地面をクリック`;
     this.updateStats();
     return true;
   }
@@ -3535,6 +3545,7 @@ class AntColony3D {
     const target = this.constructionTarget(kind, end ? { start, end } : start);
     this.wallPlacementDraft = null;
     this.clearWallPlacementPreview();
+    if (!target) return false;
     return this.commitConstruction(kind, target);
   }
 
@@ -3603,6 +3614,9 @@ class AntColony3D {
       const start = placementPoint.start ?? placementPoint;
       const end = placementPoint.end ?? placementPoint;
       return this.wallTargetFromLine(start, end);
+    }
+    if ((kind === "lowBarricade" || kind === "sentryMound") && placementPoint) {
+      return this.pointConstructionTarget(kind, placementPoint);
     }
     if (kind === "sentryMound") {
       const completed = this.earthworks.filter((earthwork) => earthwork.kind === "sentryMound" && earthwork.strength > 0.82).length;
@@ -5155,6 +5169,11 @@ class AntColony3D {
       }
       return;
     }
+    if (this.isPointPlacementConstruction(this.pendingConstructionKind)) {
+      const point = this.screenToGround(event.clientX, event.clientY);
+      if (point) this.updateConstructionPlacementPreview(point);
+      return;
+    }
 
     this.targetCameraYaw -= dx * 0.006;
     this.targetCameraPitch = clamp(this.targetCameraPitch + dy * 0.004, 0.62, 1.28);
@@ -5917,6 +5936,15 @@ class AntColony3D {
     };
   }
 
+  pointConstructionTarget(kind, placementPoint) {
+    const def = getConstructionDef(kind);
+    const point = placementPoint.start ?? placementPoint;
+    const x = point.x;
+    const z = point.z;
+    const rotation = Math.atan2(z - this.nest.z, x - this.nest.x);
+    return { x, z, radius: def.targetRadius, maxProgress: def.buildCost, rotation };
+  }
+
   wallPlacementPoints(includeHover = false) {
     const draft = this.wallPlacementDraft;
     if (!draft) return [];
@@ -6029,6 +6057,56 @@ class AntColony3D {
     return best.point;
   }
 
+  constructionPreviewMaterial(kind, opacity = 0.52) {
+    const source =
+      kind === "earthWall" ? this.materials.earthworkWall :
+      kind === "sentryMound" ? this.materials.earthworkSentry :
+      kind === "lowBarricade" ? this.materials.earthworkBarricade :
+      this.materials.earthworkTrail;
+    const material = source.clone();
+    material.transparent = true;
+    material.opacity = opacity;
+    material.depthWrite = false;
+    return material;
+  }
+
+  createConstructionPlacementFootprint(kind, target, opacity = 0.52) {
+    const mesh = new THREE.Mesh(this.geometries.trailCircle, this.constructionPreviewMaterial(kind, opacity));
+    mesh.name = `${kind}-placement-footprint`;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(target.x, 0.32, target.z);
+    mesh.rotation.y = kind === "earthWall" ? -target.rotation : target.rotation;
+    if (kind === "earthWall") mesh.scale.set(target.radius * 1.16, target.radius * 0.14, 1);
+    else if (kind === "sentryMound") mesh.scale.set(target.radius * 0.72, target.radius * 0.5, 1);
+    else if (kind === "lowBarricade") mesh.scale.set(target.radius * 0.95, target.radius * 0.28, 1);
+    else mesh.scale.set(target.radius * 1.35, target.radius * 0.36, 1);
+    return mesh;
+  }
+
+  updateConstructionPlacementPreview(point) {
+    const kind = this.pendingConstructionKind;
+    if (!this.isPointPlacementConstruction(kind) || !point) return;
+    this.clearWallPlacementPreview();
+    const target = this.constructionTarget(kind, point);
+    if (!target) return;
+    const group = new THREE.Group();
+    group.name = "construction-placement-preview";
+    group.add(this.createConstructionPlacementFootprint(kind, target, 0.5));
+
+    const marker = new THREE.Mesh(this.geometries.wallPlacementMarker, this.materials.wallPlacementMarker.clone());
+    marker.name = `${kind}-placement-point`;
+    marker.position.set(target.x, 0.76, target.z);
+    marker.scale.set(0.9, 0.22, 0.9);
+    marker.renderOrder = 21;
+    group.add(marker);
+
+    this.scene.add(group);
+    this.wallPlacementPreview = group;
+    const def = getConstructionDef(kind);
+    this.constructionMessage = `${def.label}の場所指定中 / クリックで発注 / 工数 ${fmt(def.buildCost, 1)}`;
+    this.updateStats();
+  }
+
   updateWallPlacementPreview() {
     this.clearWallPlacementPreview();
     const targets = this.wallPlacementTargetsFromDraft(true);
@@ -6043,14 +6121,8 @@ class AntColony3D {
     const previewGroup = new THREE.Group();
     previewGroup.name = "earth-wall-placement-preview";
     for (const target of targets) {
-      const material = this.materials.earthworkWall.clone();
-      material.opacity = 0.52;
-      const mesh = new THREE.Mesh(this.geometries.trailCircle, material);
+      const mesh = this.createConstructionPlacementFootprint("earthWall", target, 0.52);
       mesh.name = "earth-wall-placement-footprint";
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(target.x, 0.32, target.z);
-      mesh.rotation.y = -target.rotation;
-      mesh.scale.set(target.radius * 1.16, target.radius * 0.14, 1);
       previewGroup.add(mesh);
     }
     this.scene.add(previewGroup);
@@ -6561,15 +6633,21 @@ class AntColony3D {
     const draftTargets = isPending && kind === "earthWall" ? this.wallPlacementTargetsFromDraft(false) : [];
     const draftMetrics = isPending && kind === "earthWall" ? this.wallPlacementMetrics(draftTargets, this.wallPlacementPoints(false)) : null;
     const draftCost = draftMetrics && draftMetrics.targetCount > 0 ? draftMetrics.cost : detail.buildCost;
-    button.title = isPending
+    button.title = isPending && kind === "earthWall"
       ? `${detail.command}: 一筆書きで土壁を指定 / クリックで頂点追加 / 全長 ${fmt(draftMetrics?.totalLength ?? 0, 0)} / 工数 ${fmt(draftCost, 1)}`
-      : this.constructionButtonTitle(kind, commandState);
+      : isPending
+        ? `${detail.command}: 地面をクリックして設置場所を指定 / 工数 ${fmt(detail.buildCost, 1)}`
+        : this.constructionButtonTitle(kind, commandState);
     const main = button.querySelector(".button-main");
     const sub = button.querySelector(".button-sub");
     if (main) main.textContent = detail.command;
     if (sub) {
       const costLabel = kind === "earthWall" ? `基準工数${fmt(detail.buildCost, 1)} / 長さで変動` : `工数${fmt(detail.buildCost, 1)}`;
-      sub.textContent = isPending ? `一筆線指定中 / ${fmt(draftMetrics?.vertexCount ?? 0, 0)}点 / 工数${fmt(draftCost, 1)}` : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
+      sub.textContent = isPending && kind === "earthWall"
+        ? `一筆線指定中 / ${fmt(draftMetrics?.vertexCount ?? 0, 0)}点 / 工数${fmt(draftCost, 1)}`
+        : isPending
+          ? `場所指定中 / 工数${fmt(detail.buildCost, 1)} / クリックで発注`
+          : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
     }
   }
 
@@ -6700,7 +6778,7 @@ class AntColony3D {
     ui.growthFill.style.width = `${Math.round(this.colony.hatchProgress * 100)}%`;
     const pendingConstructionLabel = this.pendingConstructionKind === "earthWall"
       ? `${this.constructionLabel(this.pendingConstructionKind)} 一筆線指定中`
-      : this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 線指定中` : "";
+      : this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 場所指定中` : "";
     ui.activeToolLabel.textContent = pendingConstructionLabel || (this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);
     if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);
     if (ui.constructionActive) ui.constructionActive.textContent = fmt(activeConstruction, 0);
