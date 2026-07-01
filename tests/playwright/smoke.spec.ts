@@ -36,6 +36,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       ),
       rivalMaterialState: sim.antRenderer.materialStateFor({ isRival: true }, { state: "clash" }),
       foodSources: sim.food.length,
+      foodSpawnSites: sim.foodSpawnSites.length,
       worldRadius: sim.worldRadius,
       mapVisionRadius: sim.mapVisionRadiusValue,
       rivalNestExists: Boolean(sim.rivalNest),
@@ -75,6 +76,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.colonyMaterialStates.every((state) => state === "explore")).toBe(true);
   expect(metrics.rivalMaterialState).toBe("rival");
   expect(metrics.foodSources).toBeGreaterThanOrEqual(4);
+  expect(metrics.foodSpawnSites).toBeGreaterThanOrEqual(metrics.foodSources);
   expect(metrics.worldRadius).toBeGreaterThanOrEqual(260);
   expect(metrics.mapVisionRadius).toBeGreaterThanOrEqual(100);
   expect(metrics.rivalNestExists).toBe(true);
@@ -96,6 +98,91 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
   expect(metrics.calls).toBeGreaterThan(0);
   expect(metrics.triangles).toBeGreaterThan(0);
+});
+
+test("depleted natural food respawns after a spacing interval", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const site = sim.foodSpawnSites[0];
+    const original = sim.food.find((food: any) => food.id === site.activeFoodId);
+    original.amount = 0;
+    sim.refreshFoodMesh(original);
+    const afterDeplete = {
+      foodCount: sim.food.length,
+      activeFoodId: site.activeFoodId,
+      timer: site.respawnTimer,
+    };
+    sim.updateFoodRespawns(Math.max(0, site.respawnTimer - 0.5));
+    const beforeRespawn = {
+      foodCount: sim.food.length,
+      activeFoodId: site.activeFoodId,
+      timer: site.respawnTimer,
+    };
+    sim.updateFoodRespawns(1);
+    const respawned = sim.food.find((food: any) => food.id === site.activeFoodId);
+    return {
+      afterDeplete,
+      beforeRespawn,
+      afterRespawn: {
+        foodCount: sim.food.length,
+        activeFoodId: site.activeFoodId,
+        exists: Boolean(respawned),
+        amount: respawned?.amount ?? 0,
+        distanceFromSite: respawned ? Math.hypot(respawned.x - site.homeX, respawned.z - site.homeZ) : Infinity,
+      },
+    };
+  });
+
+  expect(result.afterDeplete.foodCount).toBeGreaterThanOrEqual(1);
+  expect(result.afterDeplete.activeFoodId).toBeNull();
+  expect(result.afterDeplete.timer).toBeGreaterThanOrEqual(70);
+  expect(result.beforeRespawn.activeFoodId).toBeNull();
+  expect(result.beforeRespawn.foodCount).toBe(result.afterDeplete.foodCount);
+  expect(result.beforeRespawn.timer).toBeGreaterThan(0);
+  expect(result.afterRespawn.exists).toBe(true);
+  expect(result.afterRespawn.foodCount).toBe(result.afterDeplete.foodCount + 1);
+  expect(result.afterRespawn.amount).toBeGreaterThan(0);
+  expect(result.afterRespawn.distanceFromSite).toBeLessThan(6);
+});
+
+test("ants clear fog in areas they enter", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.exploredPatches = [];
+    sim.updateMapIntel();
+    const radius = sim.mapVisionRadiusValue || sim.mapVisionRadius();
+    const x = sim.nest.x + radius + 44;
+    const z = sim.nest.z + 14;
+    const beforeVisible = sim.isPointVisible(x, z, 0);
+    const ant = sim.ants.find((candidate: any) => sim.shouldRenderAnt(candidate));
+    ant.inNest = false;
+    ant.nestStayTimer = 0;
+    ant.state = "explore";
+    ant.x = x;
+    ant.z = z;
+    ant.prevX = x;
+    ant.prevZ = z;
+    sim.updateExploredPatches(0, true);
+    const afterVisible = sim.isPointVisible(x, z, 0);
+    return {
+      beforeVisible,
+      afterVisible,
+      patchCount: sim.exploredPatches.length,
+      uniformCount: sim.fogOfWarMaterial.uniforms.exploredCount.value,
+      patchRadius: sim.exploredPatches[0]?.radius ?? 0,
+    };
+  });
+
+  expect(result.beforeVisible).toBe(false);
+  expect(result.afterVisible).toBe(true);
+  expect(result.patchCount).toBeGreaterThan(0);
+  expect(result.uniformCount).toBeGreaterThan(0);
+  expect(result.patchRadius).toBeGreaterThan(8);
 });
 
 test("enemy nest stays hidden until scouts or vision reveal it", async ({ page }) => {

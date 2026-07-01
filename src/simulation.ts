@@ -246,6 +246,13 @@ const RIVAL_NEST_REVEAL_RADIUS = 44;
 const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
 const CAMERA_TARGET_PADDING = 18;
 const CAMERA_KEY_PAN_SPEED = 92;
+const EXPLORED_PATCH_LIMIT = 80;
+const EXPLORED_PATCH_UPDATE_SECONDS = 0.38;
+const EXPLORED_PATCH_BASE_RADIUS = 18;
+const FOOD_RESPAWN_MIN_SECONDS = 70;
+const FOOD_RESPAWN_RANDOM_SECONDS = 52;
+const FOOD_RESPAWN_DISTANCE_SECONDS = 0.12;
+const FOOD_RESPAWN_JITTER_RADIUS = 4.2;
 
 function squadColorForId(id) {
   return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
@@ -3124,6 +3131,9 @@ class AntColony3D {
     this.fogOfWar = null;
     this.fogOfWarMaterial = null;
     this.visionEdge = null;
+    this.exploredPatches = [];
+    this.exploredPatchClock = 0;
+    this.exploredPatchSequence = 0;
     this.mapIntelLogState = { rivalNestDiscovered: false, rivalNestDefeated: false };
     this.colony = readColonyState();
     this.derived = {};
@@ -3142,6 +3152,7 @@ class AntColony3D {
     this.water = [];
     this.stones = [];
     this.food = [];
+    this.foodSpawnSites = [];
     this.branches = [];
     this.trails = [];
     this.buildTasks = [];
@@ -4323,6 +4334,8 @@ class AntColony3D {
       fadeWidth: { value: MAP_VISION_FADE_WIDTH },
       maxAlpha: { value: 0.78 },
       fogColor: { value: new THREE.Color(0x111412) },
+      exploredCount: { value: 0 },
+      exploredPatches: { value: Array.from({ length: EXPLORED_PATCH_LIMIT }, () => new THREE.Vector3(0, 0, 0)) },
     };
     const material = new THREE.ShaderMaterial({
       uniforms,
@@ -4344,10 +4357,20 @@ class AntColony3D {
         uniform float fadeWidth;
         uniform float maxAlpha;
         uniform vec3 fogColor;
+        uniform int exploredCount;
+        uniform vec3 exploredPatches[${EXPLORED_PATCH_LIMIT}];
         varying vec3 vWorldPosition;
         void main() {
-          float d = distance(vWorldPosition.xz, visionCenter);
-          float alpha = smoothstep(revealRadius - fadeWidth, revealRadius + fadeWidth, d) * maxAlpha;
+          vec2 point = vWorldPosition.xz;
+          float d = distance(point, visionCenter);
+          float visibility = 1.0 - smoothstep(revealRadius - fadeWidth, revealRadius + fadeWidth, d);
+          for (int i = 0; i < ${EXPLORED_PATCH_LIMIT}; i++) {
+            if (i >= exploredCount) break;
+            vec3 patch = exploredPatches[i];
+            float pd = distance(point, patch.xy);
+            visibility = max(visibility, 1.0 - smoothstep(patch.z - fadeWidth, patch.z + fadeWidth, pd));
+          }
+          float alpha = (1.0 - visibility) * maxAlpha;
           gl_FragColor = vec4(fogColor, alpha);
         }
       `,
@@ -4406,6 +4429,9 @@ class AntColony3D {
     const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
     if (distance2(x, z, this.nest.x, this.nest.z) <= radius + padding) return true;
     if (this.isRivalNestKnown() && distance2(x, z, this.rivalNest.x, this.rivalNest.z) <= RIVAL_NEST_REVEAL_RADIUS + padding) return true;
+    for (const patch of this.exploredPatches ?? []) {
+      if (distance2(x, z, patch.x, patch.z) <= patch.radius + padding) return true;
+    }
     return false;
   }
 
@@ -4417,7 +4443,7 @@ class AntColony3D {
   updateMapIntel() {
     const derived = this.computeDerived();
     this.mapVisionRadiusValue = this.mapVisionRadius(derived);
-    const discoveredByVision = this.rivalNestDistanceFromColony() <= this.mapVisionRadiusValue;
+    const discoveredByVision = this.isPointVisible(this.rivalNest.x, this.rivalNest.z, 0);
     const discoveredByScout = this.hasScoutIntel(derived);
     if (!this.rivalNest.discovered && (discoveredByVision || discoveredByScout)) {
       this.rivalNest.discovered = true;
@@ -4435,6 +4461,13 @@ class AntColony3D {
     if (this.fogOfWarMaterial) {
       this.fogOfWarMaterial.uniforms.revealRadius.value = this.mapVisionRadiusValue || this.mapVisionRadius();
       this.fogOfWarMaterial.uniforms.visionCenter.value.set(this.nest.x, this.nest.z);
+      const patches = this.fogOfWarMaterial.uniforms.exploredPatches.value;
+      const count = Math.min(EXPLORED_PATCH_LIMIT, this.exploredPatches.length);
+      this.fogOfWarMaterial.uniforms.exploredCount.value = count;
+      for (let i = 0; i < count; i += 1) {
+        const patch = this.exploredPatches[i];
+        patches[i].set(patch.x, patch.z, patch.radius);
+      }
     }
     if (this.visionEdge) {
       const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
@@ -4443,6 +4476,67 @@ class AntColony3D {
       this.visionEdge.visible = radius < this.worldRadius + 12;
     }
     this.updateRivalNestVisual();
+  }
+
+  explorationRadiusForAnt(ant) {
+    if (!ant) return EXPLORED_PATCH_BASE_RADIUS;
+    const variantBonus =
+      ant.variant === "scout" ? 8 :
+      ant.isSortieSoldier ? 5 :
+      ant.variant === "builder" ? 3 :
+      0;
+    return EXPLORED_PATCH_BASE_RADIUS + variantBonus;
+  }
+
+  recordExploredPatch(x, z, radius = EXPLORED_PATCH_BASE_RADIUS) {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+    const clamped = this.clampPointToWorld({ x, z }, 6);
+    x = clamped.x;
+    z = clamped.z;
+    radius = clamp(radius, 8, 34);
+    const baseVisibleRadius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    if (distance2(x, z, this.nest.x, this.nest.z) <= Math.max(0, baseVisibleRadius - radius * 0.5)) return false;
+    this.exploredPatchSequence += 1;
+    for (const patch of this.exploredPatches) {
+      const d = distance2(x, z, patch.x, patch.z);
+      if (d <= Math.max(radius, patch.radius) * 0.62) {
+        const blend = 0.18;
+        patch.x += (x - patch.x) * blend;
+        patch.z += (z - patch.z) * blend;
+        patch.radius = Math.max(patch.radius, radius);
+        patch.lastSeen = this.exploredPatchSequence;
+        return true;
+      }
+    }
+    const patch = { x, z, radius, lastSeen: this.exploredPatchSequence };
+    if (this.exploredPatches.length < EXPLORED_PATCH_LIMIT) {
+      this.exploredPatches.push(patch);
+      return true;
+    }
+    let replaceIndex = 0;
+    let oldest = Infinity;
+    for (let i = 0; i < this.exploredPatches.length; i += 1) {
+      const seen = this.exploredPatches[i].lastSeen ?? 0;
+      if (seen < oldest) {
+        oldest = seen;
+        replaceIndex = i;
+      }
+    }
+    this.exploredPatches[replaceIndex] = patch;
+    return true;
+  }
+
+  updateExploredPatches(dt, force = false) {
+    this.exploredPatchClock += Math.max(0, dt);
+    if (!force && this.exploredPatchClock < EXPLORED_PATCH_UPDATE_SECONDS) return;
+    this.exploredPatchClock = 0;
+    let recorded = 0;
+    for (const ant of this.ants) {
+      if (!this.shouldRenderAnt(ant)) continue;
+      if (this.recordExploredPatch(ant.x, ant.z, this.explorationRadiusForAnt(ant))) recorded += 1;
+      if (recorded >= 28) break;
+    }
+    if (recorded > 0) this.updateMapIntel();
   }
 
   updateRivalNestVisual() {
@@ -4630,6 +4724,7 @@ class AntColony3D {
     this.water = [];
     this.stones = [];
     this.food = [];
+    this.foodSpawnSites = [];
     this.branches = [];
     this.trails = [];
     this.buildTasks = [];
@@ -4648,6 +4743,9 @@ class AntColony3D {
     this.rivalNest.underAttackTimer = 0;
     this.rivalNest.attackPulseTimer = 0;
     this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.exploredPatches = [];
+    this.exploredPatchClock = 0;
+    this.exploredPatchSequence = 0;
     this.mapIntelLogState = { rivalNestDiscovered: false, rivalNestDefeated: false };
     this.constructionMessage = "待機";
     this.pendingConstructionKind = null;
@@ -4672,6 +4770,7 @@ class AntColony3D {
     this.seedNaturalEnvironment();
     this.restoreEarthworksFromState();
     this.syncAntPopulation();
+    this.updateExploredPatches(0, true);
     this.updateMapIntel();
     this.updateColonyVisuals();
     this.renderUpgrades();
@@ -5967,6 +6066,7 @@ class AntColony3D {
     this.updateSoldierSorties(dt);
     this.updateSquads(dt);
     this.raidNotice.timer = Math.max(0, this.raidNotice.timer - dt);
+    this.updateFoodRespawns(dt);
 
     for (const patch of this.water) {
       patch.age += dt;
@@ -6013,6 +6113,7 @@ class AntColony3D {
     for (const ant of this.ants) ant.update(dt, this);
     this.flushSortieRetires();
     for (const rival of this.rivalAnts) rival.update(dt, this);
+    this.updateExploredPatches(dt);
     this.updateRivalNestAssault(dt);
     this.lastUiUpdate += dt;
     if (this.lastUiUpdate > 0.15) {
@@ -6216,7 +6317,17 @@ class AntColony3D {
       { x: -156, z: -112, amount: 14, radius: 3.9, crumbs: 13, material: this.materials.foodSeed, kind: "seed" },
       { x: 194, z: -88, amount: 9, radius: 3.2, crumbs: 10, material: this.materials.foodFruit, kind: "fruit" },
     ];
-    for (const food of naturalFoods) this.addFood(food.x, food.z, food);
+    this.foodSpawnSites = naturalFoods.map((food, index) => ({
+      ...food,
+      id: `natural-food-${index + 1}`,
+      homeX: food.x,
+      homeZ: food.z,
+      activeFoodId: null,
+      respawnTimer: 0,
+      lastX: food.x,
+      lastZ: food.z,
+    }));
+    for (const site of this.foodSpawnSites) this.respawnFoodAtSite(site, true);
     this.seedNaturalObstacles();
   }
 
@@ -6879,7 +6990,18 @@ class AntColony3D {
     const crumbs = options.crumbs ?? 18;
     const material = options.material ?? this.materials.food;
     const group = new THREE.Group();
-    const item = { id: this.nextFoodId, x, z, radius, amount, initialAmount: amount, group, crumbs: [], kind: options.kind ?? "placed" };
+    const item = {
+      id: this.nextFoodId,
+      x,
+      z,
+      radius,
+      amount,
+      initialAmount: amount,
+      group,
+      crumbs: [],
+      kind: options.kind ?? "placed",
+      spawnSiteId: options.spawnSiteId ?? null,
+    };
     this.nextFoodId += 1;
     for (let i = 0; i < crumbs; i += 1) {
       const crumb = new THREE.Mesh(this.geometries.foodCrumb, material);
@@ -6895,11 +7017,73 @@ class AntColony3D {
     this.scene.add(group);
     this.dynamicObjects.add(group);
     this.food.push(item);
+    return item;
   }
 
   getFoodSource(sourceId) {
     if (sourceId == null) return null;
     return this.food.find((item) => item.id === sourceId && item.amount > 0.05) ?? null;
+  }
+
+  foodRespawnDelayForSite(site) {
+    const distanceFromNest = distance2(site.homeX ?? site.x, site.homeZ ?? site.z, this.nest.x, this.nest.z);
+    return (
+      FOOD_RESPAWN_MIN_SECONDS +
+      rand(0, FOOD_RESPAWN_RANDOM_SECONDS) +
+      Math.min(38, distanceFromNest * FOOD_RESPAWN_DISTANCE_SECONDS)
+    );
+  }
+
+  respawnFoodAtSite(site, initial = false) {
+    if (!site) return null;
+    const activeFood = site.activeFoodId == null ? null : this.getFoodSource(site.activeFoodId);
+    if (activeFood) return activeFood;
+    const jitterAngle = rand(0, Math.PI * 2);
+    const jitterRadius = initial ? 0 : rand(0.6, FOOD_RESPAWN_JITTER_RADIUS);
+    const point = this.clampPointToWorld(
+      {
+        x: (site.homeX ?? site.x) + Math.cos(jitterAngle) * jitterRadius,
+        z: (site.homeZ ?? site.z) + Math.sin(jitterAngle) * jitterRadius,
+      },
+      8,
+    );
+    const amount = initial ? site.amount : Math.max(3, site.amount * rand(0.88, 1.18));
+    const food = this.addFood(point.x, point.z, {
+      amount,
+      radius: site.radius,
+      crumbs: site.crumbs,
+      material: site.material,
+      kind: site.kind,
+      minScale: site.minScale,
+      maxScale: site.maxScale,
+      spawnSiteId: site.id,
+    });
+    site.activeFoodId = food.id;
+    site.respawnTimer = 0;
+    site.lastX = point.x;
+    site.lastZ = point.z;
+    return food;
+  }
+
+  scheduleFoodRespawn(food) {
+    const site = this.foodSpawnSites.find((candidate) => candidate.id === food.spawnSiteId);
+    if (!site) return;
+    site.activeFoodId = null;
+    site.respawnTimer = this.foodRespawnDelayForSite(site);
+  }
+
+  updateFoodRespawns(dt) {
+    if (!this.foodSpawnSites.length) return;
+    for (const site of this.foodSpawnSites) {
+      const activeFood = site.activeFoodId == null ? null : this.getFoodSource(site.activeFoodId);
+      if (activeFood) continue;
+      if (site.activeFoodId != null) {
+        site.activeFoodId = null;
+        if (!(site.respawnTimer > 0)) site.respawnTimer = this.foodRespawnDelayForSite(site);
+      }
+      site.respawnTimer = Math.max(0, (site.respawnTimer ?? 0) - Math.max(0, dt));
+      if (site.respawnTimer <= 0) this.respawnFoodAtSite(site);
+    }
   }
 
   refreshFoodMesh(food) {
@@ -6909,6 +7093,7 @@ class AntColony3D {
     });
     if (food.amount <= 0.05) {
       this.fadeFoodTrails(food.id);
+      this.scheduleFoodRespawn(food);
       this.disposeDynamicItem(food);
       this.food = this.food.filter((item) => item !== food);
     }
