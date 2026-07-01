@@ -242,6 +242,8 @@ const MAP_SENTRY_VISION_BONUS = 22;
 const MAP_SCOUT_VISION_BONUS = 34;
 const MAP_SCOUT_UPGRADE_VISION_BONUS = 10;
 const MAP_VISION_FADE_WIDTH = 22;
+const MAP_UNEXPLORED_MAX_ALPHA = 0.96;
+const MAP_UNEXPLORED_COLOR = 0x030403;
 const RIVAL_NEST_REVEAL_RADIUS = 44;
 const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
 const CAMERA_TARGET_PADDING = 18;
@@ -4361,8 +4363,8 @@ class AntColony3D {
       visionCenter: { value: new THREE.Vector2(this.nest.x, this.nest.z) },
       revealRadius: { value: this.mapVisionRadiusValue },
       fadeWidth: { value: MAP_VISION_FADE_WIDTH },
-      maxAlpha: { value: 0.78 },
-      fogColor: { value: new THREE.Color(0x111412) },
+      maxAlpha: { value: MAP_UNEXPLORED_MAX_ALPHA },
+      fogColor: { value: new THREE.Color(MAP_UNEXPLORED_COLOR) },
       exploredCount: { value: 0 },
       exploredPatches: { value: Array.from({ length: EXPLORED_PATCH_LIMIT }, () => new THREE.Vector3(0, 0, 0)) },
     };

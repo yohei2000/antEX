@@ -44,6 +44,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
       rivalNestDiscovered: sim.rivalNest.discovered,
       rivalNestVisible: sim.rivalNest.group?.visible ?? false,
       fogOfWarVisible: Boolean(sim.fogOfWar?.visible),
+      fogMaxAlpha: sim.fogOfWarMaterial?.uniforms.maxAlpha.value ?? 0,
+      initialExploredPatchCount: sim.exploredPatches.length,
+      outsideInitialCircleVisible: sim.isPointVisible(sim.nest.x + sim.mapVisionRadiusValue + 30, sim.nest.z, 0),
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
       nestEntrances: sim.nestEntrances?.length ?? sim.nestHoles?.length ?? 0,
@@ -84,6 +87,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.rivalNestDiscovered).toBe(false);
   expect(metrics.rivalNestVisible).toBe(false);
   expect(metrics.fogOfWarVisible).toBe(true);
+  expect(metrics.fogMaxAlpha).toBeGreaterThanOrEqual(0.94);
+  expect(metrics.initialExploredPatchCount).toBe(0);
+  expect(metrics.outsideInitialCircleVisible).toBe(false);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(8);
   expect(metrics.nestEntrances).toBeGreaterThanOrEqual(4);
@@ -113,6 +119,7 @@ test("depleted natural food respawns after a spacing interval", async ({ page })
       foodCount: sim.food.length,
       activeFoodId: site.activeFoodId,
       timer: site.respawnTimer,
+      minTimer: sim.foodRespawnScaleForDistance(site.distanceFromNest) * 70,
     };
     sim.updateFoodRespawns(Math.max(0, site.respawnTimer - 0.5));
     const beforeRespawn = {
@@ -137,7 +144,7 @@ test("depleted natural food respawns after a spacing interval", async ({ page })
 
   expect(result.afterDeplete.foodCount).toBeGreaterThanOrEqual(1);
   expect(result.afterDeplete.activeFoodId).toBeNull();
-  expect(result.afterDeplete.timer).toBeGreaterThanOrEqual(70);
+  expect(result.afterDeplete.timer).toBeGreaterThanOrEqual(result.afterDeplete.minTimer - 0.001);
   expect(result.beforeRespawn.activeFoodId).toBeNull();
   expect(result.beforeRespawn.foodCount).toBe(result.afterDeplete.foodCount);
   expect(result.beforeRespawn.timer).toBeGreaterThan(0);
