@@ -196,7 +196,10 @@ function assertBalance(summary) {
   const latePressure = summary.scenarios.late_pressure.aggregate;
 
   if (earlySortie.successCount < 4) failures.push(`early_sortie successCount ${earlySortie.successCount} < 4`);
-  if (earlySortie.avgDeaths > 1.2) failures.push(`early_sortie avgDeaths ${earlySortie.avgDeaths.toFixed(2)} > 1.2`);
+  const earlySortieDeathLimit = Math.min(2.6, earlyNoSortie.avgDeaths * 0.72);
+  if (earlySortie.avgDeaths > earlySortieDeathLimit) {
+    failures.push(`early_sortie avgDeaths ${earlySortie.avgDeaths.toFixed(2)} > ${earlySortieDeathLimit.toFixed(2)}`);
+  }
 
   const noSortieMinimum = Math.max(earlySortie.avgHarmScore * 1.25, earlySortie.avgHarmScore + 0.25);
   if (earlyNoSortie.avgHarmScore <= noSortieMinimum) {

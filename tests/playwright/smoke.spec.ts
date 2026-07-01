@@ -37,6 +37,12 @@ test("renders the initial ant empire scene", async ({ page }) => {
       rivalMaterialState: sim.antRenderer.materialStateFor({ isRival: true }, { state: "clash" }),
       foodSources: sim.food.length,
       worldRadius: sim.worldRadius,
+      mapVisionRadius: sim.mapVisionRadiusValue,
+      rivalNestExists: Boolean(sim.rivalNest),
+      rivalNestDistance: Math.hypot(sim.rivalNest.x - sim.nest.x, sim.rivalNest.z - sim.nest.z),
+      rivalNestDiscovered: sim.rivalNest.discovered,
+      rivalNestVisible: sim.rivalNest.group?.visible ?? false,
+      fogOfWarVisible: Boolean(sim.fogOfWar?.visible),
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
       nestEntrances: sim.nestEntrances?.length ?? sim.nestHoles?.length ?? 0,
@@ -69,7 +75,13 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.colonyMaterialStates.every((state) => state === "explore")).toBe(true);
   expect(metrics.rivalMaterialState).toBe("rival");
   expect(metrics.foodSources).toBeGreaterThanOrEqual(4);
-  expect(metrics.worldRadius).toBeGreaterThanOrEqual(120);
+  expect(metrics.worldRadius).toBeGreaterThanOrEqual(260);
+  expect(metrics.mapVisionRadius).toBeGreaterThanOrEqual(100);
+  expect(metrics.rivalNestExists).toBe(true);
+  expect(metrics.rivalNestDistance).toBeGreaterThan(metrics.mapVisionRadius);
+  expect(metrics.rivalNestDiscovered).toBe(false);
+  expect(metrics.rivalNestVisible).toBe(false);
+  expect(metrics.fogOfWarVisible).toBe(true);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(8);
   expect(metrics.nestEntrances).toBeGreaterThanOrEqual(4);
@@ -84,6 +96,94 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
   expect(metrics.calls).toBeGreaterThan(0);
   expect(metrics.triangles).toBeGreaterThan(0);
+});
+
+test("enemy nest stays hidden until scouts or vision reveal it", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearRaidRivals();
+    sim.updateMapIntel();
+    const initial = {
+      vision: sim.mapVisionRadiusValue,
+      distance: Math.hypot(sim.rivalNest.x - sim.nest.x, sim.rivalNest.z - sim.nest.z),
+      known: sim.isRivalNestKnown(),
+      visible: sim.rivalNest.group?.visible ?? false,
+      raidIntel: sim.hasRaidDirectionIntel(),
+    };
+
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 3,
+      approachAngle: sim.raidApproachAngle(),
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: sim.colony.fallenAnts,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rivals = sim.raidRivals();
+    const hiddenRaid = {
+      phase: sim.colony.raidState.phase,
+      rivalCount: rivals.length,
+      spawnDistances: rivals.map((rival: any) => Math.hypot(rival.x - sim.rivalNest.x, rival.z - sim.rivalNest.z)),
+      renderedRivals: rivals.filter((rival: any) => sim.shouldRenderRival(rival)).length,
+    };
+
+    sim.clearRaidRivals();
+    sim.colony.raidState = {
+      phase: "calm",
+      timer: 30,
+      wave: 1,
+      activeCount: 0,
+      approachAngle: sim.raidApproachAngle(),
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: null,
+      lastOutcome: "none",
+    };
+    sim.colony.antPopulation = 28;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 3;
+    sim.colony.scoutAnts = 1;
+    sim.colony.upgrades.scoutBrood = 1;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateMapIntel();
+    const afterScout = {
+      known: sim.isRivalNestKnown(),
+      visible: sim.rivalNest.group?.visible ?? false,
+      raidIntel: sim.hasRaidDirectionIntel(),
+      target: sim.currentSortieTarget(),
+      notice: sim.raidNotice.message,
+      log: sim.colony.battleLog.join("\n"),
+    };
+
+    return { initial, hiddenRaid, afterScout };
+  });
+
+  expect(result.initial.distance).toBeGreaterThan(result.initial.vision);
+  expect(result.initial.known).toBe(false);
+  expect(result.initial.visible).toBe(false);
+  expect(result.initial.raidIntel).toBe(false);
+  expect(result.hiddenRaid.phase).toBe("active");
+  expect(result.hiddenRaid.rivalCount).toBe(3);
+  expect(Math.max(...result.hiddenRaid.spawnDistances)).toBeLessThan(26);
+  expect(result.hiddenRaid.renderedRivals).toBe(0);
+  expect(result.afterScout.known).toBe(true);
+  expect(result.afterScout.visible).toBe(true);
+  expect(result.afterScout.raidIntel).toBe(true);
+  expect(result.afterScout.target?.kind).toBe("rival-nest");
+  expect(result.afterScout.notice).toContain("敵巣発見");
+  expect(result.afterScout.log).toContain("敵巣");
 });
 
 test("raidSoon query keeps normal mode but starts a raid quickly without saving", async ({ page }) => {
@@ -2822,7 +2922,7 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
   expect(tree.threatGrowthMultiplier).toBeGreaterThanOrEqual(0.55);
 });
 
-test("rival raids warn first and enter from the map edge", async ({ page }) => {
+test("rival raids warn first and enter from the hidden enemy nest", async ({ page }) => {
   await waitForSimulation(page);
 
   const raid = await page.evaluate(() => {
@@ -2862,18 +2962,19 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
     sim.updateStats();
     const rivals = sim.raidRivals();
     const minNestDistance = Math.min(...rivals.map((rival: any) => Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z)));
-    const spawnRadii = rivals.map((rival: any) => Math.hypot(rival.x, rival.z));
+    const spawnRadii = rivals.map((rival: any) => Math.hypot(rival.x - sim.rivalNest.x, rival.z - sim.rivalNest.z));
     const approachAngle = sim.colony.raidState.approachAngle ?? 0;
     const flankX = -Math.sin(approachAngle);
     const flankZ = Math.cos(approachAngle);
     const spawnLateral = rivals.map((rival: any) => rival.x * flankX + rival.z * flankZ);
     const targetLateral = rivals.map((rival: any) => rival.raidTargetX * flankX + rival.raidTargetZ * flankZ);
-    const exitRadii = rivals.map((rival: any) => Math.hypot(rival.homeX, rival.homeZ));
-    const minWorldRadius = Math.min(...spawnRadii);
+    const exitRadii = rivals.map((rival: any) => Math.hypot(rival.homeX - sim.rivalNest.x, rival.homeZ - sim.rivalNest.z));
+    const minRivalNestDistance = Math.min(...spawnRadii);
+    const maxRivalNestDistance = Math.max(...spawnRadii);
     const spawnDepthSpread = Math.max(...spawnRadii) - Math.min(...spawnRadii);
     const spawnLateralSpread = Math.max(...spawnLateral) - Math.min(...spawnLateral);
     const targetLateralSpread = Math.max(...targetLateral) - Math.min(...targetLateral);
-    const minExitRadius = Math.min(...exitRadii);
+    const maxExitDistance = Math.max(...exitRadii);
     return {
       warning,
       largeNestRaidCount,
@@ -2882,11 +2983,12 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
       activeCount: sim.colony.raidState.activeCount,
       rivalCount: rivals.length,
       minNestDistance,
-      minWorldRadius,
+      minRivalNestDistance,
+      maxRivalNestDistance,
       spawnDepthSpread,
       spawnLateralSpread,
       targetLateralSpread,
-      minExitRadius,
+      maxExitDistance,
       worldRadius: sim.worldRadius,
       log: sim.colony.battleLog.join("\n"),
     };
@@ -2901,11 +3003,13 @@ test("rival raids warn first and enter from the map edge", async ({ page }) => {
   expect(raid.phaseAfterStats).toBe("active");
   expect(raid.rivalCount).toBe(raid.activeCount);
   expect(raid.minNestDistance).toBeGreaterThan(50);
-  expect(raid.minWorldRadius).toBeGreaterThan(raid.worldRadius * 0.85);
+  expect(raid.minRivalNestDistance).toBeGreaterThan(8);
+  expect(raid.maxRivalNestDistance).toBeLessThan(52);
   expect(raid.spawnDepthSpread).toBeGreaterThan(2);
   expect(raid.spawnLateralSpread).toBeGreaterThan(12);
   expect(raid.targetLateralSpread).toBeGreaterThan(6);
-  expect(raid.minExitRadius).toBeGreaterThan(raid.worldRadius + 16);
+  expect(raid.maxExitDistance).toBeLessThan(8);
+  expect(raid.log).toContain("敵巣方面");
   expect(raid.log).toContain("敵襲開始");
 });
 

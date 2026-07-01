@@ -232,6 +232,16 @@ const SQUAD_TARGET_ASSIGNMENT_PENALTY = 52;
 const SQUAD_TARGET_STICKINESS_BONUS = 20;
 const SQUAD_RALLY_SPACING = 16;
 const SQUAD_THREAT_SPACING = 8.5;
+const WORLD_RADIUS = 276;
+const MAP_BASE_VISION_RADIUS = 116;
+const MAP_TERRITORY_VISION_BONUS = 11.5;
+const MAP_NEST_LEVEL_VISION_BONUS = 4.2;
+const MAP_SENTRY_VISION_BONUS = 22;
+const MAP_SCOUT_VISION_BONUS = 34;
+const MAP_SCOUT_UPGRADE_VISION_BONUS = 10;
+const MAP_VISION_FADE_WIDTH = 22;
+const RIVAL_NEST_REVEAL_RADIUS = 44;
+const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
 
 function squadColorForId(id) {
   return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
@@ -1748,47 +1758,39 @@ class RivalAnt3D {
 
   placeAtRaidSpawn(sim, raid = {}) {
     const count = Math.max(1, raid.count ?? this.raidCount);
-    const baseAngle = raid.approachAngle ?? rand(0, Math.PI * 2);
     const lane = this.raidIndex - (count - 1) * 0.5;
     const row = Math.floor(this.raidIndex / 3);
-    const fanAngle = baseAngle + lane * 0.055 + rand(-0.035, 0.035);
-    const edgeX = Math.cos(fanAngle);
-    const edgeZ = Math.sin(fanAngle);
-    const sideX = -edgeZ;
-    const sideZ = edgeX;
-    const depth = (this.raidIndex % 4) * 1.7 + row * 1.15 + rand(-0.5, 0.5);
-    const sideOffset = lane * 1.65 + (this.raidIndex % 2 === 0 ? -0.8 : 0.8) + rand(-1.0, 1.0);
-    const radius = sim.worldRadius * 0.965 - depth + rand(-0.45, 0.45);
-    this.x = edgeX * radius + sideX * sideOffset;
-    this.z = edgeZ * radius + sideZ * sideOffset;
-    const spawnDistance = Math.hypot(this.x, this.z);
-    if (spawnDistance > sim.worldRadius * 0.99) {
-      const limit = (sim.worldRadius * 0.99) / spawnDistance;
-      this.x *= limit;
-      this.z *= limit;
-    } else if (spawnDistance > 0 && spawnDistance < sim.worldRadius * 0.86) {
-      const limit = (sim.worldRadius * 0.86) / spawnDistance;
-      this.x *= limit;
-      this.z *= limit;
+    const nest = sim.rivalNest ?? { x: sim.worldRadius * 0.84, z: -sim.worldRadius * 0.42, radius: 10 };
+    let approachX = sim.nest.x - nest.x;
+    let approachZ = sim.nest.z - nest.z;
+    let approachDistance = Math.hypot(approachX, approachZ);
+    if (approachDistance <= 0.001) {
+      const baseAngle = raid.approachAngle ?? rand(0, Math.PI * 2);
+      approachX = -Math.cos(baseAngle);
+      approachZ = -Math.sin(baseAngle);
+      approachDistance = 1;
     }
-    this.prevX = this.x;
-    this.prevZ = this.z;
-    const exitDistance = sim.worldRadius + RAID_EXIT_PADDING;
-    const exitLength = Math.hypot(this.x, this.z) || 1;
-    this.homeX = (this.x / exitLength) * exitDistance;
-    this.homeZ = (this.z / exitLength) * exitDistance;
-
-    const towardNestX = sim.nest.x - this.x;
-    const towardNestZ = sim.nest.z - this.z;
-    const d = Math.hypot(towardNestX, towardNestZ) || 1;
-    const approachX = towardNestX / d;
-    const approachZ = towardNestZ / d;
+    approachX /= approachDistance;
+    approachZ /= approachDistance;
     const flankX = -approachZ;
     const flankZ = approachX;
+    const depth = nest.radius + 3.4 + (this.raidIndex % 4) * 1.7 + row * 1.15 + rand(-0.5, 0.5);
+    const sideOffset = lane * 1.65 + (this.raidIndex % 2 === 0 ? -0.8 : 0.8) + rand(-1.0, 1.0);
+    const spawn = sim.clampPointToWorld({
+      x: nest.x + approachX * depth + flankX * sideOffset,
+      z: nest.z + approachZ * depth + flankZ * sideOffset,
+    }, 4);
+    this.x = spawn.x;
+    this.z = spawn.z;
+    this.prevX = this.x;
+    this.prevZ = this.z;
+    this.homeX = nest.x + flankX * clamp(sideOffset * 0.42, -4, 4);
+    this.homeZ = nest.z + flankZ * clamp(sideOffset * 0.42, -4, 4);
+
     const targetDistance = sim.nest.radius + 15 + (this.raidIndex % 3) * 4.5 + row * 1.8;
     const targetFlank = -lane * 2.8 + (this.raidIndex % 2 === 0 ? -1.3 : 1.3);
-    this.raidTargetX = sim.nest.x - approachX * targetDistance + flankX * targetFlank;
-    this.raidTargetZ = sim.nest.z - approachZ * targetDistance + flankZ * targetFlank;
+    this.raidTargetX = sim.nest.x + approachX * -targetDistance + flankX * targetFlank;
+    this.raidTargetZ = sim.nest.z + approachZ * -targetDistance + flankZ * targetFlank;
     this.angle = Math.atan2(approachX, approachZ);
     this.prevAngle = this.angle;
   }
@@ -1871,6 +1873,7 @@ class RivalAnt3D {
       if (food.amount <= 0) continue;
       const distanceFromSelf = distance2(this.x, this.z, food.x, food.z);
       const distanceFromNest = distance2(food.x, food.z, sim.nest.x, sim.nest.z);
+      if (this.isRaidRival && distanceFromNest > Math.max(112, (sim.mapVisionRadiusValue ?? MAP_BASE_VISION_RADIUS) + 34)) continue;
       const score = food.amount * 1.4 - distanceFromSelf * 0.04 - distanceFromNest * 0.012;
       if (score > bestFoodScore) {
         bestFood = food;
@@ -3067,8 +3070,8 @@ class AntColony3D {
     this.currentPixelRatio = 1;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x181a18);
-    this.scene.fog = new THREE.Fog(0x181a18, 210, 420);
-    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 460);
+    this.scene.fog = new THREE.Fog(0x181a18, 300, 760);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 860);
     this.renderer = this.createRenderer();
     if (!this.renderer) return;
     ui.world.appendChild(this.renderer.domElement);
@@ -3097,8 +3100,24 @@ class AntColony3D {
     this.timeScale = 1;
     this.raidSoonMode = IS_RAID_SOON;
     document.body.classList.toggle("is-raid-soon", this.raidSoonMode);
-    this.worldRadius = 132;
+    this.worldRadius = WORLD_RADIUS;
     this.nest = { x: -42, z: 12, radius: 8 };
+    this.rivalNest = {
+      x: 218,
+      z: -116,
+      radius: 10,
+      discovered: false,
+      defeated: false,
+      integrity: 1,
+      underAttackTimer: 0,
+      attackPulseTimer: 0,
+      group: null,
+    };
+    this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.fogOfWar = null;
+    this.fogOfWarMaterial = null;
+    this.visionEdge = null;
+    this.mapIntelLogState = { rivalNestDiscovered: false, rivalNestDefeated: false };
     this.colony = readColonyState();
     this.derived = {};
     this.saveTimer = 0;
@@ -3239,6 +3258,9 @@ class AntColony3D {
       nestLoose: new THREE.MeshStandardMaterial({ color: 0x8a6335, roughness: 0.96 }),
       nestRim: new THREE.MeshStandardMaterial({ color: 0x5a3a1f, roughness: 0.98 }),
       nestDark: new THREE.MeshBasicMaterial({ color: 0x1d140e, side: THREE.DoubleSide }),
+      rivalNestSoil: new THREE.MeshStandardMaterial({ color: 0x6b3526, roughness: 0.96 }),
+      rivalNestRim: new THREE.MeshStandardMaterial({ color: 0x8a4a2f, roughness: 0.9 }),
+      rivalNestDark: new THREE.MeshBasicMaterial({ color: 0x21100c, side: THREE.DoubleSide }),
       antDefault: new THREE.MeshStandardMaterial({ color: 0x18130f, roughness: 0.72 }),
       antRival: new THREE.MeshStandardMaterial({ color: 0x8a4a2f, emissive: 0x120705, roughness: 0.8 }),
       antCorpse: new THREE.MeshStandardMaterial({ color: 0x6a3325, roughness: 0.94 }),
@@ -3323,13 +3345,14 @@ class AntColony3D {
     sun.castShadow = this.quality.shadowQuality !== "off";
     if (sun.castShadow) {
       const mapSize = this.quality.shadowQuality === "medium" ? 1024 : 512;
+      const shadowRange = this.worldRadius + 28;
       sun.shadow.mapSize.set(mapSize, mapSize);
-      sun.shadow.camera.left = -145;
-      sun.shadow.camera.right = 145;
-      sun.shadow.camera.top = 145;
-      sun.shadow.camera.bottom = -145;
+      sun.shadow.camera.left = -shadowRange;
+      sun.shadow.camera.right = shadowRange;
+      sun.shadow.camera.top = shadowRange;
+      sun.shadow.camera.bottom = -shadowRange;
       sun.shadow.camera.near = 20;
-      sun.shadow.camera.far = 280;
+      sun.shadow.camera.far = 560;
       sun.shadow.bias = -0.00015;
     }
     this.scene.add(sun);
@@ -3353,6 +3376,9 @@ class AntColony3D {
 
     this.seedTerrain();
     this.createNest();
+    this.createRivalNest();
+    this.createFogOfWar();
+    this.updateMapVisibility();
   }
 
   seedTerrain() {
@@ -3365,6 +3391,11 @@ class AntColony3D {
       { kind: "leaf", x: -82, z: -42, rx: 34, rz: 21, rotation: 0.36, speed: 0.84, material: this.materials.terrainLeaf },
       { kind: "moss", x: 93, z: 34, rx: 22, rz: 14, rotation: 0.18, speed: 0.9, material: this.materials.terrainMoss },
       { kind: "sand", x: -12, z: -12, rx: 24, rz: 15, rotation: -0.56, speed: 1.02, material: this.materials.terrainSand },
+      { kind: "leaf", x: 150, z: -86, rx: 48, rz: 24, rotation: -0.38, speed: 0.82, material: this.materials.terrainLeaf },
+      { kind: "damp", x: 210, z: -124, rx: 42, rz: 22, rotation: 0.32, speed: 0.74, material: this.materials.terrainDamp },
+      { kind: "moss", x: 130, z: 118, rx: 44, rz: 21, rotation: 0.66, speed: 0.9, material: this.materials.terrainMoss },
+      { kind: "sand", x: -166, z: -106, rx: 52, rz: 24, rotation: -0.18, speed: 1.05, material: this.materials.terrainSand },
+      { kind: "leaf", x: -214, z: 94, rx: 42, rz: 20, rotation: 0.22, speed: 0.84, material: this.materials.terrainLeaf },
     ];
 
     for (const patch of patches) this.createTerrainPatch(patch);
@@ -3404,6 +3435,10 @@ class AntColony3D {
       { x: 88, z: 34, rx: 4.0, rz: 1.8, h: 0.38, rotation: 0.72 },
       { x: 104, z: -8, rx: 5.1, rz: 2.0, h: 0.46, rotation: -0.54 },
       { x: -108, z: -12, rx: 4.6, rz: 1.9, h: 0.36, rotation: 0.08 },
+      { x: 154, z: -92, rx: 5.8, rz: 2.3, h: 0.5, rotation: 0.58 },
+      { x: 226, z: -132, rx: 6.4, rz: 2.6, h: 0.58, rotation: -0.46 },
+      { x: -176, z: -118, rx: 5.5, rz: 2.1, h: 0.44, rotation: 0.36 },
+      { x: -216, z: 76, rx: 4.9, rz: 2.0, h: 0.42, rotation: -0.72 },
     ];
     for (const bump of bumps) this.addTerrainBump(bump);
   }
@@ -3458,7 +3493,7 @@ class AntColony3D {
   }
 
   hasRaidDirectionIntel() {
-    return this.sentryMoundCount() > 0;
+    return this.sentryMoundCount() > 0 || this.hasScoutIntel() || this.isRivalNestKnown();
   }
 
   shouldRevealRaidDirection(raid = this.ensureRaidState()) {
@@ -4235,6 +4270,183 @@ class AntColony3D {
     this.updateColonyVisuals();
   }
 
+  createRivalNest() {
+    const nest = this.rivalNest;
+    const group = new THREE.Group();
+    group.name = "rival-ant-nest";
+    group.position.set(nest.x, 0.04, nest.z);
+
+    const shadow = new THREE.Mesh(this.geometries.trailCircle, this.materials.rivalNestDark);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.scale.set(nest.radius * 0.92, nest.radius * 0.58, 1);
+    shadow.position.y = 0.012;
+    group.add(shadow);
+
+    const rim = new THREE.Mesh(this.geometries.nestRim, this.materials.rivalNestRim);
+    rim.rotation.x = -Math.PI / 2;
+    rim.scale.set(nest.radius * 0.9, nest.radius * 0.58, 1);
+    rim.position.y = 0.08;
+    rim.castShadow = this.quality.shadowQuality !== "off";
+    rim.receiveShadow = this.quality.shadowQuality !== "off";
+    group.add(rim);
+
+    const spoilCount = 18;
+    for (let i = 0; i < spoilCount; i += 1) {
+      const angle = i * 2.399 + 0.34;
+      const radius = nest.radius * rand(0.62, 1.42);
+      const pebble = new THREE.Mesh(this.geometries.soilPebble, this.materials.rivalNestSoil);
+      pebble.position.set(Math.cos(angle) * radius, 0.18 + (i % 4) * 0.018, Math.sin(angle) * radius);
+      pebble.scale.setScalar(rand(0.16, 0.3));
+      pebble.rotation.set(rand(-0.4, 0.4), rand(0, Math.PI), rand(-0.3, 0.3));
+      pebble.castShadow = this.quality.shadowQuality !== "off";
+      pebble.receiveShadow = this.quality.shadowQuality !== "off";
+      group.add(pebble);
+    }
+
+    this.scene.add(group);
+    nest.group = group;
+    this.updateRivalNestVisual();
+  }
+
+  createFogOfWar() {
+    const uniforms = {
+      visionCenter: { value: new THREE.Vector2(this.nest.x, this.nest.z) },
+      revealRadius: { value: this.mapVisionRadiusValue },
+      fadeWidth: { value: MAP_VISION_FADE_WIDTH },
+      maxAlpha: { value: 0.78 },
+      fogColor: { value: new THREE.Color(0x111412) },
+    };
+    const material = new THREE.ShaderMaterial({
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform vec2 visionCenter;
+        uniform float revealRadius;
+        uniform float fadeWidth;
+        uniform float maxAlpha;
+        uniform vec3 fogColor;
+        varying vec3 vWorldPosition;
+        void main() {
+          float d = distance(vWorldPosition.xz, visionCenter);
+          float alpha = smoothstep(revealRadius - fadeWidth, revealRadius + fadeWidth, d) * maxAlpha;
+          gl_FragColor = vec4(fogColor, alpha);
+        }
+      `,
+    });
+    const geometry = new THREE.CircleGeometry(this.worldRadius + 18, 192);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = "fog-of-war";
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = 0.42;
+    mesh.renderOrder = 18;
+    this.scene.add(mesh);
+    this.sharedGeometries.add(geometry);
+    this.sharedMaterials.add(material);
+    this.fogOfWar = mesh;
+    this.fogOfWarMaterial = material;
+
+    const edgeMaterial = new THREE.MeshBasicMaterial({ color: 0x79c9b5, transparent: true, opacity: 0.18, depthWrite: false });
+    const edge = new THREE.Mesh(this.geometries.impactRing, edgeMaterial);
+    edge.name = "vision-edge";
+    edge.rotation.x = Math.PI / 2;
+    edge.position.set(this.nest.x, 0.46, this.nest.z);
+    edge.renderOrder = 19;
+    this.scene.add(edge);
+    this.sharedMaterials.add(edgeMaterial);
+    this.visionEdge = edge;
+  }
+
+  mapVisionRadius(derived = this.derived) {
+    const d = derived && Number.isFinite(Number(derived.activeAnts)) ? derived : this.computeDerived();
+    const scoutCount = Math.max(0, Math.floor(d.scouts ?? 0));
+    const scoutBrood = upgradeLevel(this.colony.upgrades, "scoutBrood");
+    const radius =
+      MAP_BASE_VISION_RADIUS +
+      Math.max(0, this.colony.territory) * MAP_TERRITORY_VISION_BONUS +
+      Math.max(0, this.colony.nestLevel - 1) * MAP_NEST_LEVEL_VISION_BONUS +
+      this.sentryMoundCount() * MAP_SENTRY_VISION_BONUS +
+      scoutCount * MAP_SCOUT_VISION_BONUS +
+      scoutBrood * MAP_SCOUT_UPGRADE_VISION_BONUS;
+    return clamp(radius, MAP_BASE_VISION_RADIUS, this.worldRadius + 24);
+  }
+
+  hasScoutIntel(derived = this.derived) {
+    const d = derived && Number.isFinite(Number(derived.activeAnts)) ? derived : this.computeDerived();
+    return Math.max(0, Math.floor(d.scouts ?? 0)) > 0;
+  }
+
+  rivalNestDistanceFromColony() {
+    return distance2(this.nest.x, this.nest.z, this.rivalNest.x, this.rivalNest.z);
+  }
+
+  isRivalNestKnown() {
+    return Boolean(this.rivalNest?.discovered || this.rivalNest?.defeated);
+  }
+
+  isPointVisible(x, z, padding = 0) {
+    const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    if (distance2(x, z, this.nest.x, this.nest.z) <= radius + padding) return true;
+    if (this.isRivalNestKnown() && distance2(x, z, this.rivalNest.x, this.rivalNest.z) <= RIVAL_NEST_REVEAL_RADIUS + padding) return true;
+    return false;
+  }
+
+  shouldRenderRival(rival) {
+    if (!rival || rival.defeated || rival.leftRaid) return false;
+    return this.isPointVisible(rival.x, rival.z, 9) || rival.scoutMarkTimer > 0;
+  }
+
+  updateMapIntel() {
+    const derived = this.computeDerived();
+    this.mapVisionRadiusValue = this.mapVisionRadius(derived);
+    const discoveredByVision = this.rivalNestDistanceFromColony() <= this.mapVisionRadiusValue;
+    const discoveredByScout = this.hasScoutIntel(derived);
+    if (!this.rivalNest.discovered && (discoveredByVision || discoveredByScout)) {
+      this.rivalNest.discovered = true;
+      const reason = discoveredByScout ? "斥候が敵巣の匂いを捕捉" : "探索範囲が敵巣へ到達";
+      if (!this.mapIntelLogState.rivalNestDiscovered) {
+        this.pushLog(`${reason}: 遠方に敵アリの巣`);
+        this.showRaidNotice("敵巣発見: 軍事出撃で敵巣を攻撃できます", "warning");
+        this.mapIntelLogState.rivalNestDiscovered = true;
+      }
+    }
+    this.updateMapVisibility();
+  }
+
+  updateMapVisibility() {
+    if (this.fogOfWarMaterial) {
+      this.fogOfWarMaterial.uniforms.revealRadius.value = this.mapVisionRadiusValue || this.mapVisionRadius();
+      this.fogOfWarMaterial.uniforms.visionCenter.value.set(this.nest.x, this.nest.z);
+    }
+    if (this.visionEdge) {
+      const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
+      this.visionEdge.position.set(this.nest.x, 0.46, this.nest.z);
+      this.visionEdge.scale.setScalar(radius);
+      this.visionEdge.visible = radius < this.worldRadius + 12;
+    }
+    this.updateRivalNestVisual();
+  }
+
+  updateRivalNestVisual() {
+    const nest = this.rivalNest;
+    if (!nest?.group) return;
+    nest.group.visible = this.isRivalNestKnown();
+    const defeatedScale = nest.defeated ? 0.76 : 1;
+    const strain = 1 - clamp(nest.integrity ?? 1, 0, 1);
+    nest.group.scale.setScalar(defeatedScale * (1 - strain * 0.08));
+    nest.group.position.y = nest.defeated ? 0.02 : 0.04 + Math.sin(this.renderTime * 0.004) * 0.01 * (1 - strain);
+  }
+
   createNestEntrance(config) {
     const radial = this.nest.radius * config.distance;
     const x = this.nest.x + Math.cos(config.angle) * radial;
@@ -4415,6 +4627,13 @@ class AntColony3D {
     this.rivalAnts = [];
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.raidNestBreachEvents = 0;
+    this.rivalNest.discovered = false;
+    this.rivalNest.defeated = false;
+    this.rivalNest.integrity = 1;
+    this.rivalNest.underAttackTimer = 0;
+    this.rivalNest.attackPulseTimer = 0;
+    this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.mapIntelLogState = { rivalNestDiscovered: false, rivalNestDefeated: false };
     this.constructionMessage = "待機";
     this.pendingConstructionKind = null;
     this.wallPlacementDraft = null;
@@ -4438,6 +4657,7 @@ class AntColony3D {
     this.seedNaturalEnvironment();
     this.restoreEarthworksFromState();
     this.syncAntPopulation();
+    this.updateMapIntel();
     this.updateColonyVisuals();
     this.renderUpgrades();
     this.updateStats();
@@ -5257,7 +5477,66 @@ class AntColony3D {
     if (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating") {
       return { ...this.raidSignalPoint(raid, 0.78), kind: "raid-signal" };
     }
+    if (this.isRivalNestKnown() && !this.rivalNest.defeated) {
+      return { x: this.rivalNest.x, z: this.rivalNest.z, kind: "rival-nest" };
+    }
     return null;
+  }
+
+  updateRivalNestAssault(dt) {
+    const nest = this.rivalNest;
+    if (!nest || !this.isRivalNestKnown() || nest.defeated || dt <= 0) return;
+    const attackers = this.deployedSoldiers().filter((ant) =>
+      this.shouldRenderAnt(ant) &&
+      ant.state !== "return" &&
+      ant.state !== "flee" &&
+      ant.stun <= 0 &&
+      distance2(ant.x, ant.z, nest.x, nest.z) <= nest.radius + RIVAL_NEST_ASSAULT_RADIUS,
+    );
+    if (attackers.length <= 0) {
+      nest.underAttackTimer = Math.max(0, (nest.underAttackTimer ?? 0) - dt * 0.6);
+      return;
+    }
+
+    const pressure = attackers.reduce((sum, ant) => {
+      const config = ant.variantConfig ?? getAntVariantConfig(ant.variant);
+      const rolePressure =
+        ant.variant === "heavySoldier" ? 1.55 :
+        ant.variant === "acidShooter" ? 1.35 :
+        ant.variant === "captain" ? 1.2 :
+        ant.variant === "shieldHead" ? 0.85 :
+        ant.variant === "scout" ? 0.48 :
+        1;
+      return sum + rolePressure + (config.attack ?? 0) * 0.42 + (config.contact ?? 0) * 0.24;
+    }, 0);
+    nest.underAttackTimer = (nest.underAttackTimer ?? 0) + dt * pressure;
+    nest.integrity = clamp((nest.integrity ?? 1) - dt * pressure * 0.0048, 0, 1);
+    nest.attackPulseTimer = Math.max(0, (nest.attackPulseTimer ?? 0) - dt);
+    if (nest.attackPulseTimer <= 0) {
+      this.addTrail(nest.x, nest.z, "alarm", 0.65);
+      this.addCombatEffect(nest.x, nest.z, 1.0 + Math.min(1, pressure * 0.12), Math.min(3, attackers.length), this.raidApproachAngle());
+      nest.attackPulseTimer = 1.1;
+    }
+    for (const ant of attackers) {
+      ant.sortieTimer = Math.max(ant.sortieTimer, 4);
+      ant.energy = clamp(ant.energy - dt * 0.012, 0, 1);
+      ant.lastTacticalAction = "rivalNestAssault";
+      ant.angle = Math.atan2(nest.x - ant.x, nest.z - ant.z);
+    }
+    this.updateRivalNestVisual();
+    if (nest.integrity > 0) return;
+
+    nest.defeated = true;
+    nest.discovered = true;
+    this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - 8);
+    this.clearRaidRivals();
+    this.recallSortieSoldiers("rival-nest-defeated");
+    if (!this.mapIntelLogState.rivalNestDefeated) {
+      this.pushLog("敵巣陥落: 敵アリの襲撃拠点を崩した");
+      this.showRaidNotice("敵巣陥落: 襲撃拠点を制圧", "repelled");
+      this.mapIntelLogState.rivalNestDefeated = true;
+    }
+    this.updateStats();
   }
 
   raidFormationPointForAnt(ant, raid = this.ensureRaidState()) {
@@ -5357,13 +5636,16 @@ class AntColony3D {
     this.soldierSortieCooldown = SOLDIER_SORTIE_COOLDOWN_SECONDS;
     const heavyText = composition.heavy > 0 ? ` / 重兵装${composition.heavy}匹` : "";
     const raid = this.ensureRaidState();
-    const formationText = raid.phase === "warning" && this.hasRaidDirectionIntel() ? " / 見張り塚の方角へ布陣" : "";
+    const formationText = raid.phase === "warning" && this.hasRaidDirectionIntel()
+      ? ` / ${this.sentryMoundCount() > 0 ? "見張り塚" : "偵察情報"}の方角へ布陣`
+      : sortieTarget?.kind === "rival-nest" ? " / 敵巣攻撃" : "";
     const shieldText = composition.shield > 0 ? ` / 盾頭${composition.shield}匹` : "";
     const captainText = composition.captain > 0 ? ` / 小隊長${composition.captain}匹` : "";
     const acidText = composition.acid > 0 ? ` / 酸射${composition.acid}匹` : "";
     const scoutText = composition.scout > 0 ? ` / 斥候${composition.scout}匹` : "";
     const medicText = composition.medic > 0 ? ` / 救護${composition.medic}匹` : "";
-    this.pushLog(`兵隊出撃: ${count}匹${heavyText}${shieldText}${captainText}${acidText}${scoutText}${medicText}が巣口から防衛へ${formationText}`);
+    const sortiePurpose = sortieTarget?.kind === "rival-nest" ? "敵巣へ" : "巣口から防衛へ";
+    this.pushLog(`兵隊出撃: ${count}匹${heavyText}${shieldText}${captainText}${acidText}${scoutText}${medicText}が${sortiePurpose}${formationText}`);
     this.updateStats();
     this.saveColony();
     return true;
@@ -5555,6 +5837,7 @@ class AntColony3D {
 
   updateGame(dt) {
     this.updateColony(dt);
+    this.updateMapIntel();
     this.updateRaid(dt);
     this.updateSoldierSorties(dt);
     this.updateSquads(dt);
@@ -5605,6 +5888,7 @@ class AntColony3D {
     for (const ant of this.ants) ant.update(dt, this);
     this.flushSortieRetires();
     for (const rival of this.rivalAnts) rival.update(dt, this);
+    this.updateRivalNestAssault(dt);
     this.lastUiUpdate += dt;
     if (this.lastUiUpdate > 0.15) {
       this.updateStats();
@@ -5633,12 +5917,15 @@ class AntColony3D {
 
   renderGame(alpha) {
     this.updateCamera();
+    this.updateMapVisibility();
     const renderAnts = this.renderAntBuffer;
     renderAnts.length = 0;
     for (const ant of this.ants) {
       if (this.shouldRenderAnt(ant)) renderAnts.push(ant);
     }
-    for (const rival of this.rivalAnts) renderAnts.push(rival);
+    for (const rival of this.rivalAnts) {
+      if (this.shouldRenderRival(rival)) renderAnts.push(rival);
+    }
     this.antRenderer.render(renderAnts, this, alpha);
     this.squadRingSystem.render(renderAnts, this, alpha);
     this.roleLabelSystem.render(renderAnts, this, alpha);
@@ -5776,6 +6063,9 @@ class AntColony3D {
       { x: 72, z: 44, amount: 9, radius: 3.1, crumbs: 10, material: this.materials.foodLeaf, kind: "leaf" },
       { x: -78, z: -46, amount: 13, radius: 3.8, crumbs: 13, material: this.materials.foodSeed, kind: "seed" },
       { x: 8, z: -82, amount: 10, radius: 3.2, crumbs: 10, material: this.materials.foodFruit, kind: "fruit" },
+      { x: 138, z: 98, amount: 11, radius: 3.6, crumbs: 11, material: this.materials.foodLeaf, kind: "leaf" },
+      { x: -156, z: -112, amount: 14, radius: 3.9, crumbs: 13, material: this.materials.foodSeed, kind: "seed" },
+      { x: 194, z: -88, amount: 9, radius: 3.2, crumbs: 10, material: this.materials.foodFruit, kind: "fruit" },
     ];
     for (const food of naturalFoods) this.addFood(food.x, food.z, food);
     this.seedNaturalObstacles();
@@ -5789,6 +6079,10 @@ class AntColony3D {
       { x: 26, z: 68, radius: 2.4, scaleY: 0.42, rotation: -0.7 },
       { x: 62, z: -66, radius: 3.5, scaleY: 0.48, rotation: 0.9 },
       { x: 92, z: 12, radius: 2.8, scaleY: 0.46, rotation: -1.1 },
+      { x: 142, z: 124, radius: 3.4, scaleY: 0.48, rotation: 0.35 },
+      { x: 188, z: -152, radius: 3.9, scaleY: 0.5, rotation: -0.6 },
+      { x: -188, z: -94, radius: 3.6, scaleY: 0.46, rotation: 1.4 },
+      { x: -218, z: 68, radius: 3.1, scaleY: 0.44, rotation: -1.8 },
     ];
     for (const stone of stones) this.addNaturalStone(stone);
   }
@@ -5834,10 +6128,24 @@ class AntColony3D {
     return Math.floor(clamp(4 + pressure, 4, RAID_RIVAL_CAP));
   }
 
+  raidApproachAngle() {
+    return Math.atan2(this.rivalNest.z - this.nest.z, this.rivalNest.x - this.nest.x);
+  }
+
+  clampPointToWorld(point, margin = 5) {
+    const d = Math.hypot(point.x, point.z);
+    const limit = this.worldRadius - margin;
+    if (d <= limit || d <= 0.001) return point;
+    return { x: (point.x / d) * limit, z: (point.z / d) * limit };
+  }
+
   raidSignalPoint(raid = this.ensureRaidState(), radiusFactor = 0.86) {
     const angle = raid.approachAngle ?? 0;
     const radius = this.worldRadius * radiusFactor;
-    return { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius };
+    return this.clampPointToWorld({
+      x: this.nest.x + Math.cos(angle) * radius,
+      z: this.nest.z + Math.sin(angle) * radius,
+    });
   }
 
   emitRaidSignal(raid = this.ensureRaidState(), strength = 0.72) {
@@ -5853,7 +6161,7 @@ class AntColony3D {
     raid.timer = this.raidWarningSeconds();
     raid.wave += 1;
     raid.activeCount = this.raidEnemyCount();
-    raid.approachAngle = rand(0, Math.PI * 2);
+    raid.approachAngle = this.raidApproachAngle();
     raid.signalTimer = 0;
     raid.breachTimer = 0;
     raid.casualties = 0;
@@ -5864,10 +6172,11 @@ class AntColony3D {
     const hasIntel = this.hasRaidDirectionIntel();
     this.emitRaidSignal(raid, 0.88);
     if (hasIntel) {
-      this.pushLog(`見張り塚が敵アリの接近方角を捕捉: 外縁から${raid.activeCount}匹`);
-      this.showRaidNotice(`敵アリ接近: 見張り塚が方角を捕捉。兵隊を前方布陣できます`, "warning");
+      const source = this.sentryMoundCount() > 0 ? "見張り塚" : this.hasScoutIntel() ? "斥候" : "敵巣位置";
+      this.pushLog(`${source}が敵アリの接近方角を捕捉: 敵巣方面から${raid.activeCount}匹`);
+      this.showRaidNotice(`敵アリ接近: ${source}が方角を捕捉。兵隊を前方布陣できます`, "warning");
     } else {
-      this.pushLog(`敵アリの気配: 外縁から${raid.activeCount}匹。方角不明`);
+      this.pushLog(`敵アリの気配: 未確認の敵巣方面から${raid.activeCount}匹。方角不明`);
       this.showRaidNotice(`敵アリ接近: 方角不明。兵隊を出撃できます`, "warning");
     }
   }
@@ -5893,7 +6202,7 @@ class AntColony3D {
     raid.activeCount = count;
     raid.signalTimer = 0;
     raid.lastOutcome = "active";
-    this.pushLog(`敵襲開始: ${count}匹が巣と餌場へ侵入`);
+    this.pushLog(`敵襲開始: 敵巣方面から${count}匹が巣と餌場へ侵入`);
     this.showRaidNotice(`敵襲開始: ${count}匹が巣と餌場へ侵入`, "warning");
   }
 
@@ -6225,11 +6534,13 @@ class AntColony3D {
     return false;
   }
 
-  findRivalThreat(x, z, radius, preferredRivalId = null) {
+  findRivalThreat(x, z, radius, preferredRivalId = null, options = {}) {
     let best = null;
     let bestScore = radius;
+    const requireVisible = options.requireVisible ?? radius > 24;
     for (const rival of this.rivalAnts) {
       if (rival.defeated || rival.leftRaid || rival.retreat > 0 || rival.clash) continue;
+      if (requireVisible && !this.isPointVisible(rival.x, rival.z, 12) && rival.scoutMarkTimer <= 0) continue;
       const d = distance2(x, z, rival.x, rival.z);
       if (d >= radius) continue;
       const scoutBonus = rival.scoutMarkTimer > 0 ? clamp(rival.scoutMarkStrength ?? 0, 0, 1) * 28 : 0;
@@ -7555,12 +7866,13 @@ class AntColony3D {
     const cooldownLeft = Math.ceil(this.soldierSortieCooldown);
     const raid = this.ensureRaidState();
     const raidTime = Math.max(0, Math.ceil(raid.timer));
+    const enemyNestLabel = this.rivalNest.defeated ? "敵巣陥落" : this.isRivalNestKnown() ? `敵巣発見 ${fmt((this.rivalNest.integrity ?? 1) * 100, 0)}%` : `探索範囲 ${fmt(this.mapVisionRadiusValue || this.mapVisionRadius(d), 0)}`;
     const raidLabel =
       raid.phase === "warning" ? `敵襲予兆 ${raidTime}s / 防衛準備` :
       raid.phase === "active" ? `敵襲防衛中 / 侵入 ${this.raidRivals().length}` :
       raid.phase === "retreating" ? "敵アリ退却中" :
       raid.phase === "recovering" ? `防衛後の警戒 ${raidTime}s` :
-      `次の敵襲まで ${raidTime}s`;
+      `${enemyNestLabel} / 次の敵襲まで ${raidTime}s`;
     const barracksQueue = this.barracksQueue();
     const activeBarracksOrder = barracksQueue[0];
     const activeBarracksProgress = activeBarracksOrder
