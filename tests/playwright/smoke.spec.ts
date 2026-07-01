@@ -147,6 +147,87 @@ test("depleted natural food respawns after a spacing interval", async ({ page })
   expect(result.afterRespawn.distanceFromSite).toBeLessThan(6);
 });
 
+test("near food supports early colonies while distant food unlocks wider growth", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const sites = sim.foodSpawnSites.map((site: any) => ({
+      amount: site.amount,
+      distance: site.distanceFromNest,
+      tier: site.distanceTier,
+      respawnDelay: sim.foodRespawnDelayForSite(site),
+    }));
+    const near = sites.filter((site: any) => site.tier === "near");
+    const far = sites.filter((site: any) => site.tier === "far");
+
+    const restore = {
+      food: sim.colony.food,
+      lifetimeFood: sim.colony.lifetimeFood,
+      antPopulation: sim.colony.antPopulation,
+      nestLevel: sim.colony.nestLevel,
+      territory: sim.colony.territory,
+      progress: sim.foragingTerritoryProgress,
+    };
+
+    sim.colony.food = 0;
+    sim.colony.lifetimeFood = 0;
+    sim.gainFood(1, true, { sourceDistance: 54 });
+    const nearGain = sim.colony.food;
+    sim.colony.food = 0;
+    sim.colony.lifetimeFood = 0;
+    sim.gainFood(1, true, { sourceDistance: 230 });
+    const farGain = sim.colony.food;
+
+    sim.colony.food = 0;
+    sim.colony.lifetimeFood = 10000;
+    sim.colony.antPopulation = 28;
+    sim.colony.nestLevel = 2;
+    sim.colony.territory = 0;
+    sim.foragingTerritoryProgress = 0;
+    sim.autoLevelNest();
+    const blockedNestLevel = sim.colony.nestLevel;
+
+    sim.foragingTerritoryProgress = Math.max(0, sim.foragingTerritoryCost() - 0.01);
+    sim.gainFood(1, true, { sourceDistance: 230 });
+    const territoryAfterFarFood = sim.colony.territory;
+    sim.autoLevelNest();
+    const nestLevelAfterTerritory = sim.colony.nestLevel;
+
+    sim.colony.food = restore.food;
+    sim.colony.lifetimeFood = restore.lifetimeFood;
+    sim.colony.antPopulation = restore.antPopulation;
+    sim.colony.nestLevel = restore.nestLevel;
+    sim.colony.territory = restore.territory;
+    sim.foragingTerritoryProgress = restore.progress;
+    sim.syncAntPopulation();
+
+    return {
+      nearCount: near.length,
+      farCount: far.length,
+      nearMaxAmount: Math.max(...near.map((site: any) => site.amount)),
+      farMinAmount: Math.min(...far.map((site: any) => site.amount)),
+      nearMaxRespawn: Math.max(...near.map((site: any) => site.respawnDelay)),
+      farMinRespawn: Math.min(...far.map((site: any) => site.respawnDelay)),
+      nearGain,
+      farGain,
+      blockedNestLevel,
+      territoryAfterFarFood,
+      nestLevelAfterTerritory,
+    };
+  });
+
+  expect(result.nearCount).toBeGreaterThanOrEqual(2);
+  expect(result.farCount).toBeGreaterThanOrEqual(2);
+  expect(result.nearMaxAmount).toBeLessThan(result.farMinAmount);
+  expect(result.farMinRespawn).toBeGreaterThan(result.nearMaxRespawn);
+  expect(result.farGain).toBeLessThan(result.nearGain);
+  expect(result.farGain).toBeGreaterThan(result.nearGain * 0.6);
+  expect(result.blockedNestLevel).toBe(2);
+  expect(result.territoryAfterFarFood).toBeGreaterThanOrEqual(1);
+  expect(result.nestLevelAfterTerritory).toBe(3);
+});
+
 test("ants clear fog in areas they enter", async ({ page }) => {
   await waitForSimulation(page);
 

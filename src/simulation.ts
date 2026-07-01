@@ -253,6 +253,13 @@ const FOOD_RESPAWN_MIN_SECONDS = 70;
 const FOOD_RESPAWN_RANDOM_SECONDS = 52;
 const FOOD_RESPAWN_DISTANCE_SECONDS = 0.12;
 const FOOD_RESPAWN_JITTER_RADIUS = 4.2;
+const FOOD_NEAR_DISTANCE = 96;
+const FOOD_MID_DISTANCE = 158;
+const FOOD_TERRITORY_DISTANCE = 128;
+const FOOD_FAR_DISTANCE = 214;
+const FORAGING_FAR_MIN_EFFICIENCY = 0.64;
+const FORAGING_TERRITORY_BASE_COST = 10;
+const FORAGING_TERRITORY_COST_STEP = 5;
 
 function squadColorForId(id) {
   return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
@@ -490,6 +497,8 @@ class Ant3D {
     this.wet = 0;
     this.stun = 0;
     this.carrying = 0;
+    this.carryingSourceDistance = null;
+    this.carryingSourceTier = null;
     this.foodSourceId = null;
     this.energy = rand(0.55, 1);
     this.lastTrail = rand(0, 1);
@@ -817,6 +826,8 @@ class Ant3D {
     this.fleeFromZ = fromZ;
     this.foodSourceId = null;
     this.carrying = 0;
+    this.carryingSourceDistance = null;
+    this.carryingSourceTier = null;
     this.homeTimer = 0;
     this.stun = 0;
     this.setState("flee");
@@ -951,6 +962,8 @@ class Ant3D {
     if (sensed.closestFood && sensed.foodDistance < sensed.closestFood.radius + 1.5 && this.role !== "guard" && forageEfficiency > 0) {
       this.carrying = Math.min(forageEfficiency, sensed.closestFood.amount);
       this.foodSourceId = sensed.closestFood.id;
+      this.carryingSourceDistance = sim.foodDistanceFromNest(sensed.closestFood);
+      this.carryingSourceTier = sensed.closestFood.distanceTier ?? sim.foodDistanceTier(this.carryingSourceDistance);
       sensed.closestFood.amount -= this.carrying;
       sim.refreshFoodMesh(sensed.closestFood);
       this.setState("return");
@@ -1447,9 +1460,11 @@ class Ant3D {
     steering.z += ((sim.nest.z - this.z) / d) * (1.55 + this.traits.persistence);
     this.energy = clamp(this.energy - dt * 0.024, 0, 1);
     if (d < sim.nest.radius * 0.7) {
-      if (this.carrying > 0) sim.gainFood(this.carrying, true);
+      if (this.carrying > 0) sim.gainFood(this.carrying, true, { sourceDistance: this.carryingSourceDistance });
       this.carrying = 0;
       this.foodSourceId = null;
+      this.carryingSourceDistance = null;
+      this.carryingSourceTier = null;
       this.energy = 1;
       this.homeTimer = 0;
       if (this.isSortieSoldier) {
@@ -1886,7 +1901,9 @@ class RivalAnt3D {
       const distanceFromSelf = distance2(this.x, this.z, food.x, food.z);
       const distanceFromNest = distance2(food.x, food.z, sim.nest.x, sim.nest.z);
       if (this.isRaidRival && distanceFromNest > Math.max(112, (sim.mapVisionRadiusValue ?? MAP_BASE_VISION_RADIUS) + 34)) continue;
-      const score = food.amount * 1.4 - distanceFromSelf * 0.04 - distanceFromNest * 0.012;
+      const foodSizeScore = Math.sqrt(Math.max(0, food.amount)) * 5.2;
+      const remoteFoodPenalty = food.distanceTier === "far" ? 8 : food.distanceTier === "mid" ? 2.5 : 0;
+      const score = foodSizeScore - distanceFromSelf * 0.04 - distanceFromNest * 0.016 - remoteFoodPenalty;
       if (score > bestFoodScore) {
         bestFood = food;
         bestFoodScore = score;
@@ -1920,7 +1937,8 @@ class RivalAnt3D {
       const carryingBonus = ant.carrying > 0 ? (this.isRaidRival ? 20 : 14) : 0;
       const returnBonus = ant.state === "return" ? (this.isRaidRival ? 8 : 5) : 0;
       const foodBonus = sim.isNearFood(ant.x, ant.z, 18) ? (this.isRaidRival ? 10 : 7) : 0;
-      const exposedBonus = ant.role === "worker" && nestDistance > sim.nest.radius + 18 ? (this.isRaidRival ? 12 : 4) : 0;
+      const farExposure = clamp((nestDistance - FOOD_NEAR_DISTANCE) / Math.max(1, FOOD_FAR_DISTANCE - FOOD_NEAR_DISTANCE), 0, 1);
+      const exposedBonus = ant.role === "worker" && nestDistance > sim.nest.radius + 18 ? (this.isRaidRival ? 12 + farExposure * 4 : 4 + farExposure * 2) : 0;
       const builderBonus = ant.variant === "builder" ? (this.isRaidRival ? 9 : 5) : 0;
       const supportPenalty = ant.variant === "medic" ? (this.isRaidRival ? -10 : -7) : 0;
       const guardPenalty = ant.variant === "shieldHead" ? (this.isRaidRival ? -12 : -8) : ant.variant === "heavySoldier" || ant.role === "guard" ? (this.isRaidRival ? -8 : -5) : 0;
@@ -3146,6 +3164,7 @@ class AntColony3D {
     this.panelDrag = null;
     this.selectedAnt = null;
     this.collectedFood = 0;
+    this.foragingTerritoryProgress = 0;
     this.nextFoodId = 1;
     this.nextAntId = 1;
     this.ants = [];
@@ -4759,6 +4778,7 @@ class AntColony3D {
     this.antRenderer?.beginFrame();
     this.antRenderer?.endFrame();
     this.collectedFood = 0;
+    this.foragingTerritoryProgress = 0;
     this.nextFoodId = 1;
     this.nextAntId = 1;
     this.selectedAnt = null;
@@ -4832,7 +4852,8 @@ class AntColony3D {
     let leveled = false;
     while (
       this.colony.antPopulation >= 10 + this.colony.nestLevel * 9 &&
-      this.colony.lifetimeFood >= 80 + this.colony.nestLevel * 120
+      this.colony.lifetimeFood >= 80 + this.colony.nestLevel * 120 &&
+      this.colony.territory >= this.nestExpansionTerritoryRequirement(this.colony.nestLevel)
     ) {
       this.colony.nestLevel += 1;
       this.colony.food += 10 + this.colony.nestLevel * 3;
@@ -4842,6 +4863,10 @@ class AntColony3D {
       this.pushLog(`巣がLv${this.colony.nestLevel}に拡張した`);
       this.updateColonyVisuals();
     }
+  }
+
+  nestExpansionTerritoryRequirement(currentNestLevel = this.colony.nestLevel) {
+    return Math.max(0, Math.floor(currentNestLevel) - 1);
   }
 
   syncAntPopulation() {
@@ -5174,11 +5199,72 @@ class AntColony3D {
     return getAntVariantConfig(variant);
   }
 
-  gainFood(amount, fromAnt = false) {
-    const gained = fromAnt ? amount * (this.computeDerived().foragedFoodMultiplier ?? 1) : amount;
+  foodDistanceFromNest(food) {
+    if (!food) return 0;
+    return food.distanceFromNest ?? distance2(food.x, food.z, this.nest.x, this.nest.z);
+  }
+
+  foodDistanceTier(distance) {
+    if (!Number.isFinite(Number(distance))) return "near";
+    if (distance <= FOOD_NEAR_DISTANCE) return "near";
+    if (distance <= FOOD_MID_DISTANCE) return "mid";
+    return "far";
+  }
+
+  foragingDistanceEfficiency(distance) {
+    if (!Number.isFinite(Number(distance)) || distance <= FOOD_NEAR_DISTANCE) return 1;
+    if (distance <= FOOD_MID_DISTANCE) {
+      const t = (distance - FOOD_NEAR_DISTANCE) / Math.max(1, FOOD_MID_DISTANCE - FOOD_NEAR_DISTANCE);
+      return 1 - t * 0.14;
+    }
+    const t = clamp((distance - FOOD_MID_DISTANCE) / Math.max(1, FOOD_FAR_DISTANCE - FOOD_MID_DISTANCE), 0, 1);
+    const beyondPenalty = Math.max(0, distance - FOOD_FAR_DISTANCE) * 0.0008;
+    return clamp(0.86 - t * 0.14 - beyondPenalty, FORAGING_FAR_MIN_EFFICIENCY, 0.86);
+  }
+
+  foodRespawnScaleForDistance(distance) {
+    const tier = this.foodDistanceTier(distance);
+    if (tier === "near") return 0.82;
+    if (tier === "mid") return 1.02;
+    return 1.22;
+  }
+
+  foragingTerritoryCost() {
+    return FORAGING_TERRITORY_BASE_COST + Math.max(0, Math.floor(this.colony.territory)) * FORAGING_TERRITORY_COST_STEP;
+  }
+
+  foragingTerritoryCreditForDelivery(sourceDistance, gained) {
+    if (!Number.isFinite(Number(sourceDistance)) || sourceDistance < FOOD_TERRITORY_DISTANCE || gained <= 0) return 0;
+    const reach = clamp((sourceDistance - FOOD_TERRITORY_DISTANCE) / Math.max(1, FOOD_FAR_DISTANCE - FOOD_TERRITORY_DISTANCE), 0, 1.4);
+    return gained * (0.14 + reach * 0.16);
+  }
+
+  addForagingTerritoryProgress(sourceDistance, gained) {
+    const credit = this.foragingTerritoryCreditForDelivery(sourceDistance, gained);
+    if (credit <= 0) return;
+    this.foragingTerritoryProgress += credit;
+    let expanded = false;
+    while (this.foragingTerritoryProgress >= this.foragingTerritoryCost()) {
+      this.foragingTerritoryProgress -= this.foragingTerritoryCost();
+      this.colony.territory = Math.floor(this.colony.territory) + 1;
+      expanded = true;
+    }
+    if (!expanded) return;
+    this.pushLog(`遠方採餌で領域拡大: 領土${fmt(this.colony.territory, 0)}`);
+    this.updateMapIntel();
+    this.updateStats();
+  }
+
+  gainFood(amount, fromAnt = false, options = {}) {
+    const sourceDistance = typeof options === "number" ? options : options?.sourceDistance;
+    const distanceEfficiency = fromAnt ? this.foragingDistanceEfficiency(sourceDistance) : 1;
+    const gained = fromAnt ? amount * (this.computeDerived().foragedFoodMultiplier ?? 1) * distanceEfficiency : amount;
     this.colony.food += gained;
     this.colony.lifetimeFood += gained;
-    if (fromAnt) this.collectedFood += gained;
+    if (fromAnt) {
+      this.collectedFood += gained;
+      this.addForagingTerritoryProgress(sourceDistance, gained);
+    }
   }
 
   saveColony() {
@@ -6308,20 +6394,22 @@ class AntColony3D {
 
   seedNaturalEnvironment() {
     const naturalFoods = [
-      { x: -16, z: 42, amount: 12, radius: 3.4, crumbs: 12, material: this.materials.foodSeed, kind: "seed" },
-      { x: 38, z: -32, amount: 15, radius: 4.2, crumbs: 14, material: this.materials.foodFruit, kind: "fruit" },
-      { x: 72, z: 44, amount: 9, radius: 3.1, crumbs: 10, material: this.materials.foodLeaf, kind: "leaf" },
-      { x: -78, z: -46, amount: 13, radius: 3.8, crumbs: 13, material: this.materials.foodSeed, kind: "seed" },
-      { x: 8, z: -82, amount: 10, radius: 3.2, crumbs: 10, material: this.materials.foodFruit, kind: "fruit" },
-      { x: 138, z: 98, amount: 11, radius: 3.6, crumbs: 11, material: this.materials.foodLeaf, kind: "leaf" },
-      { x: -156, z: -112, amount: 14, radius: 3.9, crumbs: 13, material: this.materials.foodSeed, kind: "seed" },
-      { x: 194, z: -88, amount: 9, radius: 3.2, crumbs: 10, material: this.materials.foodFruit, kind: "fruit" },
+      { x: -16, z: 42, amount: 11, radius: 3.2, crumbs: 11, material: this.materials.foodSeed, kind: "seed" },
+      { x: 38, z: -32, amount: 12, radius: 3.7, crumbs: 12, material: this.materials.foodFruit, kind: "fruit" },
+      { x: 72, z: 44, amount: 13, radius: 3.6, crumbs: 12, material: this.materials.foodLeaf, kind: "leaf" },
+      { x: -78, z: -46, amount: 11, radius: 3.4, crumbs: 11, material: this.materials.foodSeed, kind: "seed" },
+      { x: 8, z: -82, amount: 14, radius: 3.7, crumbs: 12, material: this.materials.foodFruit, kind: "fruit" },
+      { x: 138, z: 98, amount: 28, radius: 4.8, crumbs: 18, material: this.materials.foodLeaf, kind: "leaf" },
+      { x: -156, z: -112, amount: 30, radius: 5.0, crumbs: 19, material: this.materials.foodSeed, kind: "seed" },
+      { x: 194, z: -88, amount: 34, radius: 5.2, crumbs: 20, material: this.materials.foodFruit, kind: "fruit" },
     ];
     this.foodSpawnSites = naturalFoods.map((food, index) => ({
       ...food,
       id: `natural-food-${index + 1}`,
       homeX: food.x,
       homeZ: food.z,
+      distanceFromNest: distance2(food.x, food.z, this.nest.x, this.nest.z),
+      distanceTier: this.foodDistanceTier(distance2(food.x, food.z, this.nest.x, this.nest.z)),
       activeFoodId: null,
       respawnTimer: 0,
       lastX: food.x,
@@ -6990,6 +7078,7 @@ class AntColony3D {
     const crumbs = options.crumbs ?? 18;
     const material = options.material ?? this.materials.food;
     const group = new THREE.Group();
+    const distanceFromNest = options.distanceFromNest ?? distance2(x, z, this.nest.x, this.nest.z);
     const item = {
       id: this.nextFoodId,
       x,
@@ -7001,6 +7090,8 @@ class AntColony3D {
       crumbs: [],
       kind: options.kind ?? "placed",
       spawnSiteId: options.spawnSiteId ?? null,
+      distanceFromNest,
+      distanceTier: options.distanceTier ?? this.foodDistanceTier(distanceFromNest),
     };
     this.nextFoodId += 1;
     for (let i = 0; i < crumbs; i += 1) {
@@ -7026,8 +7117,8 @@ class AntColony3D {
   }
 
   foodRespawnDelayForSite(site) {
-    const distanceFromNest = distance2(site.homeX ?? site.x, site.homeZ ?? site.z, this.nest.x, this.nest.z);
-    return (
+    const distanceFromNest = site.distanceFromNest ?? distance2(site.homeX ?? site.x, site.homeZ ?? site.z, this.nest.x, this.nest.z);
+    return this.foodRespawnScaleForDistance(distanceFromNest) * (
       FOOD_RESPAWN_MIN_SECONDS +
       rand(0, FOOD_RESPAWN_RANDOM_SECONDS) +
       Math.min(38, distanceFromNest * FOOD_RESPAWN_DISTANCE_SECONDS)
@@ -7057,6 +7148,8 @@ class AntColony3D {
       minScale: site.minScale,
       maxScale: site.maxScale,
       spawnSiteId: site.id,
+      distanceFromNest: site.distanceFromNest,
+      distanceTier: site.distanceTier,
     });
     site.activeFoodId = food.id;
     site.respawnTimer = 0;

@@ -61,11 +61,17 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
   const workers = Math.max(0, availableWorkers - builders);
   const foragingBonus = 1 + foragerTrails * 0.24 + trailPheromones * 0.07 + foodDistribution * 0.025;
   const trafficBonus = 1 + chamberExcavation * 0.035 + ventilationShafts * 0.018;
+  const localForagingCapacity = 16 + colony.nestLevel * 2 + colony.territory * 7 + foragerTrails * 3 + trailPheromones * 2;
+  const localForagingPressure = workers + builders * 0.6;
+  const localForagingSaturation = localForagingPressure <= localForagingCapacity
+    ? 1
+    : clamp(localForagingCapacity / Math.max(localForagingPressure, 1), 0.42, 1);
   const baseFoodRate =
     (workers * getAntVariantConfig("worker").forageEfficiency + builders * getAntVariantConfig("builder").forageEfficiency) *
       0.034 *
       foragingBonus *
       trafficBonus *
+      localForagingSaturation *
       (1 + (options.earthworkProductionBonus ?? 0)) +
     colony.territory * 0.075 +
     colony.nestLevel * 0.025 +
