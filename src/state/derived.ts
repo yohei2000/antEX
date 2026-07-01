@@ -59,8 +59,8 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
   const builders = Math.floor(clamp(colony.builderAnts, 0, builderTarget));
   const normalSoldiers = Math.max(0, soldierAnts - heavySoldiers - shieldHeads - acidShooters - scouts - medics - captains);
   const workers = Math.max(0, availableWorkers - builders);
-  const foragingBonus = 1 + foragerTrails * 0.24 + trailPheromones * 0.07 + foodDistribution * 0.025;
-  const trafficBonus = 1 + chamberExcavation * 0.035 + ventilationShafts * 0.018;
+  const forageCarryMultiplier = clamp(1 + foragerTrails * 0.13 + storageChambers * 0.035 + foodDistribution * 0.025, 1, 2.55);
+  const forageSpeedMultiplier = clamp(1 + trailPheromones * 0.05 + chamberExcavation * 0.04 + foodDistribution * 0.015, 1, 1.6);
   const localForagingCapacity = 16 + colony.nestLevel * 2 + colony.territory * 7 + foragerTrails * 3 + trailPheromones * 2;
   const localForagingPressure = workers + builders * 0.6;
   const localForagingSaturation = localForagingPressure <= localForagingCapacity
@@ -69,8 +69,8 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
   const baseFoodRate =
     (workers * getAntVariantConfig("worker").forageEfficiency + builders * getAntVariantConfig("builder").forageEfficiency) *
       0.034 *
-      foragingBonus *
-      trafficBonus *
+      forageCarryMultiplier *
+      forageSpeedMultiplier *
       localForagingSaturation *
       (1 + (options.earthworkProductionBonus ?? 0)) +
     colony.territory * 0.075 +
@@ -88,7 +88,7 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
   const defensePower =
     1 + nestGuard * 0.18 + sentinelPosts * 0.1 + ventilationShafts * 0.02 + wasteGallery * 0.03 + heavySoldiers * 0.035 + shieldHeads * 0.045 + medics * 0.008;
   const threatGrowthMultiplier = clamp(1 - wasteGallery * 0.055 - sentinelPosts * 0.03 - ventilationShafts * 0.015, 0.55, 1);
-  const foragedFoodMultiplier = (1 + foodDistribution * 0.025 + storageChambers * 0.01) * FOOD_INCOME_MULTIPLIER;
+  const foragedFoodMultiplier = FOOD_INCOME_MULTIPLIER;
   const upkeepPerSecond =
     normalSoldiers * getAntVariantConfig("soldier").upkeep +
     heavySoldiers * getAntVariantConfig("heavySoldier").upkeep +
@@ -126,6 +126,8 @@ export function computeDerivedColony(colony: ColonyState, options: ComputeDerive
     attackPower,
     defensePower,
     threatGrowthMultiplier,
+    forageCarryMultiplier,
+    forageSpeedMultiplier,
     foragedFoodMultiplier,
     upkeepPerSecond,
   };

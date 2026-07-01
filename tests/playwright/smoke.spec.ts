@@ -168,6 +168,9 @@ test("near food supports early colonies while distant food unlocks wider growth"
       nestLevel: sim.colony.nestLevel,
       territory: sim.colony.territory,
       progress: sim.foragingTerritoryProgress,
+      recentSamples: [...sim.recentForagingSamples],
+      recentTotal: sim.recentForagingTotal,
+      simTime: sim.simTime,
     };
 
     sim.colony.food = 0;
@@ -194,13 +197,28 @@ test("near food supports early colonies while distant food unlocks wider growth"
     sim.autoLevelNest();
     const nestLevelAfterTerritory = sim.colony.nestLevel;
 
+    sim.recentForagingSamples = [];
+    sim.recentForagingTotal = 0;
+    sim.simTime = 30;
+    sim.colony.food = 0;
+    sim.colony.lifetimeFood = 0;
+    sim.gainFood(1, true, { sourceDistance: 54 });
+    const recentForaging = sim.recentForagingPerMinute();
+    sim.updateStats();
+    const recentMetric = Number((document.querySelector("#statFoodRate")?.textContent ?? "0").replace(/,/g, ""));
+    const recentLabel = document.querySelector("#statFoodRate")?.previousElementSibling?.textContent ?? "";
+
     sim.colony.food = restore.food;
     sim.colony.lifetimeFood = restore.lifetimeFood;
     sim.colony.antPopulation = restore.antPopulation;
     sim.colony.nestLevel = restore.nestLevel;
     sim.colony.territory = restore.territory;
     sim.foragingTerritoryProgress = restore.progress;
+    sim.recentForagingSamples = restore.recentSamples;
+    sim.recentForagingTotal = restore.recentTotal;
+    sim.simTime = restore.simTime;
     sim.syncAntPopulation();
+    sim.updateStats();
 
     return {
       nearCount: near.length,
@@ -211,6 +229,9 @@ test("near food supports early colonies while distant food unlocks wider growth"
       farMinRespawn: Math.min(...far.map((site: any) => site.respawnDelay)),
       nearGain,
       farGain,
+      recentForaging,
+      recentMetric,
+      recentLabel,
       blockedNestLevel,
       territoryAfterFarFood,
       nestLevelAfterTerritory,
@@ -223,6 +244,9 @@ test("near food supports early colonies while distant food unlocks wider growth"
   expect(result.farMinRespawn).toBeGreaterThan(result.nearMaxRespawn);
   expect(result.farGain).toBeLessThan(result.nearGain);
   expect(result.farGain).toBeGreaterThan(result.nearGain * 0.6);
+  expect(result.recentLabel).toBe("直近採餌/分");
+  expect(result.recentForaging).toBeCloseTo(result.nearGain, 5);
+  expect(result.recentMetric).toBeCloseTo(result.nearGain, 1);
   expect(result.blockedNestLevel).toBe(2);
   expect(result.territoryAfterFarFood).toBeGreaterThanOrEqual(1);
   expect(result.nestLevelAfterTerritory).toBe(3);
@@ -2766,7 +2790,7 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.progressText).toContain("目安");
   expect(result.progressText).toContain("目標 1/4");
   expect(result.trailButtonText).toContain("工数2.8");
-  expect(result.trailButtonText).toContain("採餌効率");
+  expect(result.trailButtonText).toContain("運搬");
   expect(result.barricadeButtonText).toContain("工数3.6");
   expect(result.barricadeButtonText).toContain("敵減速");
   expect(result.wallButtonText).toContain("工数7.2");
@@ -3212,6 +3236,8 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
       lockedBefore,
       unlockedAfterPrereq,
       foodRateRatio: maxed.foodRate / base.foodRate,
+      carryRatio: maxed.forageCarryMultiplier / base.forageCarryMultiplier,
+      speedRatio: maxed.forageSpeedMultiplier / base.forageSpeedMultiplier,
       growthRatio: maxed.growthPerSecond / base.growthPerSecond,
       capacityRatio: maxed.capacity / base.capacity,
       defensePower: maxed.defensePower,
@@ -3225,7 +3251,9 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
   expect(tree.lockedBefore).toBe(true);
   expect(tree.unlockedAfterPrereq).toBe(true);
   expect(tree.foodRateRatio).toBeGreaterThan(3);
-  expect(tree.foodRateRatio).toBeLessThan(4.6);
+  expect(tree.foodRateRatio).toBeLessThan(4.2);
+  expect(tree.carryRatio).toBeGreaterThan(2.3);
+  expect(tree.speedRatio).toBeGreaterThan(1.45);
   expect(tree.growthRatio).toBeGreaterThan(5);
   expect(tree.growthRatio).toBeLessThan(7.6);
   expect(tree.capacityRatio).toBeGreaterThan(2.6);

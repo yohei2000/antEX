@@ -100,6 +100,8 @@ export interface DerivedColonyState {
   attackPower: number;
   defensePower: number;
   threatGrowthMultiplier: number;
+  forageCarryMultiplier: number;
+  forageSpeedMultiplier: number;
   foragedFoodMultiplier: number;
   upkeepPerSecond: number;
 }

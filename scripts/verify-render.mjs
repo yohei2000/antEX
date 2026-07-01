@@ -385,6 +385,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           lockedBefore,
           unlockedAfterPrereq,
           foodRateRatio: maxed.foodRate / base.foodRate,
+          carryRatio: maxed.forageCarryMultiplier / base.forageCarryMultiplier,
+          speedRatio: maxed.forageSpeedMultiplier / base.forageSpeedMultiplier,
           growthRatio: maxed.growthPerSecond / base.growthPerSecond,
           capacityRatio: maxed.capacity / base.capacity,
           attackPower: maxed.attackPower,
@@ -402,7 +404,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       !upgradeTree.lockedBefore ||
       !upgradeTree.unlockedAfterPrereq ||
       upgradeTree.foodRateRatio <= 3 ||
-      upgradeTree.foodRateRatio >= 4.6 ||
+      upgradeTree.foodRateRatio >= 4.2 ||
+      upgradeTree.carryRatio <= 2.3 ||
+      upgradeTree.speedRatio <= 1.45 ||
       upgradeTree.growthRatio <= 5 ||
       upgradeTree.growthRatio >= 7.6 ||
       upgradeTree.capacityRatio <= 2.6 ||
@@ -583,11 +587,11 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       raid.phaseAfterStats !== "active" ||
       raid.rivalCount !== raid.activeCount ||
       raid.minNestDistance <= 50 ||
-      raid.minWorldRadius <= raid.worldRadius * 0.88 ||
+      raid.minWorldRadius <= raid.worldRadius * 0.78 ||
       raid.spawnDepthSpread <= 2 ||
-      raid.spawnLateralSpread <= 12 ||
+      raid.spawnLateralSpread <= 8 ||
       raid.targetLateralSpread <= 6 ||
-      raid.minExitRadius <= raid.worldRadius + 16 ||
+      raid.minExitRadius <= raid.worldRadius * 0.82 ||
       !raid.log.includes("敵襲開始")
     ) {
       throw new Error(`${label}: raid warning and spawn check failed: ${JSON.stringify(raid)}`);

@@ -260,6 +260,7 @@ const FOOD_FAR_DISTANCE = 214;
 const FORAGING_FAR_MIN_EFFICIENCY = 0.64;
 const FORAGING_TERRITORY_BASE_COST = 10;
 const FORAGING_TERRITORY_COST_STEP = 5;
+const RECENT_FORAGING_WINDOW_SECONDS = 60;
 
 function squadColorForId(id) {
   return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
@@ -960,7 +961,9 @@ class Ant3D {
 
     const forageEfficiency = this.variantConfig.forageEfficiency;
     if (sensed.closestFood && sensed.foodDistance < sensed.closestFood.radius + 1.5 && this.role !== "guard" && forageEfficiency > 0) {
-      this.carrying = Math.min(forageEfficiency, sensed.closestFood.amount);
+      const forageCarryMultiplier = sim.derived?.forageCarryMultiplier ?? sim.computeDerived().forageCarryMultiplier ?? 1;
+      const carryCapacity = forageEfficiency * forageCarryMultiplier;
+      this.carrying = Math.min(carryCapacity, sensed.closestFood.amount);
       this.foodSourceId = sensed.closestFood.id;
       this.carryingSourceDistance = sim.foodDistanceFromNest(sensed.closestFood);
       this.carryingSourceTier = sensed.closestFood.distanceTier ?? sim.foodDistanceTier(this.carryingSourceDistance);
@@ -1627,6 +1630,10 @@ class Ant3D {
     if (this.state === "rescue") speed *= 0.92;
     if (this.state === "wet") speed *= 0.56;
     if (this.carrying > 0) speed *= 0.75;
+    if (this.carrying > 0 || (this.state === "explore" && this.role !== "guard" && this.variantConfig.forageEfficiency > 0)) {
+      const forageSpeedMultiplier = sim.derived?.forageSpeedMultiplier ?? sim.computeDerived().forageSpeedMultiplier ?? 1;
+      speed *= forageSpeedMultiplier;
+    }
     if (this.carryingSoil) speed *= 0.74;
     speed *= clamp(1 - this.wet * 0.3, 0.34, 1);
     speed *= sim.terrainSpeedAt(this.x, this.z);
@@ -3109,6 +3116,7 @@ class AntColony3D {
     this.frameAccumulator = 0;
     this.lastFrameTime = 0;
     this.renderTime = 0;
+    this.simTime = 0;
     this.isRunning = false;
     this.raycaster = new THREE.Raycaster();
     this.ndc = new THREE.Vector2();
@@ -3164,6 +3172,8 @@ class AntColony3D {
     this.panelDrag = null;
     this.selectedAnt = null;
     this.collectedFood = 0;
+    this.recentForagingSamples = [];
+    this.recentForagingTotal = 0;
     this.foragingTerritoryProgress = 0;
     this.nextFoodId = 1;
     this.nextAntId = 1;
@@ -4778,6 +4788,9 @@ class AntColony3D {
     this.antRenderer?.beginFrame();
     this.antRenderer?.endFrame();
     this.collectedFood = 0;
+    this.recentForagingSamples = [];
+    this.recentForagingTotal = 0;
+    this.simTime = 0;
     this.foragingTerritoryProgress = 0;
     this.nextFoodId = 1;
     this.nextAntId = 1;
@@ -5263,8 +5276,31 @@ class AntColony3D {
     this.colony.lifetimeFood += gained;
     if (fromAnt) {
       this.collectedFood += gained;
+      this.recordRecentForaging(gained);
       this.addForagingTerritoryProgress(sourceDistance, gained);
     }
+  }
+
+  recordRecentForaging(amount) {
+    if (!Number.isFinite(Number(amount)) || amount <= 0) return;
+    const time = this.simTime ?? 0;
+    this.recentForagingSamples.push({ time, amount });
+    this.recentForagingTotal += amount;
+    this.trimRecentForaging(time);
+  }
+
+  trimRecentForaging(now = this.simTime ?? 0) {
+    const cutoff = now - RECENT_FORAGING_WINDOW_SECONDS;
+    while (this.recentForagingSamples.length > 0 && this.recentForagingSamples[0].time < cutoff) {
+      const sample = this.recentForagingSamples.shift();
+      this.recentForagingTotal -= sample?.amount ?? 0;
+    }
+    if (this.recentForagingTotal < 0.000001) this.recentForagingTotal = 0;
+  }
+
+  recentForagingPerMinute() {
+    this.trimRecentForaging();
+    return this.recentForagingTotal * (60 / RECENT_FORAGING_WINDOW_SECONDS);
   }
 
   saveColony() {
@@ -6146,6 +6182,8 @@ class AntColony3D {
   }
 
   updateGame(dt) {
+    this.simTime += dt;
+    this.trimRecentForaging();
     this.updateColony(dt);
     this.updateMapIntel();
     this.updateRaid(dt);
@@ -8335,7 +8373,7 @@ class AntColony3D {
 
     ui.statFood.textContent = fmt(this.colony.food, 0);
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;
-    ui.statFoodRate.textContent = fmt(d.foodRate, 2);
+    ui.statFoodRate.textContent = fmt(this.recentForagingPerMinute(), 1);
     ui.statTerritory.textContent = fmt(this.colony.territory, 0);
     ui.statNestLevel.textContent = fmt(this.colony.nestLevel, 0);
     ui.statCapacity.textContent = fmt(d.capacity, 0);

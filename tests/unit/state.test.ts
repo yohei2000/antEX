@@ -155,6 +155,8 @@ describe("colony state modules", () => {
     expect(baseDerived.builders).toBe(0);
     expect(baseDerived.workers).toBe(11);
     expect(baseDerived.foodRate).toBeCloseTo(1.197, 6);
+    expect(baseDerived.forageCarryMultiplier).toBe(1);
+    expect(baseDerived.forageSpeedMultiplier).toBe(1);
     expect(baseDerived.foragedFoodMultiplier).toBe(3);
     expect(baseDerived.attackPower).toBe(1.002);
     expect(baseDerived.defensePower).toBe(1);
@@ -180,7 +182,9 @@ describe("colony state modules", () => {
     const maxedDerived = computeDerivedColony(maxed);
 
     expect(maxedDerived.foodRate / scenarioBase.foodRate).toBeGreaterThan(3);
-    expect(maxedDerived.foodRate / scenarioBase.foodRate).toBeLessThan(4.6);
+    expect(maxedDerived.foodRate / scenarioBase.foodRate).toBeLessThan(4.2);
+    expect(maxedDerived.forageCarryMultiplier / scenarioBase.forageCarryMultiplier).toBeCloseTo(2.445, 6);
+    expect(maxedDerived.forageSpeedMultiplier / scenarioBase.forageSpeedMultiplier).toBeCloseTo(1.515, 6);
     expect(maxedDerived.growthPerSecond / scenarioBase.growthPerSecond).toBeGreaterThan(5);
     expect(maxedDerived.growthPerSecond / scenarioBase.growthPerSecond).toBeLessThan(7.6);
     expect(maxedDerived.attackPower).toBeLessThan(2.2);
