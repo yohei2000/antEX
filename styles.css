@@ -58,10 +58,17 @@ button {
 }
 
 #world3d canvas {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+#world3d canvas.fog-overlay {
+  z-index: 2;
+  pointer-events: none;
 }
 
 .loading-overlay,

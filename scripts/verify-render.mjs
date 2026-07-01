@@ -124,7 +124,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       (() => new Promise((resolve) => {
         const started = Date.now();
         const tick = () => {
-          if (window.__ANT_SIM_READY && document.querySelector("#world3d canvas")) resolve(true);
+          if (window.__ANT_SIM_READY && document.querySelector("#world3d canvas:not(.fog-overlay)")) resolve(true);
           else if (Date.now() - started > 15000) resolve(false);
           else setTimeout(tick, 120);
         };
@@ -136,7 +136,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
 
     const hoverProbe = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
-        const canvas = document.querySelector("#world3d canvas");
+        const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)");
         const before = sim.targetCameraYaw;
         const first = new PointerEvent("pointermove", {
           pointerId: 9981,
@@ -181,7 +181,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
 
     const pinchProbe = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
-        const canvas = document.querySelector("#world3d canvas");
+        const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)");
         const dispatchPointer = (type, pointerId, clientX, clientY) => {
           canvas.dispatchEvent(new PointerEvent(type, {
             pointerId,
@@ -216,7 +216,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
     }
 
     const canvasProbe = await page.evaluate(({ hoverYawDelta, wheelProbe, pinchProbe }) => {
-        const canvas = document.querySelector("#world3d canvas");
+        const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)");
         const rect = canvas.getBoundingClientRect();
         const sim = window.__ANT_SIM;
         const info = sim?.renderer?.info;

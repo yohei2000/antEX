@@ -10,8 +10,32 @@ test("renders the initial ant empire scene", async ({ page }) => {
 
   const metrics = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement | null;
+    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement | null;
     const rect = canvas?.getBoundingClientRect();
+    const fogCanvas = document.querySelector("#world3d canvas.fog-overlay") as HTMLCanvasElement | null;
+    const fogContext = fogCanvas?.getContext("2d") ?? null;
+    const fogRect = fogCanvas?.getBoundingClientRect();
+    const sampleFogAlpha = (screen: { x: number; y: number } | null) => {
+      if (!fogCanvas || !fogContext || !fogRect || !screen) return -1;
+      const pixelRatio = fogCanvas.width / Math.max(1, fogRect.width);
+      const x = Math.max(0, Math.min(fogCanvas.width - 1, Math.round(screen.x * pixelRatio)));
+      const y = Math.max(0, Math.min(fogCanvas.height - 1, Math.round(screen.y * pixelRatio)));
+      return fogContext.getImageData(x, y, 1, 1).data[3];
+    };
+    const radius = sim.mapVisionRadiusValue;
+    const outsideFogScreen = [
+      [sim.nest.x + radius + 48, sim.nest.z],
+      [sim.nest.x - radius - 48, sim.nest.z],
+      [sim.nest.x, sim.nest.z + radius + 48],
+      [sim.nest.x, sim.nest.z - radius - 48],
+    ].map(([x, z]) => sim.worldToScreen(x, 0, z)).find((screen: any) =>
+      screen.visible &&
+      fogRect &&
+      screen.x >= 0 &&
+      screen.y >= 0 &&
+      screen.x < fogRect.width &&
+      screen.y < fogRect.height,
+    ) ?? (fogRect ? { x: fogRect.width - 8, y: fogRect.height - 8 } : null);
     const info = sim.renderer.info;
     return {
       hasCanvas: Boolean(canvas),
@@ -44,6 +68,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
       rivalNestDiscovered: sim.rivalNest.discovered,
       rivalNestVisible: sim.rivalNest.group?.visible ?? false,
       fogOfWarVisible: Boolean(sim.fogOfWar?.visible),
+      fogOverlayVisible: Boolean(document.querySelector("#world3d canvas.fog-overlay")),
+      fogOverlayOutsideAlpha: sampleFogAlpha(outsideFogScreen),
+      fogOverlayNestAlpha: sampleFogAlpha(sim.worldToScreen(sim.nest.x, 0, sim.nest.z)),
       fogMaxAlpha: sim.fogOfWarMaterial?.uniforms.maxAlpha.value ?? 0,
       initialExploredPatchCount: sim.exploredPatches.length,
       outsideInitialCircleVisible: sim.isPointVisible(sim.nest.x + sim.mapVisionRadiusValue + 30, sim.nest.z, 0),
@@ -81,13 +108,17 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.foodSources).toBeGreaterThanOrEqual(4);
   expect(metrics.foodSpawnSites).toBeGreaterThanOrEqual(metrics.foodSources);
   expect(metrics.worldRadius).toBeGreaterThanOrEqual(260);
-  expect(metrics.mapVisionRadius).toBeGreaterThanOrEqual(100);
+  expect(metrics.mapVisionRadius).toBeGreaterThanOrEqual(70);
+  expect(metrics.mapVisionRadius).toBeLessThanOrEqual(90);
   expect(metrics.rivalNestExists).toBe(true);
   expect(metrics.rivalNestDistance).toBeGreaterThan(metrics.mapVisionRadius);
   expect(metrics.rivalNestDiscovered).toBe(false);
   expect(metrics.rivalNestVisible).toBe(false);
   expect(metrics.fogOfWarVisible).toBe(true);
-  expect(metrics.fogMaxAlpha).toBeGreaterThanOrEqual(0.94);
+  expect(metrics.fogOverlayVisible).toBe(true);
+  expect(metrics.fogOverlayOutsideAlpha).toBeGreaterThanOrEqual(200);
+  expect(metrics.fogOverlayNestAlpha).toBeLessThanOrEqual(80);
+  expect(metrics.fogMaxAlpha).toBeGreaterThanOrEqual(0.98);
   expect(metrics.initialExploredPatchCount).toBe(0);
   expect(metrics.outsideInitialCircleVisible).toBe(false);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
@@ -474,7 +505,7 @@ test("hover alone does not rotate the camera", async ({ page }) => {
 
   const delta = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
+    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement;
     const before = sim.targetCameraYaw;
     canvas.dispatchEvent(new PointerEvent("pointermove", {
       pointerId: 991,
@@ -509,7 +540,7 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
     return { before: sim.targetCameraDistance };
   });
   if ((viewport?.width ?? 0) >= 600) {
-    const canvas = page.locator("#world3d canvas");
+    const canvas = page.locator("#world3d canvas:not(.fog-overlay)");
     const box = await canvas.boundingBox();
     if (!box) throw new Error("world canvas was not visible for wheel zoom test");
     await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
@@ -521,7 +552,7 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
 
   const pinch = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
+    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement;
     const dispatchPointer = (type: string, pointerId: number, clientX: number, clientY: number) => {
       canvas.dispatchEvent(new PointerEvent(type, {
         pointerId,
@@ -565,7 +596,7 @@ test("camera target pans away from the home nest and can return home", async ({ 
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
+    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement;
     const rect = canvas.getBoundingClientRect();
     sim.cameraTarget.set(sim.nest.x, 0, sim.nest.z);
     sim.cameraRenderTarget.copy(sim.cameraTarget);

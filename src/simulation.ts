@@ -235,15 +235,19 @@ const SQUAD_TARGET_STICKINESS_BONUS = 20;
 const SQUAD_RALLY_SPACING = 16;
 const SQUAD_THREAT_SPACING = 8.5;
 const WORLD_RADIUS = 276;
-const MAP_BASE_VISION_RADIUS = 116;
+const MAP_BASE_VISION_RADIUS = 78;
 const MAP_TERRITORY_VISION_BONUS = 11.5;
 const MAP_NEST_LEVEL_VISION_BONUS = 4.2;
 const MAP_SENTRY_VISION_BONUS = 22;
 const MAP_SCOUT_VISION_BONUS = 34;
 const MAP_SCOUT_UPGRADE_VISION_BONUS = 10;
-const MAP_VISION_FADE_WIDTH = 22;
-const MAP_UNEXPLORED_MAX_ALPHA = 0.96;
+const MAP_VISION_FADE_WIDTH = 9;
+const MAP_UNEXPLORED_MAX_ALPHA = 0.985;
 const MAP_UNEXPLORED_COLOR = 0x030403;
+const MAP_SCREEN_FOG_ALPHA = 0.9;
+const MAP_SCREEN_FOG_COLOR = "rgb(3, 4, 3)";
+const MAP_RAID_FOOD_PRESSURE_RADIUS = 160;
+const RAID_SORTIE_SIGNAL_SEEK_RANGE = 148;
 const RIVAL_NEST_REVEAL_RADIUS = 44;
 const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
 const CAMERA_TARGET_PADDING = 18;
@@ -1406,7 +1410,11 @@ class Ant3D {
   updateGuardIntercept(dt, sim, steering) {
     const raid = sim.ensureRaidState();
     if (raid.phase !== "active" && raid.phase !== "retreating") return false;
-    const threat = sim.findRivalThreat(this.x, this.z, this.isSortieSoldier ? SOLDIER_SORTIE_SEEK_RANGE : GUARD_INTERCEPT_RANGE, this.squadTargetId);
+    const activeRaidSortie = this.isSortieSoldier && (raid.phase === "active" || raid.phase === "retreating");
+    const threat = activeRaidSortie
+      ? sim.findRivalThreat(this.x, this.z, RAID_SORTIE_SIGNAL_SEEK_RANGE, this.squadTargetId, { requireVisible: false }) ??
+        sim.findRivalThreat(this.x, this.z, SOLDIER_SORTIE_SEEK_RANGE, this.squadTargetId)
+      : sim.findRivalThreat(this.x, this.z, GUARD_INTERCEPT_RANGE, this.squadTargetId);
     if (!threat) return false;
     this.sortieTargetX = threat.x;
     this.sortieTargetZ = threat.z;
@@ -1909,7 +1917,8 @@ class RivalAnt3D {
       if (food.amount <= 0) continue;
       const distanceFromSelf = distance2(this.x, this.z, food.x, food.z);
       const distanceFromNest = distance2(food.x, food.z, sim.nest.x, sim.nest.z);
-      if (this.isRaidRival && distanceFromNest > Math.max(112, (sim.mapVisionRadiusValue ?? MAP_BASE_VISION_RADIUS) + 34)) continue;
+      const pressureRadius = Math.max(MAP_RAID_FOOD_PRESSURE_RADIUS, (sim.mapVisionRadiusValue ?? MAP_BASE_VISION_RADIUS) + 34);
+      if (this.isRaidRival && distanceFromNest > pressureRadius) continue;
       const foodSizeScore = Math.sqrt(Math.max(0, food.amount)) * 5.2;
       const remoteFoodPenalty = food.distanceTier === "far" ? 8 : food.distanceTier === "mid" ? 2.5 : 0;
       const score = foodSizeScore - distanceFromSelf * 0.04 - distanceFromNest * 0.016 - remoteFoodPenalty;
@@ -3114,6 +3123,11 @@ class AntColony3D {
     this.renderer = this.createRenderer();
     if (!this.renderer) return;
     ui.world.appendChild(this.renderer.domElement);
+    this.fogOverlay = document.createElement("canvas");
+    this.fogOverlay.className = "fog-overlay";
+    this.fogOverlay.setAttribute("aria-hidden", "true");
+    this.fogOverlayContext = this.fogOverlay.getContext("2d");
+    ui.world.appendChild(this.fogOverlay);
 
     this.frameAccumulator = 0;
     this.lastFrameTime = 0;
@@ -6029,6 +6043,13 @@ class AntColony3D {
     this.currentPixelRatio = Math.min((window.devicePixelRatio || 1) * this.quality.resolutionScale, this.quality.maxPixelRatio);
     this.renderer.setPixelRatio(this.currentPixelRatio);
     this.renderer.setSize(width, height, false);
+    if (this.fogOverlay) {
+      const pixelRatio = this.currentPixelRatio || 1;
+      this.fogOverlay.width = Math.max(1, Math.floor(width * pixelRatio));
+      this.fogOverlay.height = Math.max(1, Math.floor(height * pixelRatio));
+      this.fogOverlay.style.width = `${width}px`;
+      this.fogOverlay.style.height = `${height}px`;
+    }
     const baseCameraDistance = width < 680 ? CAMERA_DISTANCE_MOBILE : CAMERA_DISTANCE_DESKTOP;
     this.cameraDistance = clamp(this.cameraDistance || baseCameraDistance, CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
     this.targetCameraDistance = clamp(this.targetCameraDistance || baseCameraDistance, CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
@@ -6048,6 +6069,81 @@ class AntColony3D {
       this.cameraRenderTarget.z + Math.cos(this.cameraYaw) * horizontal,
     );
     this.camera.lookAt(this.cameraRenderTarget);
+  }
+
+  worldToScreen(x, y, z) {
+    const vector = new THREE.Vector3(x, y, z);
+    vector.project(this.camera);
+    const rect = this.fogOverlay?.getBoundingClientRect?.() ?? this.renderer.domElement.getBoundingClientRect();
+    return {
+      x: (vector.x * 0.5 + 0.5) * rect.width,
+      y: (-vector.y * 0.5 + 0.5) * rect.height,
+      visible: vector.z >= -1 && vector.z <= 1,
+    };
+  }
+
+  projectedWorldRadius(x, z, radius) {
+    const center = this.worldToScreen(x, 0, z);
+    const edgeX = this.worldToScreen(x + radius, 0, z);
+    const edgeZ = this.worldToScreen(x, 0, z + radius);
+    return Math.max(
+      Math.hypot(edgeX.x - center.x, edgeX.y - center.y),
+      Math.hypot(edgeZ.x - center.x, edgeZ.y - center.y),
+      1,
+    );
+  }
+
+  clearScreenFogCircle(context, x, z, radius, pixelRatio) {
+    const center = this.worldToScreen(x, 0, z);
+    const screenRadius = this.projectedWorldRadius(x, z, radius);
+    const cssWidth = this.fogOverlay?.clientWidth || window.innerWidth;
+    const cssHeight = this.fogOverlay?.clientHeight || window.innerHeight;
+    if (
+      center.x + screenRadius < -80 ||
+      center.y + screenRadius < -80 ||
+      center.x - screenRadius > cssWidth + 80 ||
+      center.y - screenRadius > cssHeight + 80
+    ) {
+      return;
+    }
+    const innerRadius = Math.max(0, screenRadius - 10);
+    const outerRadius = Math.max(1, screenRadius + 7);
+    const gradient = context.createRadialGradient(
+      center.x * pixelRatio,
+      center.y * pixelRatio,
+      innerRadius * pixelRatio,
+      center.x * pixelRatio,
+      center.y * pixelRatio,
+      outerRadius * pixelRatio,
+    );
+    gradient.addColorStop(0, "rgba(0,0,0,1)");
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(center.x * pixelRatio, center.y * pixelRatio, outerRadius * pixelRatio, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  renderScreenFogOverlay() {
+    if (!this.fogOverlay || !this.fogOverlayContext) return;
+    const context = this.fogOverlayContext;
+    const pixelRatio = this.currentPixelRatio || 1;
+    const width = this.fogOverlay.width;
+    const height = this.fogOverlay.height;
+    if (width <= 0 || height <= 0) return;
+    context.save();
+    context.globalCompositeOperation = "source-over";
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = MAP_SCREEN_FOG_COLOR;
+    context.globalAlpha = MAP_SCREEN_FOG_ALPHA;
+    context.fillRect(0, 0, width, height);
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = "destination-out";
+    this.clearScreenFogCircle(context, this.nest.x, this.nest.z, this.mapVisionRadiusValue || this.mapVisionRadius(), pixelRatio);
+    for (const patch of this.exploredPatches ?? []) {
+      this.clearScreenFogCircle(context, patch.x, patch.z, patch.radius, pixelRatio);
+    }
+    context.restore();
   }
 
   clampCameraTarget(x = this.cameraTarget.x, z = this.cameraTarget.z) {
@@ -6282,6 +6378,7 @@ class AntColony3D {
     this.squadRingSystem.render(renderAnts, this, alpha);
     this.roleLabelSystem.render(renderAnts, this, alpha);
     this.renderer.render(this.scene, this.camera);
+    this.renderScreenFogOverlay();
     window.__ANT_SIM_READY = true;
   }
 

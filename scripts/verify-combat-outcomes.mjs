@@ -23,7 +23,7 @@ async function waitForSimulation(page) {
   const ready = await page.evaluate(`(() => new Promise((resolve) => {
     const started = Date.now();
     const tick = () => {
-      if (window.__ANT_SIM_READY && document.querySelector("#world3d canvas")) resolve(true);
+      if (window.__ANT_SIM_READY && document.querySelector("#world3d canvas:not(.fog-overlay)")) resolve(true);
       else if (Date.now() - started > 15000) resolve(false);
       else setTimeout(tick, 120);
     };
