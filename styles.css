@@ -212,7 +212,7 @@ button {
   align-items: center;
   gap: 9px;
   min-width: 0;
-  max-width: min(72vw, 420px);
+  max-width: min(56vw, 420px);
   padding: 9px 10px;
 }
 
@@ -296,12 +296,37 @@ button {
   transform: translateY(1px);
 }
 
+.home-icon,
 .pause-icon,
 .reset-icon {
   position: relative;
   display: block;
   width: 18px;
   height: 18px;
+}
+
+.home-icon::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  height: 10px;
+  border: 3px solid currentColor;
+  border-top: 0;
+  border-radius: 2px;
+}
+
+.home-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 12px;
+  height: 12px;
+  border-left: 3px solid currentColor;
+  border-top: 3px solid currentColor;
+  transform: rotate(45deg);
 }
 
 .pause-icon::before,
@@ -529,6 +554,11 @@ button {
   background: rgba(81, 183, 166, 0.2);
 }
 
+.sortie-command.active {
+  border-color: rgba(217, 166, 63, 0.72);
+  background: rgba(217, 166, 63, 0.2);
+}
+
 .tab-panel {
   display: none;
 }
@@ -591,12 +621,27 @@ button {
   gap: 7px;
 }
 
+.sortie-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
 .construction-command {
   display: grid;
   align-content: center;
   gap: 3px;
   min-height: 58px;
   padding: 8px 7px;
+  text-align: left;
+}
+
+.sortie-command {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-height: 54px;
+  padding: 8px;
   text-align: left;
 }
 

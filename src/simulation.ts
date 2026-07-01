@@ -73,6 +73,7 @@ const ui = {
   world: document.querySelector("#world3d"),
   buttons: [...document.querySelectorAll(".tab-button")],
   activeToolLabel: document.querySelector("#activeToolLabel"),
+  homeView: document.querySelector("#homeViewBtn"),
   pause: document.querySelector("#pauseBtn"),
   reset: document.querySelector("#resetBtn"),
   statAnts: document.querySelector("#statAnts"),
@@ -112,6 +113,7 @@ const ui = {
   soldierDeployed: document.querySelector("#soldierDeployed"),
   soldierStatus: document.querySelector("#soldierStatus"),
   soldierSortieBtn: document.querySelector("#soldierSortieBtn"),
+  expeditionSortieBtn: document.querySelector("#expeditionSortieBtn"),
   battleLog: document.querySelector("#battleLog"),
   empirePanel: document.querySelector("#empirePanel"),
   panelGrip: document.querySelector("#panelGrip"),
@@ -242,6 +244,8 @@ const MAP_SCOUT_UPGRADE_VISION_BONUS = 10;
 const MAP_VISION_FADE_WIDTH = 22;
 const RIVAL_NEST_REVEAL_RADIUS = 44;
 const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
+const CAMERA_TARGET_PADDING = 18;
+const CAMERA_KEY_PAN_SPEED = 92;
 
 function squadColorForId(id) {
   return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
@@ -404,6 +408,7 @@ class InputManager {
       pointerup: (event) => sim.onPointerUp(event),
       pointercancel: (event) => sim.onPointerUp(event),
       wheel: (event) => sim.onWheel(event),
+      contextmenu: (event) => event.preventDefault(),
     };
     for (const [type, handler] of Object.entries(this.handlers)) {
       element.addEventListener(type, handler, { passive: false });
@@ -991,7 +996,7 @@ class Ant3D {
     const raid = sim.ensureRaidState();
     let target = threat;
     if (!target && this.isSortieSoldier) {
-      target = sim.currentSortieTarget(this.x, this.z);
+      target = sim.currentSortieTarget(this.x, this.z, this.sortieMode);
       if (!target && this.sortieTargetX != null && this.sortieTargetZ != null) {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
@@ -1082,7 +1087,7 @@ class Ant3D {
     const raid = sim.ensureRaidState();
     let target = threat;
     if (!target && this.isSortieSoldier) {
-      target = sim.currentSortieTarget(this.x, this.z);
+      target = sim.currentSortieTarget(this.x, this.z, this.sortieMode);
       if (!target && this.sortieTargetX != null && this.sortieTargetZ != null) {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
@@ -1147,7 +1152,7 @@ class Ant3D {
     const raid = sim.ensureRaidState();
     let target = threat;
     if (!target && this.isSortieSoldier) {
-      target = sim.currentSortieTarget(this.x, this.z);
+      target = sim.currentSortieTarget(this.x, this.z, this.sortieMode);
       if (!target && this.sortieTargetX != null && this.sortieTargetZ != null) {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
@@ -1212,7 +1217,7 @@ class Ant3D {
       anchor = { x: this.squadAnchorX, z: this.squadAnchorZ };
     }
     if (!anchor && this.isSortieSoldier) {
-      const target = sim.currentSortieTarget(this.x, this.z);
+      const target = sim.currentSortieTarget(this.x, this.z, this.sortieMode);
       if (target) {
         const d = distance2(target.x, target.z, sim.nest.x, sim.nest.z) || 1;
         anchor = {
@@ -1272,7 +1277,7 @@ class Ant3D {
     const raid = sim.ensureRaidState();
     let target = threat;
     if (!target && this.isSortieSoldier) {
-      target = sim.currentSortieTarget(this.x, this.z);
+      target = sim.currentSortieTarget(this.x, this.z, this.sortieMode);
       if (!target && this.sortieTargetX != null && this.sortieTargetZ != null) {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
@@ -1400,7 +1405,7 @@ class Ant3D {
     const raid = sim.ensureRaidState();
     const target = raid.phase === "warning" && sim.hasRaidDirectionIntel()
       ? sim.raidFormationPointForAnt(this, raid)
-      : sim.currentSortieTarget(this.x, this.z);
+      : sim.currentSortieTarget(this.x, this.z, this.sortieMode);
     if (target) {
       this.sortieTargetX = target.x;
       this.sortieTargetZ = target.z;
@@ -3089,6 +3094,8 @@ class AntColony3D {
     this.branchDraft = null;
     this.branchPreview = null;
     this.pinchStart = null;
+    this.pinchLastCenter = null;
+    this.cameraPanKeys = new Set();
     this.dragMoved = false;
     this.pendingConstructionKind = null;
     this.wallPlacementDraft = null;
@@ -3157,11 +3164,12 @@ class AntColony3D {
     this.sortieRetireQueue = [];
     this.squads = [];
     this.nextSquadId = 1;
+    this.selectedSortieMode = "defense";
     this.lastUiUpdate = 0;
     this.resizeWidth = 0;
     this.resizeHeight = 0;
 
-    this.cameraTarget = new THREE.Vector3(this.nest.x * 0.36, 0, this.nest.z * 0.36);
+    this.cameraTarget = new THREE.Vector3(this.nest.x, 0, this.nest.z);
     this.cameraRenderTarget = this.cameraTarget.clone();
     this.cameraYaw = -0.62;
     this.cameraPitch = 1.05;
@@ -3662,7 +3670,7 @@ class AntColony3D {
 
   shieldHeadBlockPoint(ant = null) {
     const raid = this.ensureRaidState();
-    let target = this.currentSortieTarget(ant?.x ?? this.nest.x, ant?.z ?? this.nest.z);
+    let target = this.currentSortieTarget(ant?.x ?? this.nest.x, ant?.z ?? this.nest.z, ant?.sortieMode);
     if (!target && ant?.sortieTargetX != null && ant?.sortieTargetZ != null) target = { x: ant.sortieTargetX, z: ant.sortieTargetZ };
     if (!target && (raid.phase === "active" || raid.phase === "retreating" || (raid.phase === "warning" && this.hasRaidDirectionIntel()))) {
       target = this.raidSignalPoint(raid, 0.78);
@@ -4504,8 +4512,12 @@ class AntColony3D {
       this.saveColony();
       this.dispose();
     };
+    this.boundKeyDown = (event) => this.onKeyDown(event);
+    this.boundKeyUp = (event) => this.onKeyUp(event);
     window.addEventListener("resize", this.boundResize);
     window.addEventListener("pagehide", this.boundPageHide, { once: true });
+    window.addEventListener("keydown", this.boundKeyDown, { passive: false });
+    window.addEventListener("keyup", this.boundKeyUp, { passive: false });
     this.setPanelCompact(this.panelCompact, false);
     this.bindPanelGestures();
 
@@ -4514,6 +4526,8 @@ class AntColony3D {
         this.setActiveTab(button.dataset.tab);
       });
     });
+
+    ui.homeView?.addEventListener("click", () => this.focusCameraOnNest());
 
     ui.pause.addEventListener("click", () => {
       this.paused = !this.paused;
@@ -4535,7 +4549,8 @@ class AntColony3D {
       event.preventDefault();
       this.startBarracksTraining(button.dataset.trainVariant);
     });
-    ui.soldierSortieBtn.addEventListener("click", () => this.startSoldierSortie());
+    ui.soldierSortieBtn.addEventListener("click", () => this.startSoldierSortie("defense"));
+    ui.expeditionSortieBtn?.addEventListener("click", () => this.startSoldierSortie("expedition"));
     ui.constructionTrailBtn?.addEventListener("click", () => this.startConstruction("trailReinforce"));
     ui.constructionBarricadeBtn?.addEventListener("click", () => this.startConstruction("lowBarricade"));
     ui.constructionWallBtn?.addEventListener("click", () => this.startConstruction("earthWall"));
@@ -5362,7 +5377,7 @@ class AntColony3D {
       }
       leader.squadColorHex = squad.colorHex;
       const threat = this.findSquadThreat(squad, leader, SOLDIER_SORTIE_SEEK_RANGE);
-      const target = threat ?? this.currentSortieTarget(leader.x, leader.z) ?? { x: squad.rallyX, z: squad.rallyZ, kind: "rally" };
+      const target = threat ?? this.currentSortieTarget(leader.x, leader.z, leader.sortieMode) ?? { x: squad.rallyX, z: squad.rallyZ, kind: "rally" };
       const rallyTarget = this.spreadSquadTarget(squad, leader, target, threat);
       squad.targetRivalId = threat?.id ?? null;
       squad.rallyX = rallyTarget.x;
@@ -5469,14 +5484,27 @@ class AntColony3D {
     return Math.max(0, Math.floor(this.availableSortieSoldiers()));
   }
 
-  currentSortieTarget(x = this.nest.x, z = this.nest.z) {
+  normalizeSortieMode(mode = this.selectedSortieMode) {
+    return mode === "expedition" ? "expedition" : mode === "defense" ? "defense" : "auto";
+  }
+
+  canStartExpeditionSortie() {
+    return this.isRivalNestKnown() && !this.rivalNest.defeated;
+  }
+
+  currentSortieTarget(x = this.nest.x, z = this.nest.z, mode = "auto") {
+    const sortieMode = this.normalizeSortieMode(mode);
     const threat = this.findRivalThreat(x, z, SOLDIER_SORTIE_SEEK_RANGE);
     if (threat) return { x: threat.x, z: threat.z, kind: "rival" };
+    if (sortieMode === "expedition") {
+      return this.canStartExpeditionSortie() ? { x: this.rivalNest.x, z: this.rivalNest.z, kind: "rival-nest" } : null;
+    }
     const raid = this.ensureRaidState();
     if (raid.phase === "warning" && !this.hasRaidDirectionIntel()) return null;
     if (raid.phase === "warning" || raid.phase === "active" || raid.phase === "retreating") {
       return { ...this.raidSignalPoint(raid, 0.78), kind: "raid-signal" };
     }
+    if (sortieMode === "defense") return null;
     if (this.isRivalNestKnown() && !this.rivalNest.defeated) {
       return { x: this.rivalNest.x, z: this.rivalNest.z, kind: "rival-nest" };
     }
@@ -5577,8 +5605,15 @@ class AntColony3D {
     }
   }
 
-  startSoldierSortie() {
+  startSoldierSortie(mode = this.selectedSortieMode) {
+    const sortieMode = this.normalizeSortieMode(mode) === "expedition" ? "expedition" : "defense";
+    this.selectedSortieMode = sortieMode;
     if (this.soldierSortieCooldown > 0) return false;
+    if (sortieMode === "expedition" && !this.canStartExpeditionSortie()) {
+      this.pushLog(this.rivalNest.defeated ? "遠征出動不可: 敵巣は陥落済み" : "遠征出動不可: 敵巣が未発見");
+      this.updateStats();
+      return false;
+    }
     const composition = this.sortieComposition();
     const count = composition.total;
     if (count < 1) {
@@ -5588,7 +5623,7 @@ class AntColony3D {
     }
 
     this.makeRoomForSortie(count);
-    const sortieTarget = this.currentSortieTarget();
+    const sortieTarget = this.currentSortieTarget(this.nest.x, this.nest.z, sortieMode);
     const targetAngle = sortieTarget ? Math.atan2(sortieTarget.z - this.nest.z, sortieTarget.x - this.nest.x) : null;
     const variants = [
       ...Array.from({ length: composition.heavy }, () => "heavySoldier"),
@@ -5610,6 +5645,7 @@ class AntColony3D {
       ant.role = "guard";
       ant.setVariant(variant);
       ant.isSortieSoldier = true;
+      ant.sortieMode = sortieMode;
       ant.sortieTimer = SOLDIER_SORTIE_SECONDS;
       ant.sortieIndex = i;
       ant.sortieTargetX = sortieTarget?.x ?? null;
@@ -5636,15 +5672,17 @@ class AntColony3D {
     this.soldierSortieCooldown = SOLDIER_SORTIE_COOLDOWN_SECONDS;
     const heavyText = composition.heavy > 0 ? ` / 重兵装${composition.heavy}匹` : "";
     const raid = this.ensureRaidState();
-    const formationText = raid.phase === "warning" && this.hasRaidDirectionIntel()
+    const formationText = sortieMode === "expedition"
+      ? " / 敵巣攻撃"
+      : raid.phase === "warning" && this.hasRaidDirectionIntel()
       ? ` / ${this.sentryMoundCount() > 0 ? "見張り塚" : "偵察情報"}の方角へ布陣`
-      : sortieTarget?.kind === "rival-nest" ? " / 敵巣攻撃" : "";
+      : "";
     const shieldText = composition.shield > 0 ? ` / 盾頭${composition.shield}匹` : "";
     const captainText = composition.captain > 0 ? ` / 小隊長${composition.captain}匹` : "";
     const acidText = composition.acid > 0 ? ` / 酸射${composition.acid}匹` : "";
     const scoutText = composition.scout > 0 ? ` / 斥候${composition.scout}匹` : "";
     const medicText = composition.medic > 0 ? ` / 救護${composition.medic}匹` : "";
-    const sortiePurpose = sortieTarget?.kind === "rival-nest" ? "敵巣へ" : "巣口から防衛へ";
+    const sortiePurpose = sortieMode === "expedition" ? "敵巣へ遠征" : "巣口から防衛へ";
     this.pushLog(`兵隊出撃: ${count}匹${heavyText}${shieldText}${captainText}${acidText}${scoutText}${medicText}が${sortiePurpose}${formationText}`);
     this.updateStats();
     this.saveColony();
@@ -5789,6 +5827,92 @@ class AntColony3D {
     this.camera.lookAt(this.cameraRenderTarget);
   }
 
+  clampCameraTarget(x = this.cameraTarget.x, z = this.cameraTarget.z) {
+    const limit = Math.max(24, this.worldRadius - CAMERA_TARGET_PADDING);
+    const distance = Math.hypot(x, z);
+    if (distance > limit) {
+      const scale = limit / distance;
+      x *= scale;
+      z *= scale;
+    }
+    return { x, z };
+  }
+
+  setCameraTarget(x, z, immediate = false) {
+    const target = this.clampCameraTarget(x, z);
+    this.cameraTarget.set(target.x, 0, target.z);
+    if (immediate) this.cameraRenderTarget.copy(this.cameraTarget);
+  }
+
+  moveCameraTarget(dx, dz) {
+    if (!Number.isFinite(dx) || !Number.isFinite(dz)) return false;
+    if (Math.abs(dx) + Math.abs(dz) <= 0.001) return false;
+    this.setCameraTarget(this.cameraTarget.x + dx, this.cameraTarget.z + dz);
+    return true;
+  }
+
+  focusCameraOnNest() {
+    this.setCameraTarget(this.nest.x, this.nest.z);
+  }
+
+  panCameraBetweenScreenPoints(fromX, fromY, toX, toY) {
+    const from = this.screenToGround(fromX, fromY);
+    const to = this.screenToGround(toX, toY);
+    if (!from || !to) return false;
+    return this.moveCameraTarget(from.x - to.x, from.z - to.z);
+  }
+
+  isCameraPanPointer(event) {
+    return event.button === 1 || event.button === 2 || event.shiftKey || (event.buttons & 2) !== 0 || (event.buttons & 4) !== 0;
+  }
+
+  isCameraKey(event) {
+    return event.code === "KeyW" || event.code === "KeyA" || event.code === "KeyS" || event.code === "KeyD" ||
+      event.code === "ArrowUp" || event.code === "ArrowLeft" || event.code === "ArrowDown" || event.code === "ArrowRight";
+  }
+
+  shouldIgnoreCameraKey(event) {
+    const target = event.target;
+    return target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      target instanceof HTMLButtonElement ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey;
+  }
+
+  onKeyDown(event) {
+    if (!this.isCameraKey(event) || this.shouldIgnoreCameraKey(event)) return;
+    event.preventDefault();
+    this.cameraPanKeys.add(event.code);
+  }
+
+  onKeyUp(event) {
+    if (!this.isCameraKey(event)) return;
+    event.preventDefault();
+    this.cameraPanKeys.delete(event.code);
+  }
+
+  updateCameraKeyboardPan(dt) {
+    if (!this.cameraPanKeys.size || dt <= 0) return;
+    const right =
+      (this.cameraPanKeys.has("KeyD") || this.cameraPanKeys.has("ArrowRight") ? 1 : 0) -
+      (this.cameraPanKeys.has("KeyA") || this.cameraPanKeys.has("ArrowLeft") ? 1 : 0);
+    const forward =
+      (this.cameraPanKeys.has("KeyW") || this.cameraPanKeys.has("ArrowUp") ? 1 : 0) -
+      (this.cameraPanKeys.has("KeyS") || this.cameraPanKeys.has("ArrowDown") ? 1 : 0);
+    if (right === 0 && forward === 0) return;
+    const length = Math.hypot(right, forward) || 1;
+    const yaw = this.cameraYaw;
+    const rightX = Math.cos(yaw);
+    const rightZ = -Math.sin(yaw);
+    const forwardX = -Math.sin(yaw);
+    const forwardZ = -Math.cos(yaw);
+    const speed = CAMERA_KEY_PAN_SPEED * (this.cameraDistance / CAMERA_DISTANCE_DESKTOP) * dt / length;
+    this.moveCameraTarget((rightX * right + forwardX * forward) * speed, (rightZ * right + forwardZ * forward) * speed);
+  }
+
   async prewarmAndStart() {
     this.loadingScreen.setProgress("compile", 0.75, 1);
     try {
@@ -5831,6 +5955,7 @@ class AntColony3D {
       if (steps === MAX_FIXED_STEPS) this.frameAccumulator = 0;
     }
 
+    this.updateCameraKeyboardPan(frameDelta);
     const alpha = this.paused ? 1 : clamp(this.frameAccumulator / FIXED_DT, 0, 1);
     this.renderGame(alpha);
   }
@@ -5946,6 +6071,8 @@ class AntColony3D {
     }
     window.removeEventListener("resize", this.boundResize);
     window.removeEventListener("pagehide", this.boundPageHide);
+    window.removeEventListener("keydown", this.boundKeyDown);
+    window.removeEventListener("keyup", this.boundKeyUp);
     this.clearBranchPreview();
     this.clearWallPlacementPreview();
     this.antRenderer?.destroy();
@@ -5974,16 +6101,21 @@ class AntColony3D {
     this.dragMoved = false;
     if (this.pointerMap.size === 2) {
       const points = [...this.pointerMap.values()];
+      const center = {
+        x: (points[0].x + points[1].x) * 0.5,
+        y: (points[0].y + points[1].y) * 0.5,
+      };
       this.pinchStart = {
         distance: Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y),
         cameraDistance: this.targetCameraDistance,
       };
+      this.pinchLastCenter = center;
       return;
     }
 
     const point = this.screenToGround(event.clientX, event.clientY);
     if (!point) return;
-    this.pointerStart = { screenX: event.clientX, screenY: event.clientY, ...point };
+    this.pointerStart = { screenX: event.clientX, screenY: event.clientY, mode: this.isCameraPanPointer(event) ? "pan" : "rotate", ...point };
     if (this.pendingConstructionKind === "earthWall" && !this.wallPlacementDraft) this.wallPlacementDraft = { points: [], hover: null };
   }
 
@@ -5997,12 +6129,25 @@ class AntColony3D {
       const points = [...this.pointerMap.values()];
       const current = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
       this.targetCameraDistance = clamp(this.pinchStart.cameraDistance * (this.pinchStart.distance / (current || 1)), CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
+      const center = {
+        x: (points[0].x + points[1].x) * 0.5,
+        y: (points[0].y + points[1].y) * 0.5,
+      };
+      if (this.pinchLastCenter && this.panCameraBetweenScreenPoints(this.pinchLastCenter.x, this.pinchLastCenter.y, center.x, center.y)) {
+        this.dragMoved = true;
+      }
+      this.pinchLastCenter = center;
       return;
     }
 
     const dx = event.clientX - previous.x;
     const dy = event.clientY - previous.y;
     if (Math.abs(dx) + Math.abs(dy) > 2) this.dragMoved = true;
+
+    if (this.pointerStart?.mode === "pan") {
+      this.panCameraBetweenScreenPoints(previous.x, previous.y, event.clientX, event.clientY);
+      return;
+    }
 
     if (this.pendingConstructionKind === "earthWall") {
       const point = this.screenToGround(event.clientX, event.clientY);
@@ -6034,7 +6179,11 @@ class AntColony3D {
       this.selectNearestAnt(point.x, point.z);
     }
     this.pointerMap.delete(event.pointerId);
-    if (this.pointerMap.size < 2) this.pinchStart = null;
+    if (this.pointerMap.size < 2) {
+      this.pinchStart = null;
+      this.pinchLastCenter = null;
+    }
+    if (this.pointerMap.size === 0) this.pointerStart = null;
   }
 
   onWheel(event) {
@@ -7649,6 +7798,32 @@ class AntColony3D {
     }
   }
 
+  updateSortieCommandButton(button, mode, plannedSortie, cooldownLeft) {
+    if (!button) return;
+    const normalized = mode === "expedition" ? "expedition" : "defense";
+    const hasSoldiers = plannedSortie > 0;
+    const expeditionReady = normalized !== "expedition" || this.canStartExpeditionSortie();
+    button.disabled = cooldownLeft > 0 || !hasSoldiers || !expeditionReady;
+    button.classList.toggle("active", this.selectedSortieMode === normalized);
+    const main = button.querySelector(".button-main");
+    const sub = button.querySelector(".button-sub");
+    const action = normalized === "expedition" ? "遠征出動" : "防衛出動";
+    const reason = cooldownLeft > 0
+      ? `再出撃まで ${cooldownLeft}s`
+      : !hasSoldiers
+        ? "兵隊不足"
+        : normalized === "expedition" && this.rivalNest.defeated
+          ? "敵巣陥落済み"
+          : normalized === "expedition" && !this.isRivalNestKnown()
+            ? "敵巣未発見"
+            : normalized === "expedition"
+              ? `敵巣耐久 ${fmt((this.rivalNest.integrity ?? 1) * 100, 0)}%`
+              : "敵襲・見えている敵へ";
+    if (main) main.textContent = cooldownLeft > 0 ? `再出撃まで ${cooldownLeft}s` : `${action} ${fmt(plannedSortie, 0)}`;
+    if (sub) sub.textContent = reason;
+    button.title = `${action}: ${reason}`;
+  }
+
   updateWallPlacementConfirmButton() {
     const button = ui.constructionWallConfirmBtn;
     if (!button) return;
@@ -7933,8 +8108,8 @@ class AntColony3D {
       cooldownLeft > 0 ? `再準備 ${cooldownLeft}s` :
       plannedSortie > 0 ? `出撃可 ${plannedSortie}` :
       availableSoldiers > 0 ? "上限待ち" : "兵隊不足";
-    ui.soldierSortieBtn.disabled = cooldownLeft > 0 || plannedSortie < 1;
-    ui.soldierSortieBtn.textContent = cooldownLeft > 0 ? `再出撃まで ${cooldownLeft}s` : `兵隊を出撃 ${fmt(plannedSortie, 0)}`;
+    this.updateSortieCommandButton(ui.soldierSortieBtn, "defense", plannedSortie, cooldownLeft);
+    this.updateSortieCommandButton(ui.expeditionSortieBtn, "expedition", plannedSortie, cooldownLeft);
     if (ui.raidNotice) {
       const visible = this.raidNotice.timer > 0 && this.raidNotice.message;
       ui.raidNotice.hidden = !visible;

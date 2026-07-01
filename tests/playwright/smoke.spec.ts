@@ -361,6 +361,81 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
   expect(pinch.close).toBeGreaterThan(pinch.before);
 });
 
+test("camera target pans away from the home nest and can return home", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    sim.cameraTarget.set(sim.nest.x, 0, sim.nest.z);
+    sim.cameraRenderTarget.copy(sim.cameraTarget);
+    sim.targetCameraYaw = -0.62;
+    sim.cameraYaw = -0.62;
+    const before = { x: sim.cameraTarget.x, z: sim.cameraTarget.z, yaw: sim.targetCameraYaw };
+    const startX = rect.left + rect.width * 0.54;
+    const startY = rect.top + rect.height * 0.44;
+    const endX = startX + 84;
+    const endY = startY + 42;
+    canvas.dispatchEvent(new PointerEvent("pointerdown", {
+      pointerId: 6011,
+      pointerType: "mouse",
+      button: 2,
+      buttons: 2,
+      clientX: startX,
+      clientY: startY,
+      bubbles: true,
+      cancelable: true,
+    }));
+    canvas.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 6011,
+      pointerType: "mouse",
+      button: 2,
+      buttons: 2,
+      clientX: endX,
+      clientY: endY,
+      bubbles: true,
+      cancelable: true,
+    }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", {
+      pointerId: 6011,
+      pointerType: "mouse",
+      button: 2,
+      buttons: 0,
+      clientX: endX,
+      clientY: endY,
+      bubbles: true,
+      cancelable: true,
+    }));
+    const afterDrag = {
+      x: sim.cameraTarget.x,
+      z: sim.cameraTarget.z,
+      yaw: sim.targetCameraYaw,
+      distanceFromHome: Math.hypot(sim.cameraTarget.x - sim.nest.x, sim.cameraTarget.z - sim.nest.z),
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true, cancelable: true }));
+    sim.updateCameraKeyboardPan(0.5);
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD", bubbles: true, cancelable: true }));
+    const afterKey = {
+      x: sim.cameraTarget.x,
+      z: sim.cameraTarget.z,
+      distanceFromDrag: Math.hypot(sim.cameraTarget.x - afterDrag.x, sim.cameraTarget.z - afterDrag.z),
+    };
+    sim.focusCameraOnNest();
+    const afterHome = {
+      x: sim.cameraTarget.x,
+      z: sim.cameraTarget.z,
+      distanceFromHome: Math.hypot(sim.cameraTarget.x - sim.nest.x, sim.cameraTarget.z - sim.nest.z),
+    };
+    return { before, afterDrag, afterKey, afterHome };
+  });
+
+  expect(result.afterDrag.distanceFromHome).toBeGreaterThan(2);
+  expect(result.afterDrag.yaw).toBeCloseTo(result.before.yaw, 5);
+  expect(result.afterKey.distanceFromDrag).toBeGreaterThan(2);
+  expect(result.afterHome.distanceFromHome).toBeLessThan(0.001);
+});
+
 test("empire panel can be collapsed and expanded by swipe", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -539,14 +614,17 @@ test("military tab deploys nest soldiers on player command", async ({ page }) =>
       plannedSortie: sim.plannedSortieCount(),
       activeTab: sim.activeTab,
       button: (document.querySelector("#soldierSortieBtn") as HTMLButtonElement).textContent,
+      expeditionButton: (document.querySelector("#expeditionSortieBtn") as HTMLButtonElement).textContent,
+      expeditionDisabled: (document.querySelector("#expeditionSortieBtn") as HTMLButtonElement).disabled,
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
+      soldierPanelText: document.querySelector("#soldierTab")?.textContent ?? "",
     };
-    const started = sim.startSoldierSortie();
+    const started = sim.startSoldierSortie("defense");
     const firstWave = sim.deployedSoldiers();
     sim.soldierSortieCooldown = 0;
     sim.updateStats();
     const plannedAfterFirstCooldown = sim.plannedSortieCount();
-    const secondStarted = sim.startSoldierSortie();
+    const secondStarted = sim.startSoldierSortie("defense");
     const deployed = sim.deployedSoldiers();
     for (let i = 0; i < 90; i += 1) sim.updateGame(1 / 60);
     for (const ant of deployed) {
@@ -568,6 +646,7 @@ test("military tab deploys nest soldiers on player command", async ({ page }) =>
       secondStarted,
       deployedCount: deployed.length,
       deployedRoles: deployed.map((ant: any) => ant.role),
+      deployedModes: deployed.map((ant: any) => ant.sortieMode),
       spawnDistances: deployed.map((ant: any) => Math.hypot(ant.x - sim.nest.x, ant.z - sim.nest.z)),
       afterRetire: sim.deployedSoldierCount(),
       statusText: (document.querySelector("#soldierStatus") as HTMLElement).textContent,
@@ -581,19 +660,85 @@ test("military tab deploys nest soldiers on player command", async ({ page }) =>
   expect(result.before.sortieLimit).toBe(4);
   expect(result.before.availableSortie).toBe(4);
   expect(result.before.plannedSortie).toBe(4);
-  expect(result.before.button).toContain("兵隊を出撃 4");
+  expect(result.before.button).toContain("防衛出動 4");
+  expect(result.before.expeditionButton).toContain("遠征出動 4");
+  expect(result.before.expeditionDisabled).toBe(true);
   expect(result.before.tabText).toContain("軍事");
-  expect(result.before.tabText).not.toContain("遠征");
+  expect(result.before.soldierPanelText).toContain("遠征出動");
   expect(result.started).toBe(true);
   expect(result.firstWaveCount).toBe(4);
   expect(result.plannedAfterFirstCooldown).toBe(3);
   expect(result.secondStarted).toBe(true);
   expect(result.deployedCount).toBe(7);
   expect(result.deployedRoles.every((role: string) => role === "guard")).toBe(true);
+  expect(result.deployedModes.every((mode: string) => mode === "defense")).toBe(true);
   expect(Math.max(...result.spawnDistances)).toBeLessThan(14);
   expect(result.afterRetire).toBe(0);
   expect(result.statusText).toContain("再準備");
   expect(result.logText).toContain("兵隊出撃");
+});
+
+test("expedition sortie targets a discovered enemy nest instead of defense patrol", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.raidState = {
+      phase: "calm",
+      timer: 60,
+      wave: 1,
+      activeCount: 0,
+      approachAngle: sim.raidApproachAngle(),
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: null,
+      lastOutcome: "none",
+    };
+    sim.colony.food = 1000;
+    sim.colony.antPopulation = 36;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 6;
+    sim.rivalNest.discovered = true;
+    sim.rivalNest.defeated = false;
+    sim.rivalNest.integrity = 0.82;
+    sim.soldierSortieCooldown = 0;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.updateMapIntel();
+    sim.setActiveTab("soldiers");
+    sim.updateStats();
+    const defenseTarget = sim.currentSortieTarget(sim.nest.x, sim.nest.z, "defense");
+    const expeditionTarget = sim.currentSortieTarget(sim.nest.x, sim.nest.z, "expedition");
+    const before = {
+      planned: sim.plannedSortieCount(),
+      expeditionDisabled: (document.querySelector("#expeditionSortieBtn") as HTMLButtonElement).disabled,
+      expeditionText: (document.querySelector("#expeditionSortieBtn") as HTMLButtonElement).textContent,
+      defenseTarget,
+      expeditionTarget,
+    };
+    const started = sim.startSoldierSortie("expedition");
+    const deployed = sim.deployedSoldiers();
+    return {
+      before,
+      started,
+      modes: deployed.map((ant: any) => ant.sortieMode),
+      targetKinds: deployed.map((ant: any) => Math.hypot((ant.sortieTargetX ?? 0) - sim.rivalNest.x, (ant.sortieTargetZ ?? 0) - sim.rivalNest.z)),
+      log: sim.colony.battleLog.join("\n"),
+    };
+  });
+
+  expect(result.before.planned).toBe(3);
+  expect(result.before.expeditionDisabled).toBe(false);
+  expect(result.before.expeditionText).toContain("遠征出動 3");
+  expect(result.before.defenseTarget).toBeNull();
+  expect(result.before.expeditionTarget?.kind).toBe("rival-nest");
+  expect(result.started).toBe(true);
+  expect(result.modes.every((mode: string) => mode === "expedition")).toBe(true);
+  expect(Math.max(...result.targetKinds)).toBeLessThan(0.001);
+  expect(result.log).toContain("敵巣へ遠征");
 });
 
 test("barracks tab queues every ant type and completes one ant at a time", async ({ page }) => {

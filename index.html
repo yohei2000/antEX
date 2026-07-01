@@ -46,6 +46,9 @@
           </div>
         </div>
         <div class="quick-actions">
+          <button id="homeViewBtn" class="icon-button" type="button" title="巣へ視点を戻す" aria-label="巣へ視点を戻す">
+            <span class="home-icon" aria-hidden="true"></span>
+          </button>
           <button id="pauseBtn" class="icon-button" type="button" title="一時停止" aria-label="一時停止">
             <span class="pause-icon" aria-hidden="true"></span>
           </button>
@@ -204,7 +207,16 @@
               <strong id="soldierStatus">待機</strong>
             </div>
           </div>
-          <button id="soldierSortieBtn" class="primary-button" type="button">兵隊を出撃</button>
+          <div class="sortie-actions">
+            <button id="soldierSortieBtn" class="primary-button sortie-command" type="button">
+              <span class="button-main">防衛出動</span>
+              <span class="button-sub">敵襲・見えている敵へ</span>
+            </button>
+            <button id="expeditionSortieBtn" class="primary-button sortie-command" type="button">
+              <span class="button-main">遠征出動</span>
+              <span class="button-sub">発見済み敵巣へ</span>
+            </button>
+          </div>
           <div id="battleLog" class="battle-log"></div>
         </div>
       </section>
