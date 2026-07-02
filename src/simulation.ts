@@ -131,6 +131,8 @@ const ui = {
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
+const WORLD_MAP_TEXTURE_PATH = "assets/generated/ant-world-map-20260702.png";
+const WORLD_MAP_TEXTURE_URL = `${import.meta.env.BASE_URL}${WORLD_MAP_TEXTURE_PATH}`;
 
 const QUALITY_PRESETS = {
   low: {
@@ -317,6 +319,17 @@ function makeGroundTexture() {
   return texture;
 }
 
+function configureWorldMapTexture(texture) {
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.flipY = false;
+  return texture;
+}
+
 function roundedRect(context, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);
   context.beginPath();
@@ -399,12 +412,17 @@ class AssetService {
     this.cache = new Map();
   }
 
-  preloadProceduralAssets() {
+  preloadAssets() {
     this.manager.itemStart("procedural-ground");
-    const groundTexture = makeGroundTexture();
-    groundTexture.anisotropy = 4;
-    this.cache.set("groundTexture", groundTexture);
+    const fallbackGroundTexture = makeGroundTexture();
+    fallbackGroundTexture.anisotropy = 4;
+    this.cache.set("fallbackGroundTexture", fallbackGroundTexture);
     this.manager.itemEnd("procedural-ground");
+
+    const worldMapTexture = configureWorldMapTexture(new THREE.TextureLoader(this.manager).load(WORLD_MAP_TEXTURE_URL));
+    worldMapTexture.anisotropy = 8;
+    this.cache.set("groundTexture", worldMapTexture);
+    this.cache.set("groundTextureUrl", WORLD_MAP_TEXTURE_URL);
   }
 
   get(name) {
@@ -3152,10 +3170,11 @@ class AntColony3D {
     this.raidSoonMode = IS_RAID_SOON;
     document.body.classList.toggle("is-raid-soon", this.raidSoonMode);
     this.worldRadius = WORLD_RADIUS;
-    this.nest = { x: -154, z: -112, radius: 8 };
+    this.groundMapAssetUrl = WORLD_MAP_TEXTURE_URL;
+    this.nest = { x: -164, z: -154, radius: 8 };
     this.rivalNest = {
-      x: 228,
-      z: 144,
+      x: 188,
+      z: 170,
       radius: 9,
       discovered: false,
       defeated: false,
@@ -3233,7 +3252,7 @@ class AntColony3D {
     this.sharedMaterials = new Set();
     this.dynamicObjects = new Set();
 
-    this.assetService.preloadProceduralAssets();
+    this.assetService.preloadAssets();
     this.applyOfflineProgress(Date.now());
     this.createSharedAssets();
     this.voxelBuildingRenderer = new VoxelBuildingRenderer({
@@ -3308,10 +3327,10 @@ class AntColony3D {
     };
 
     this.materials = {
-      ground: new THREE.MeshStandardMaterial({
+      ground: new THREE.MeshBasicMaterial({
         map: this.assetService.get("groundTexture"),
-        roughness: 0.92,
-        metalness: 0,
+        color: 0xffffff,
+        toneMapped: false,
       }),
       nest: new THREE.MeshStandardMaterial({ color: 0x6d4e2a, roughness: 0.95 }),
       nestLoose: new THREE.MeshStandardMaterial({ color: 0x8a6335, roughness: 0.96 }),
@@ -3332,23 +3351,25 @@ class AntColony3D {
       foodLeaf: new THREE.MeshStandardMaterial({ color: 0x6f8d38, roughness: 0.8 }),
       stone: new THREE.MeshStandardMaterial({ color: 0x777c75, roughness: 0.86 }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
-      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x456f42, transparent: true, opacity: 0.34, depthWrite: false }),
-      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x7b5b30, transparent: true, opacity: 0.24, depthWrite: false }),
-      terrainSand: new THREE.MeshBasicMaterial({ color: 0xd8c082, transparent: true, opacity: 0.32, depthWrite: false }),
-      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x2f5149, transparent: true, opacity: 0.34, depthWrite: false }),
-      terrainGravel: new THREE.MeshBasicMaterial({ color: 0x848075, transparent: true, opacity: 0.3, depthWrite: false }),
-      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0x9d7650, transparent: true, opacity: 0.3, depthWrite: false }),
-      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x8a4a2f, transparent: true, opacity: 0.34, depthWrite: false }),
+      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x456f42, transparent: true, opacity: 0.08, depthWrite: false }),
+      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x7b5b30, transparent: true, opacity: 0.07, depthWrite: false }),
+      terrainSand: new THREE.MeshBasicMaterial({ color: 0xd8c082, transparent: true, opacity: 0.08, depthWrite: false }),
+      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x2f5149, transparent: true, opacity: 0.08, depthWrite: false }),
+      terrainGravel: new THREE.MeshBasicMaterial({ color: 0x848075, transparent: true, opacity: 0.07, depthWrite: false }),
+      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0x9d7650, transparent: true, opacity: 0.07, depthWrite: false }),
+      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x8a4a2f, transparent: true, opacity: 0.08, depthWrite: false }),
       terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
       predatorBody: new THREE.MeshStandardMaterial({ color: 0x2b211c, roughness: 0.78 }),
       predatorAccent: new THREE.MeshBasicMaterial({ color: 0xb44a36, transparent: true, opacity: 0.58 }),
       water: new THREE.MeshPhysicalMaterial({
-        color: 0x4aa6d9,
+        color: 0x55b9e3,
         transparent: true,
-        opacity: 0.42,
+        opacity: 0.56,
         roughness: 0.12,
         metalness: 0,
         transmission: 0.15,
+        emissive: 0x073243,
+        emissiveIntensity: 0.18,
         depthWrite: false,
       }),
       waterRing: new THREE.MeshBasicMaterial({ color: 0x9ce7ff, transparent: true, opacity: 0.48 }),
@@ -3420,6 +3441,7 @@ class AntColony3D {
     this.scene.add(sun);
 
     const ground = new THREE.Mesh(new THREE.CircleGeometry(this.worldRadius + 12, 144), this.materials.ground);
+    ground.name = "generated-world-map-ground";
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.03;
     ground.receiveShadow = this.quality.shadowQuality !== "off";
@@ -3445,18 +3467,18 @@ class AntColony3D {
 
   seedTerrain() {
     const patches = [
-      { kind: "dryClay", x: -196, z: -142, rx: 72, rz: 48, rotation: -0.18, speed: 0.96, material: this.materials.terrainDryClay },
-      { kind: "moss", x: -122, z: -18, rx: 98, rz: 64, rotation: 0.22, speed: 0.87, material: this.materials.terrainMoss },
-      { kind: "damp", x: -172, z: 116, rx: 86, rz: 58, rotation: -0.28, speed: 0.72, material: this.materials.terrainDamp },
-      { kind: "moss", x: -54, z: 82, rx: 84, rz: 44, rotation: 0.36, speed: 0.88, material: this.materials.terrainMoss },
-      { kind: "sand", x: 38, z: 126, rx: 74, rz: 36, rotation: -0.16, speed: 1.04, material: this.materials.terrainSand },
-      { kind: "damp", x: 76, z: -18, rx: 94, rz: 62, rotation: -0.1, speed: 0.72, material: this.materials.terrainDamp },
-      { kind: "moss", x: 56, z: -126, rx: 92, rz: 58, rotation: 0.42, speed: 0.86, material: this.materials.terrainMoss },
-      { kind: "gravel", x: 162, z: 88, rx: 90, rz: 56, rotation: 0.14, speed: 0.88, material: this.materials.terrainGravel },
-      { kind: "enemySoil", x: 222, z: 144, rx: 42, rz: 30, rotation: 0.28, speed: 0.9, material: this.materials.terrainEnemySoil },
-      { kind: "leaf", x: 176, z: -142, rx: 62, rz: 34, rotation: -0.32, speed: 0.86, material: this.materials.terrainLeaf },
-      { kind: "sand", x: -44, z: -112, rx: 42, rz: 28, rotation: 0.12, speed: 1.03, material: this.materials.terrainSand },
-      { kind: "damp", x: 138, z: -34, rx: 78, rz: 44, rotation: 0.58, speed: 0.74, material: this.materials.terrainDamp },
+      { kind: "dryClay", x: -178, z: -158, rx: 82, rz: 58, rotation: -0.28, speed: 0.96, material: this.materials.terrainDryClay },
+      { kind: "damp", x: 118, z: -82, rx: 104, rz: 72, rotation: -0.22, speed: 0.72, material: this.materials.terrainDamp },
+      { kind: "damp", x: -198, z: 128, rx: 42, rz: 34, rotation: 0.12, speed: 0.72, material: this.materials.terrainDamp },
+      { kind: "damp", x: -172, z: 48, rx: 38, rz: 30, rotation: -0.2, speed: 0.72, material: this.materials.terrainDamp },
+      { kind: "moss", x: -116, z: 120, rx: 96, rz: 58, rotation: 0.12, speed: 0.87, material: this.materials.terrainMoss },
+      { kind: "moss", x: -42, z: -78, rx: 74, rz: 46, rotation: -0.36, speed: 0.88, material: this.materials.terrainMoss },
+      { kind: "moss", x: 40, z: 22, rx: 92, rz: 54, rotation: 0.28, speed: 0.88, material: this.materials.terrainMoss },
+      { kind: "sand", x: -28, z: 134, rx: 58, rz: 34, rotation: 0.08, speed: 1.04, material: this.materials.terrainSand },
+      { kind: "sand", x: 58, z: -160, rx: 64, rz: 34, rotation: -0.18, speed: 1.03, material: this.materials.terrainSand },
+      { kind: "gravel", x: 28, z: 104, rx: 78, rz: 40, rotation: -0.04, speed: 0.9, material: this.materials.terrainGravel },
+      { kind: "enemySoil", x: 188, z: 170, rx: 72, rz: 52, rotation: 0.18, speed: 0.9, material: this.materials.terrainEnemySoil },
+      { kind: "leaf", x: 206, z: -28, rx: 70, rz: 42, rotation: -0.28, speed: 0.86, material: this.materials.terrainLeaf },
     ];
 
     for (const patch of patches) this.createTerrainPatch(patch);
@@ -3485,29 +3507,29 @@ class AntColony3D {
   }
 
   seedPermanentWater() {
-    this.addWater(88, -34, 1, { permanent: true, radius: 46, rx: 72, rz: 50, rotation: -0.16, power: 0.82, ring: false });
-    this.addWater(-204, 118, 1, { permanent: true, radius: 22, rx: 38, rz: 15, rotation: -0.42, power: 0.48, ring: false });
-    this.addWater(-150, 104, 1, { permanent: true, radius: 18, rx: 30, rz: 13, rotation: 0.38, power: 0.42, ring: false });
+    this.addWater(122, -78, 1, { permanent: true, radius: 52, rx: 82, rz: 62, rotation: -0.22, power: 0.86, ring: false });
+    this.addWater(-200, 132, 1, { permanent: true, radius: 24, rx: 35, rz: 27, rotation: 0.16, power: 0.5, ring: false });
+    this.addWater(-170, 48, 1, { permanent: true, radius: 22, rx: 34, rz: 27, rotation: -0.32, power: 0.46, ring: false });
   }
 
   seedTerrainBumps() {
     const bumps = [
-      { x: -236, z: -96, rx: 5.2, rz: 2.0, h: 0.34, rotation: -0.32 },
-      { x: -188, z: -184, rx: 5.8, rz: 2.3, h: 0.38, rotation: 0.2 },
-      { x: -128, z: -62, rx: 6.6, rz: 2.7, h: 0.46, rotation: 0.54 },
-      { x: -190, z: 88, rx: 5.2, rz: 2.1, h: 0.34, rotation: -0.7 },
-      { x: -142, z: 138, rx: 4.6, rz: 2.0, h: 0.32, rotation: 0.58 },
-      { x: -48, z: 74, rx: 5.8, rz: 2.4, h: 0.42, rotation: -0.1 },
-      { x: 18, z: 130, rx: 7.4, rz: 2.8, h: 0.5, rotation: 0.28 },
-      { x: 92, z: 116, rx: 5.1, rz: 2.2, h: 0.4, rotation: -0.54 },
-      { x: 148, z: 84, rx: 4.2, rz: 1.9, h: 0.32, rotation: 0.72 },
-      { x: 206, z: 108, rx: 6.2, rz: 2.5, h: 0.46, rotation: -0.18 },
-      { x: 68, z: -104, rx: 5.6, rz: 2.2, h: 0.34, rotation: 0.66 },
-      { x: 150, z: -148, rx: 6.4, rz: 2.6, h: 0.42, rotation: -0.44 },
-      { x: 192, z: -72, rx: 5.0, rz: 2.0, h: 0.34, rotation: 0.36 },
-      { x: -34, z: -142, rx: 5.4, rz: 2.0, h: 0.36, rotation: -0.62 },
-      { x: 38, z: 18, rx: 5.8, rz: 2.2, h: 0.38, rotation: 0.42 },
-      { x: 108, z: 22, rx: 5.0, rz: 2.2, h: 0.34, rotation: -0.24 },
+      { x: -220, z: -122, rx: 4.6, rz: 1.8, h: 0.3, rotation: -0.3 },
+      { x: -138, z: -188, rx: 5.2, rz: 2.0, h: 0.34, rotation: 0.2 },
+      { x: -98, z: -68, rx: 6.0, rz: 2.4, h: 0.38, rotation: 0.54 },
+      { x: -214, z: 108, rx: 4.6, rz: 1.8, h: 0.3, rotation: -0.7 },
+      { x: -138, z: 146, rx: 4.2, rz: 1.8, h: 0.28, rotation: 0.58 },
+      { x: -42, z: 102, rx: 5.2, rz: 2.1, h: 0.34, rotation: -0.1 },
+      { x: 8, z: 138, rx: 6.6, rz: 2.4, h: 0.4, rotation: 0.28 },
+      { x: 74, z: 104, rx: 4.6, rz: 2.0, h: 0.34, rotation: -0.54 },
+      { x: 130, z: 74, rx: 4.0, rz: 1.8, h: 0.3, rotation: 0.72 },
+      { x: 210, z: 126, rx: 5.8, rz: 2.3, h: 0.4, rotation: -0.18 },
+      { x: 74, z: -142, rx: 5.0, rz: 2.0, h: 0.3, rotation: 0.66 },
+      { x: 150, z: -158, rx: 5.8, rz: 2.2, h: 0.36, rotation: -0.44 },
+      { x: 210, z: -48, rx: 4.6, rz: 1.8, h: 0.3, rotation: 0.36 },
+      { x: -34, z: -156, rx: 4.8, rz: 1.8, h: 0.32, rotation: -0.62 },
+      { x: 34, z: 24, rx: 5.2, rz: 2.0, h: 0.34, rotation: 0.42 },
+      { x: 118, z: 12, rx: 4.6, rz: 2.0, h: 0.3, rotation: -0.24 },
     ];
     for (const bump of bumps) this.addTerrainBump(bump);
   }

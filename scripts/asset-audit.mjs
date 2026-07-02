@@ -29,7 +29,7 @@ const report = {
   totalBytes,
   assets,
   notes: [
-    "Runtime binary assets are currently limited to small generated role-label icons.",
+    "Runtime binary assets include the generated ant-world-map ground texture and small generated role-label icons.",
     "When GLB assets are introduced, prefer Meshopt first, Draco only for bandwidth-heavy static meshes.",
     "When color textures are introduced, convert large color maps to KTX2/BasisU and keep normal/roughness/metalness linear.",
   ],

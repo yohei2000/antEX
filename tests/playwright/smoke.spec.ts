@@ -69,6 +69,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
       outsideVisibilityChangedByCameraYaw: outsideVisibleBeforeYaw !== outsideVisibleAfterYaw,
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
+      groundMapAssetUrl: sim.groundMapAssetUrl ?? "",
+      groundMaterialUsesGeneratedMap: sim.materials.ground.map === sim.assetService.get("groundTexture"),
+      groundTextureFlipY: sim.materials.ground.map?.flipY ?? true,
       waterCount: sim.water.length,
       permanentWaterCount: sim.water.filter((water: any) => water.permanent).length,
       maxWaterRadius: Math.max(...sim.water.map((water: any) => water.radius)),
@@ -126,6 +129,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.outsideVisibilityChangedByCameraYaw).toBe(false);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(8);
+  expect(metrics.groundMapAssetUrl).toContain("assets/generated/ant-world-map-20260702.png");
+  expect(metrics.groundMaterialUsesGeneratedMap).toBe(true);
+  expect(metrics.groundTextureFlipY).toBe(false);
   expect(metrics.waterCount).toBeGreaterThanOrEqual(3);
   expect(metrics.permanentWaterCount).toBeGreaterThanOrEqual(3);
   expect(metrics.maxWaterRadius).toBeGreaterThanOrEqual(42);
