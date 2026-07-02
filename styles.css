@@ -66,11 +66,6 @@ button {
   touch-action: none;
 }
 
-#world3d canvas.fog-overlay {
-  z-index: 2;
-  pointer-events: none;
-}
-
 .loading-overlay,
 .error-panel,
 .debug-panel,

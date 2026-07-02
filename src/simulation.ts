@@ -242,12 +242,12 @@ const MAP_SENTRY_VISION_BONUS = 22;
 const MAP_SCOUT_VISION_BONUS = 34;
 const MAP_SCOUT_UPGRADE_VISION_BONUS = 10;
 const MAP_VISION_FADE_WIDTH = 9;
-const MAP_UNEXPLORED_MAX_ALPHA = 0.985;
+const MAP_UNEXPLORED_MAX_ALPHA = 0.995;
 const MAP_UNEXPLORED_COLOR = 0x030403;
-const MAP_SCREEN_FOG_ALPHA = 0.9;
-const MAP_SCREEN_FOG_COLOR = "rgb(3, 4, 3)";
+const MAP_FOG_RENDER_ORDER = 80;
 const MAP_RAID_FOOD_PRESSURE_RADIUS = 160;
 const RAID_SORTIE_SIGNAL_SEEK_RANGE = 148;
+const LOCAL_RIVAL_THREAT_SIGHT_RANGE = 72;
 const RIVAL_NEST_REVEAL_RADIUS = 44;
 const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
 const CAMERA_TARGET_PADDING = 18;
@@ -3123,11 +3123,6 @@ class AntColony3D {
     this.renderer = this.createRenderer();
     if (!this.renderer) return;
     ui.world.appendChild(this.renderer.domElement);
-    this.fogOverlay = document.createElement("canvas");
-    this.fogOverlay.className = "fog-overlay";
-    this.fogOverlay.setAttribute("aria-hidden", "true");
-    this.fogOverlayContext = this.fogOverlay.getContext("2d");
-    ui.world.appendChild(this.fogOverlay);
 
     this.frameAccumulator = 0;
     this.lastFrameTime = 0;
@@ -3157,11 +3152,11 @@ class AntColony3D {
     this.raidSoonMode = IS_RAID_SOON;
     document.body.classList.toggle("is-raid-soon", this.raidSoonMode);
     this.worldRadius = WORLD_RADIUS;
-    this.nest = { x: -42, z: 12, radius: 8 };
+    this.nest = { x: -154, z: -112, radius: 8 };
     this.rivalNest = {
-      x: 218,
-      z: -116,
-      radius: 10,
+      x: 228,
+      z: 144,
+      radius: 9,
       discovered: false,
       defeated: false,
       integrity: 1,
@@ -3337,10 +3332,13 @@ class AntColony3D {
       foodLeaf: new THREE.MeshStandardMaterial({ color: 0x6f8d38, roughness: 0.8 }),
       stone: new THREE.MeshStandardMaterial({ color: 0x777c75, roughness: 0.86 }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
-      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x456f42, transparent: true, opacity: 0.32, depthWrite: false }),
-      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x7b5b30, transparent: true, opacity: 0.28, depthWrite: false }),
-      terrainSand: new THREE.MeshBasicMaterial({ color: 0xd1b36d, transparent: true, opacity: 0.24, depthWrite: false }),
-      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x3d5f58, transparent: true, opacity: 0.25, depthWrite: false }),
+      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x456f42, transparent: true, opacity: 0.34, depthWrite: false }),
+      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x7b5b30, transparent: true, opacity: 0.24, depthWrite: false }),
+      terrainSand: new THREE.MeshBasicMaterial({ color: 0xd8c082, transparent: true, opacity: 0.32, depthWrite: false }),
+      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x2f5149, transparent: true, opacity: 0.34, depthWrite: false }),
+      terrainGravel: new THREE.MeshBasicMaterial({ color: 0x848075, transparent: true, opacity: 0.3, depthWrite: false }),
+      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0x9d7650, transparent: true, opacity: 0.3, depthWrite: false }),
+      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x8a4a2f, transparent: true, opacity: 0.34, depthWrite: false }),
       terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
       predatorBody: new THREE.MeshStandardMaterial({ color: 0x2b211c, roughness: 0.78 }),
       predatorAccent: new THREE.MeshBasicMaterial({ color: 0xb44a36, transparent: true, opacity: 0.58 }),
@@ -3447,19 +3445,18 @@ class AntColony3D {
 
   seedTerrain() {
     const patches = [
-      { kind: "damp", x: -74, z: 52, rx: 30, rz: 18, rotation: -0.42, speed: 0.78, material: this.materials.terrainDamp },
-      { kind: "moss", x: -18, z: 76, rx: 34, rz: 19, rotation: 0.28, speed: 0.88, material: this.materials.terrainMoss },
-      { kind: "leaf", x: 42, z: 55, rx: 38, rz: 23, rotation: -0.22, speed: 0.82, material: this.materials.terrainLeaf },
-      { kind: "sand", x: 70, z: -18, rx: 40, rz: 22, rotation: 0.5, speed: 1.04, material: this.materials.terrainSand },
-      { kind: "damp", x: 18, z: -70, rx: 32, rz: 18, rotation: -0.12, speed: 0.76, material: this.materials.terrainDamp },
-      { kind: "leaf", x: -82, z: -42, rx: 34, rz: 21, rotation: 0.36, speed: 0.84, material: this.materials.terrainLeaf },
-      { kind: "moss", x: 93, z: 34, rx: 22, rz: 14, rotation: 0.18, speed: 0.9, material: this.materials.terrainMoss },
-      { kind: "sand", x: -12, z: -12, rx: 24, rz: 15, rotation: -0.56, speed: 1.02, material: this.materials.terrainSand },
-      { kind: "leaf", x: 150, z: -86, rx: 48, rz: 24, rotation: -0.38, speed: 0.82, material: this.materials.terrainLeaf },
-      { kind: "damp", x: 210, z: -124, rx: 42, rz: 22, rotation: 0.32, speed: 0.74, material: this.materials.terrainDamp },
-      { kind: "moss", x: 130, z: 118, rx: 44, rz: 21, rotation: 0.66, speed: 0.9, material: this.materials.terrainMoss },
-      { kind: "sand", x: -166, z: -106, rx: 52, rz: 24, rotation: -0.18, speed: 1.05, material: this.materials.terrainSand },
-      { kind: "leaf", x: -214, z: 94, rx: 42, rz: 20, rotation: 0.22, speed: 0.84, material: this.materials.terrainLeaf },
+      { kind: "dryClay", x: -196, z: -142, rx: 72, rz: 48, rotation: -0.18, speed: 0.96, material: this.materials.terrainDryClay },
+      { kind: "moss", x: -122, z: -18, rx: 98, rz: 64, rotation: 0.22, speed: 0.87, material: this.materials.terrainMoss },
+      { kind: "damp", x: -172, z: 116, rx: 86, rz: 58, rotation: -0.28, speed: 0.72, material: this.materials.terrainDamp },
+      { kind: "moss", x: -54, z: 82, rx: 84, rz: 44, rotation: 0.36, speed: 0.88, material: this.materials.terrainMoss },
+      { kind: "sand", x: 38, z: 126, rx: 74, rz: 36, rotation: -0.16, speed: 1.04, material: this.materials.terrainSand },
+      { kind: "damp", x: 76, z: -18, rx: 94, rz: 62, rotation: -0.1, speed: 0.72, material: this.materials.terrainDamp },
+      { kind: "moss", x: 56, z: -126, rx: 92, rz: 58, rotation: 0.42, speed: 0.86, material: this.materials.terrainMoss },
+      { kind: "gravel", x: 162, z: 88, rx: 90, rz: 56, rotation: 0.14, speed: 0.88, material: this.materials.terrainGravel },
+      { kind: "enemySoil", x: 222, z: 144, rx: 42, rz: 30, rotation: 0.28, speed: 0.9, material: this.materials.terrainEnemySoil },
+      { kind: "leaf", x: 176, z: -142, rx: 62, rz: 34, rotation: -0.32, speed: 0.86, material: this.materials.terrainLeaf },
+      { kind: "sand", x: -44, z: -112, rx: 42, rz: 28, rotation: 0.12, speed: 1.03, material: this.materials.terrainSand },
+      { kind: "damp", x: 138, z: -34, rx: 78, rz: 44, rotation: 0.58, speed: 0.74, material: this.materials.terrainDamp },
     ];
 
     for (const patch of patches) this.createTerrainPatch(patch);
@@ -3487,22 +3484,30 @@ class AntColony3D {
     });
   }
 
+  seedPermanentWater() {
+    this.addWater(88, -34, 1, { permanent: true, radius: 46, rx: 72, rz: 50, rotation: -0.16, power: 0.82, ring: false });
+    this.addWater(-204, 118, 1, { permanent: true, radius: 22, rx: 38, rz: 15, rotation: -0.42, power: 0.48, ring: false });
+    this.addWater(-150, 104, 1, { permanent: true, radius: 18, rx: 30, rz: 13, rotation: 0.38, power: 0.42, ring: false });
+  }
+
   seedTerrainBumps() {
     const bumps = [
-      { x: -86, z: 28, rx: 5.8, rz: 2.2, h: 0.55, rotation: -0.2 },
-      { x: -70, z: -66, rx: 4.8, rz: 2.4, h: 0.48, rotation: 0.45 },
-      { x: -36, z: 58, rx: 4.4, rz: 2.0, h: 0.42, rotation: -0.72 },
-      { x: -4, z: -24, rx: 6.1, rz: 2.7, h: 0.5, rotation: 0.18 },
-      { x: 22, z: 88, rx: 5.2, rz: 2.1, h: 0.45, rotation: -0.36 },
-      { x: 46, z: 16, rx: 7.2, rz: 2.9, h: 0.58, rotation: 0.62 },
-      { x: 66, z: -58, rx: 4.9, rz: 2.2, h: 0.44, rotation: -0.14 },
-      { x: 88, z: 34, rx: 4.0, rz: 1.8, h: 0.38, rotation: 0.72 },
-      { x: 104, z: -8, rx: 5.1, rz: 2.0, h: 0.46, rotation: -0.54 },
-      { x: -108, z: -12, rx: 4.6, rz: 1.9, h: 0.36, rotation: 0.08 },
-      { x: 154, z: -92, rx: 5.8, rz: 2.3, h: 0.5, rotation: 0.58 },
-      { x: 226, z: -132, rx: 6.4, rz: 2.6, h: 0.58, rotation: -0.46 },
-      { x: -176, z: -118, rx: 5.5, rz: 2.1, h: 0.44, rotation: 0.36 },
-      { x: -216, z: 76, rx: 4.9, rz: 2.0, h: 0.42, rotation: -0.72 },
+      { x: -236, z: -96, rx: 5.2, rz: 2.0, h: 0.34, rotation: -0.32 },
+      { x: -188, z: -184, rx: 5.8, rz: 2.3, h: 0.38, rotation: 0.2 },
+      { x: -128, z: -62, rx: 6.6, rz: 2.7, h: 0.46, rotation: 0.54 },
+      { x: -190, z: 88, rx: 5.2, rz: 2.1, h: 0.34, rotation: -0.7 },
+      { x: -142, z: 138, rx: 4.6, rz: 2.0, h: 0.32, rotation: 0.58 },
+      { x: -48, z: 74, rx: 5.8, rz: 2.4, h: 0.42, rotation: -0.1 },
+      { x: 18, z: 130, rx: 7.4, rz: 2.8, h: 0.5, rotation: 0.28 },
+      { x: 92, z: 116, rx: 5.1, rz: 2.2, h: 0.4, rotation: -0.54 },
+      { x: 148, z: 84, rx: 4.2, rz: 1.9, h: 0.32, rotation: 0.72 },
+      { x: 206, z: 108, rx: 6.2, rz: 2.5, h: 0.46, rotation: -0.18 },
+      { x: 68, z: -104, rx: 5.6, rz: 2.2, h: 0.34, rotation: 0.66 },
+      { x: 150, z: -148, rx: 6.4, rz: 2.6, h: 0.42, rotation: -0.44 },
+      { x: 192, z: -72, rx: 5.0, rz: 2.0, h: 0.34, rotation: 0.36 },
+      { x: -34, z: -142, rx: 5.4, rz: 2.0, h: 0.36, rotation: -0.62 },
+      { x: 38, z: 18, rx: 5.8, rz: 2.2, h: 0.38, rotation: 0.42 },
+      { x: 108, z: 22, rx: 5.0, rz: 2.2, h: 0.34, rotation: -0.24 },
     ];
     for (const bump of bumps) this.addTerrainBump(bump);
   }
@@ -4387,6 +4392,7 @@ class AntColony3D {
       transparent: true,
       depthWrite: false,
       depthTest: false,
+      toneMapped: false,
       side: THREE.DoubleSide,
       vertexShader: `
         varying vec3 vWorldPosition;
@@ -4411,9 +4417,9 @@ class AntColony3D {
           float visibility = 1.0 - smoothstep(revealRadius - fadeWidth, revealRadius + fadeWidth, d);
           for (int i = 0; i < ${EXPLORED_PATCH_LIMIT}; i++) {
             if (i >= exploredCount) break;
-            vec3 patch = exploredPatches[i];
-            float pd = distance(point, patch.xy);
-            visibility = max(visibility, 1.0 - smoothstep(patch.z - fadeWidth, patch.z + fadeWidth, pd));
+            vec3 exploredPatch = exploredPatches[i];
+            float pd = distance(point, exploredPatch.xy);
+            visibility = max(visibility, 1.0 - smoothstep(exploredPatch.z - fadeWidth, exploredPatch.z + fadeWidth, pd));
           }
           float alpha = (1.0 - visibility) * maxAlpha;
           gl_FragColor = vec4(fogColor, alpha);
@@ -4425,7 +4431,7 @@ class AntColony3D {
     mesh.name = "fog-of-war";
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = 0.42;
-    mesh.renderOrder = 18;
+    mesh.renderOrder = MAP_FOG_RENDER_ORDER;
     this.scene.add(mesh);
     this.sharedGeometries.add(geometry);
     this.sharedMaterials.add(material);
@@ -4437,7 +4443,7 @@ class AntColony3D {
     edge.name = "vision-edge";
     edge.rotation.x = Math.PI / 2;
     edge.position.set(this.nest.x, 0.46, this.nest.z);
-    edge.renderOrder = 19;
+    edge.renderOrder = MAP_FOG_RENDER_ORDER + 1;
     this.scene.add(edge);
     this.sharedMaterials.add(edgeMaterial);
     this.visionEdge = edge;
@@ -5731,7 +5737,7 @@ class AntColony3D {
 
   currentSortieTarget(x = this.nest.x, z = this.nest.z, mode = "auto") {
     const sortieMode = this.normalizeSortieMode(mode);
-    const threat = this.findRivalThreat(x, z, SOLDIER_SORTIE_SEEK_RANGE);
+    const threat = this.findRivalThreat(x, z, SOLDIER_SORTIE_SEEK_RANGE, null, { localSightRange: 0 });
     if (threat) return { x: threat.x, z: threat.z, kind: "rival" };
     if (sortieMode === "expedition") {
       return this.canStartExpeditionSortie() ? { x: this.rivalNest.x, z: this.rivalNest.z, kind: "rival-nest" } : null;
@@ -6043,13 +6049,6 @@ class AntColony3D {
     this.currentPixelRatio = Math.min((window.devicePixelRatio || 1) * this.quality.resolutionScale, this.quality.maxPixelRatio);
     this.renderer.setPixelRatio(this.currentPixelRatio);
     this.renderer.setSize(width, height, false);
-    if (this.fogOverlay) {
-      const pixelRatio = this.currentPixelRatio || 1;
-      this.fogOverlay.width = Math.max(1, Math.floor(width * pixelRatio));
-      this.fogOverlay.height = Math.max(1, Math.floor(height * pixelRatio));
-      this.fogOverlay.style.width = `${width}px`;
-      this.fogOverlay.style.height = `${height}px`;
-    }
     const baseCameraDistance = width < 680 ? CAMERA_DISTANCE_MOBILE : CAMERA_DISTANCE_DESKTOP;
     this.cameraDistance = clamp(this.cameraDistance || baseCameraDistance, CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
     this.targetCameraDistance = clamp(this.targetCameraDistance || baseCameraDistance, CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
@@ -6069,81 +6068,6 @@ class AntColony3D {
       this.cameraRenderTarget.z + Math.cos(this.cameraYaw) * horizontal,
     );
     this.camera.lookAt(this.cameraRenderTarget);
-  }
-
-  worldToScreen(x, y, z) {
-    const vector = new THREE.Vector3(x, y, z);
-    vector.project(this.camera);
-    const rect = this.fogOverlay?.getBoundingClientRect?.() ?? this.renderer.domElement.getBoundingClientRect();
-    return {
-      x: (vector.x * 0.5 + 0.5) * rect.width,
-      y: (-vector.y * 0.5 + 0.5) * rect.height,
-      visible: vector.z >= -1 && vector.z <= 1,
-    };
-  }
-
-  projectedWorldRadius(x, z, radius) {
-    const center = this.worldToScreen(x, 0, z);
-    const edgeX = this.worldToScreen(x + radius, 0, z);
-    const edgeZ = this.worldToScreen(x, 0, z + radius);
-    return Math.max(
-      Math.hypot(edgeX.x - center.x, edgeX.y - center.y),
-      Math.hypot(edgeZ.x - center.x, edgeZ.y - center.y),
-      1,
-    );
-  }
-
-  clearScreenFogCircle(context, x, z, radius, pixelRatio) {
-    const center = this.worldToScreen(x, 0, z);
-    const screenRadius = this.projectedWorldRadius(x, z, radius);
-    const cssWidth = this.fogOverlay?.clientWidth || window.innerWidth;
-    const cssHeight = this.fogOverlay?.clientHeight || window.innerHeight;
-    if (
-      center.x + screenRadius < -80 ||
-      center.y + screenRadius < -80 ||
-      center.x - screenRadius > cssWidth + 80 ||
-      center.y - screenRadius > cssHeight + 80
-    ) {
-      return;
-    }
-    const innerRadius = Math.max(0, screenRadius - 10);
-    const outerRadius = Math.max(1, screenRadius + 7);
-    const gradient = context.createRadialGradient(
-      center.x * pixelRatio,
-      center.y * pixelRatio,
-      innerRadius * pixelRatio,
-      center.x * pixelRatio,
-      center.y * pixelRatio,
-      outerRadius * pixelRatio,
-    );
-    gradient.addColorStop(0, "rgba(0,0,0,1)");
-    gradient.addColorStop(1, "rgba(0,0,0,0)");
-    context.fillStyle = gradient;
-    context.beginPath();
-    context.arc(center.x * pixelRatio, center.y * pixelRatio, outerRadius * pixelRatio, 0, Math.PI * 2);
-    context.fill();
-  }
-
-  renderScreenFogOverlay() {
-    if (!this.fogOverlay || !this.fogOverlayContext) return;
-    const context = this.fogOverlayContext;
-    const pixelRatio = this.currentPixelRatio || 1;
-    const width = this.fogOverlay.width;
-    const height = this.fogOverlay.height;
-    if (width <= 0 || height <= 0) return;
-    context.save();
-    context.globalCompositeOperation = "source-over";
-    context.clearRect(0, 0, width, height);
-    context.fillStyle = MAP_SCREEN_FOG_COLOR;
-    context.globalAlpha = MAP_SCREEN_FOG_ALPHA;
-    context.fillRect(0, 0, width, height);
-    context.globalAlpha = 1;
-    context.globalCompositeOperation = "destination-out";
-    this.clearScreenFogCircle(context, this.nest.x, this.nest.z, this.mapVisionRadiusValue || this.mapVisionRadius(), pixelRatio);
-    for (const patch of this.exploredPatches ?? []) {
-      this.clearScreenFogCircle(context, patch.x, patch.z, patch.radius, pixelRatio);
-    }
-    context.restore();
   }
 
   clampCameraTarget(x = this.cameraTarget.x, z = this.cameraTarget.z) {
@@ -6171,7 +6095,7 @@ class AntColony3D {
   }
 
   focusCameraOnNest() {
-    this.setCameraTarget(this.nest.x, this.nest.z);
+    this.cameraTarget.set(this.nest.x, 0, this.nest.z);
   }
 
   panCameraBetweenScreenPoints(fromX, fromY, toX, toY) {
@@ -6292,12 +6216,15 @@ class AntColony3D {
 
     for (const patch of this.water) {
       patch.age += dt;
-      patch.power = Math.max(0.08, patch.power - dt * 0.014);
+      if (!patch.permanent) patch.power = Math.max(0.08, patch.power - dt * 0.014);
       patch.group.scale.setScalar(1 + Math.sin(patch.age * 2.5) * 0.015);
-      patch.ring.material.opacity = Math.max(0.1, patch.power * 0.44);
-      patch.ring.scale.setScalar(1 + (patch.age % 1) * 0.05);
+      if (patch.ring) {
+        patch.ring.material.opacity = Math.max(0.1, patch.power * 0.44);
+        patch.ring.scale.setScalar(1 + (patch.age % 1) * 0.05);
+      }
     }
     this.water = this.water.filter((patch) => {
+      if (patch.permanent) return true;
       if (patch.power > 0.09 && patch.age < 85) return true;
       this.disposeDynamicItem(patch);
       return false;
@@ -6378,7 +6305,6 @@ class AntColony3D {
     this.squadRingSystem.render(renderAnts, this, alpha);
     this.roleLabelSystem.render(renderAnts, this, alpha);
     this.renderer.render(this.scene, this.camera);
-    this.renderScreenFogOverlay();
     window.__ANT_SIM_READY = true;
   }
 
@@ -6530,15 +6456,17 @@ class AntColony3D {
   }
 
   seedNaturalEnvironment() {
+    this.seedPermanentWater();
     const naturalFoods = [
-      { x: -16, z: 42, amount: 11, radius: 3.2, crumbs: 11, material: this.materials.foodSeed, kind: "seed" },
-      { x: 38, z: -32, amount: 12, radius: 3.7, crumbs: 12, material: this.materials.foodFruit, kind: "fruit" },
-      { x: 72, z: 44, amount: 13, radius: 3.6, crumbs: 12, material: this.materials.foodLeaf, kind: "leaf" },
-      { x: -78, z: -46, amount: 11, radius: 3.4, crumbs: 11, material: this.materials.foodSeed, kind: "seed" },
-      { x: 8, z: -82, amount: 14, radius: 3.7, crumbs: 12, material: this.materials.foodFruit, kind: "fruit" },
-      { x: 138, z: 98, amount: 28, radius: 4.8, crumbs: 18, material: this.materials.foodLeaf, kind: "leaf" },
-      { x: -156, z: -112, amount: 30, radius: 5.0, crumbs: 19, material: this.materials.foodSeed, kind: "seed" },
-      { x: 194, z: -88, amount: 34, radius: 5.2, crumbs: 20, material: this.materials.foodFruit, kind: "fruit" },
+      { x: -238, z: -104, amount: 10, radius: 3.1, crumbs: 10, material: this.materials.foodFruit, kind: "fruit" },
+      { x: -178, z: -184, amount: 12, radius: 3.6, crumbs: 12, material: this.materials.foodSeed, kind: "seed" },
+      { x: -210, z: -82, amount: 9, radius: 2.9, crumbs: 9, material: this.materials.foodLeaf, kind: "leaf" },
+      { x: -92, z: -134, amount: 14, radius: 3.8, crumbs: 12, material: this.materials.foodSeed, kind: "seed" },
+      { x: 76, z: -176, amount: 28, radius: 5.0, crumbs: 18, material: this.materials.foodFruit, kind: "fruit" },
+      { x: -86, z: 128, amount: 24, radius: 4.6, crumbs: 16, material: this.materials.foodLeaf, kind: "leaf" },
+      { x: 144, z: -162, amount: 34, radius: 5.3, crumbs: 20, material: this.materials.foodSeed, kind: "seed" },
+      { x: 92, z: 132, amount: 26, radius: 4.8, crumbs: 17, material: this.materials.foodFruit, kind: "fruit" },
+      { x: 206, z: 78, amount: 30, radius: 5.0, crumbs: 18, material: this.materials.foodLeaf, kind: "leaf" },
     ];
     this.foodSpawnSites = naturalFoods.map((food, index) => ({
       ...food,
@@ -6558,16 +6486,28 @@ class AntColony3D {
 
   seedNaturalObstacles() {
     const stones = [
-      { x: -92, z: 18, radius: 3.3, scaleY: 0.52, rotation: 0.2 },
-      { x: -58, z: 78, radius: 2.7, scaleY: 0.44, rotation: 1.2 },
-      { x: -14, z: -42, radius: 3.0, scaleY: 0.5, rotation: 2.4 },
-      { x: 26, z: 68, radius: 2.4, scaleY: 0.42, rotation: -0.7 },
-      { x: 62, z: -66, radius: 3.5, scaleY: 0.48, rotation: 0.9 },
-      { x: 92, z: 12, radius: 2.8, scaleY: 0.46, rotation: -1.1 },
-      { x: 142, z: 124, radius: 3.4, scaleY: 0.48, rotation: 0.35 },
-      { x: 188, z: -152, radius: 3.9, scaleY: 0.5, rotation: -0.6 },
-      { x: -188, z: -94, radius: 3.6, scaleY: 0.46, rotation: 1.4 },
-      { x: -218, z: 68, radius: 3.1, scaleY: 0.44, rotation: -1.8 },
+      { x: -236, z: -86, radius: 2.6, scaleY: 0.42, rotation: -0.3 },
+      { x: -192, z: -186, radius: 3.2, scaleY: 0.46, rotation: 1.1 },
+      { x: -150, z: 104, radius: 2.8, scaleY: 0.44, rotation: -1.2 },
+      { x: -186, z: 122, radius: 3.1, scaleY: 0.48, rotation: 0.6 },
+      { x: -220, z: 90, radius: 2.4, scaleY: 0.42, rotation: 2.2 },
+      { x: -115, z: -18, radius: 3.4, scaleY: 0.5, rotation: 1.7 },
+      { x: -74, z: -48, radius: 2.5, scaleY: 0.44, rotation: -0.8 },
+      { x: 36, z: 18, radius: 2.8, scaleY: 0.46, rotation: 0.2 },
+      { x: 52, z: -64, radius: 3.0, scaleY: 0.46, rotation: -0.4 },
+      { x: 118, z: -10, radius: 3.7, scaleY: 0.5, rotation: 1.3 },
+      { x: 134, z: -82, radius: 2.7, scaleY: 0.44, rotation: 2.5 },
+      { x: 142, z: 40, radius: 2.9, scaleY: 0.42, rotation: -1.0 },
+      { x: 156, z: -168, radius: 3.4, scaleY: 0.5, rotation: 0.4 },
+      { x: 192, z: -72, radius: 2.6, scaleY: 0.45, rotation: -1.6 },
+      { x: 218, z: -32, radius: 3.1, scaleY: 0.46, rotation: 0.8 },
+      { x: 104, z: -196, radius: 3.8, scaleY: 0.52, rotation: -0.2 },
+      { x: 148, z: 84, radius: 2.7, scaleY: 0.44, rotation: 1.8 },
+      { x: 174, z: 132, radius: 3.2, scaleY: 0.48, rotation: -0.5 },
+      { x: 208, z: 92, radius: 2.5, scaleY: 0.44, rotation: 2.7 },
+      { x: 222, z: 118, radius: 3.0, scaleY: 0.45, rotation: -2.0 },
+      { x: -48, z: 148, radius: 2.9, scaleY: 0.43, rotation: 0.9 },
+      { x: 26, z: 138, radius: 2.5, scaleY: 0.42, rotation: -0.7 },
     ];
     for (const stone of stones) this.addNaturalStone(stone);
   }
@@ -7025,8 +6965,9 @@ class AntColony3D {
     const requireVisible = options.requireVisible ?? radius > 24;
     for (const rival of this.rivalAnts) {
       if (rival.defeated || rival.leftRaid || rival.retreat > 0 || rival.clash) continue;
-      if (requireVisible && !this.isPointVisible(rival.x, rival.z, 12) && rival.scoutMarkTimer <= 0) continue;
       const d = distance2(x, z, rival.x, rival.z);
+      const locallyVisible = d <= (options.localSightRange ?? LOCAL_RIVAL_THREAT_SIGHT_RANGE);
+      if (requireVisible && !locallyVisible && !this.isPointVisible(rival.x, rival.z, 12) && rival.scoutMarkTimer <= 0) continue;
       if (d >= radius) continue;
       const scoutBonus = rival.scoutMarkTimer > 0 ? clamp(rival.scoutMarkStrength ?? 0, 0, 1) * 28 : 0;
       const squadBonus = preferredRivalId != null && rival.id === preferredRivalId ? 34 : 0;
@@ -7144,24 +7085,39 @@ class AntColony3D {
     });
   }
 
-  addWater(x, z, scale = 1) {
+  addWater(x, z, scale = 1, options = {}) {
     const intensity = ui.intensity ? Number(ui.intensity.value) : 3;
-    const radius = 5.5 + intensity * 1.6 * scale + rand(-0.4, 0.8);
+    const radius = options.radius ?? 5.5 + intensity * 1.6 * scale + rand(-0.4, 0.8);
+    const rx = options.rx ?? radius * 1.18;
+    const rz = options.rz ?? radius * 0.82;
     const group = new THREE.Group();
     const pool = new THREE.Mesh(this.geometries.waterCircle, this.materials.water.clone());
     pool.rotation.x = -Math.PI / 2;
-    pool.scale.set(radius * 1.18, radius * 0.82, 1);
+    pool.scale.set(rx, rz, 1);
     pool.position.y = 0.035;
     group.add(pool);
-    const ring = new THREE.Mesh(this.geometries.impactRing, this.materials.waterRing.clone());
-    ring.rotation.x = Math.PI / 2;
-    ring.scale.set(radius * 0.85, radius * 0.85, radius * 0.85);
-    ring.position.y = 0.08;
-    group.add(ring);
+    let ring = null;
+    if (options.ring !== false) {
+      ring = new THREE.Mesh(this.geometries.impactRing, this.materials.waterRing.clone());
+      ring.rotation.x = Math.PI / 2;
+      ring.scale.set(radius * 0.85, radius * 0.85, radius * 0.85);
+      ring.position.y = 0.08;
+      group.add(ring);
+    }
+    group.rotation.y = options.rotation ?? 0;
     group.position.set(x, 0, z);
     this.scene.add(group);
     this.dynamicObjects.add(group);
-    this.water.push({ x, z, radius, power: clamp(0.45 + intensity * 0.13 * scale, 0.35, 1.08), age: 0, group, ring });
+    this.water.push({
+      x,
+      z,
+      radius,
+      power: options.power ?? clamp(0.45 + intensity * 0.13 * scale, 0.35, 1.08),
+      age: 0,
+      group,
+      ring,
+      permanent: Boolean(options.permanent),
+    });
   }
 
   addNaturalStone(config) {

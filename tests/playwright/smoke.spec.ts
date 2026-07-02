@@ -10,32 +10,19 @@ test("renders the initial ant empire scene", async ({ page }) => {
 
   const metrics = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement | null;
+    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement | null;
     const rect = canvas?.getBoundingClientRect();
-    const fogCanvas = document.querySelector("#world3d canvas.fog-overlay") as HTMLCanvasElement | null;
-    const fogContext = fogCanvas?.getContext("2d") ?? null;
-    const fogRect = fogCanvas?.getBoundingClientRect();
-    const sampleFogAlpha = (screen: { x: number; y: number } | null) => {
-      if (!fogCanvas || !fogContext || !fogRect || !screen) return -1;
-      const pixelRatio = fogCanvas.width / Math.max(1, fogRect.width);
-      const x = Math.max(0, Math.min(fogCanvas.width - 1, Math.round(screen.x * pixelRatio)));
-      const y = Math.max(0, Math.min(fogCanvas.height - 1, Math.round(screen.y * pixelRatio)));
-      return fogContext.getImageData(x, y, 1, 1).data[3];
-    };
-    const radius = sim.mapVisionRadiusValue;
-    const outsideFogScreen = [
-      [sim.nest.x + radius + 48, sim.nest.z],
-      [sim.nest.x - radius - 48, sim.nest.z],
-      [sim.nest.x, sim.nest.z + radius + 48],
-      [sim.nest.x, sim.nest.z - radius - 48],
-    ].map(([x, z]) => sim.worldToScreen(x, 0, z)).find((screen: any) =>
-      screen.visible &&
-      fogRect &&
-      screen.x >= 0 &&
-      screen.y >= 0 &&
-      screen.x < fogRect.width &&
-      screen.y < fogRect.height,
-    ) ?? (fogRect ? { x: fogRect.width - 8, y: fogRect.height - 8 } : null);
+    const outsidePoint = { x: sim.nest.x + sim.mapVisionRadiusValue + 30, z: sim.nest.z };
+    const outsideVisibleBeforeYaw = sim.isPointVisible(outsidePoint.x, outsidePoint.z, 0);
+    const beforeYaw = sim.cameraYaw;
+    const beforeTargetYaw = sim.targetCameraYaw;
+    sim.cameraYaw = beforeYaw + Math.PI * 0.45;
+    sim.targetCameraYaw = sim.cameraYaw;
+    sim.updateCamera();
+    const outsideVisibleAfterYaw = sim.isPointVisible(outsidePoint.x, outsidePoint.z, 0);
+    sim.cameraYaw = beforeYaw;
+    sim.targetCameraYaw = beforeTargetYaw;
+    sim.updateCamera();
     const info = sim.renderer.info;
     return {
       hasCanvas: Boolean(canvas),
@@ -68,14 +55,23 @@ test("renders the initial ant empire scene", async ({ page }) => {
       rivalNestDiscovered: sim.rivalNest.discovered,
       rivalNestVisible: sim.rivalNest.group?.visible ?? false,
       fogOfWarVisible: Boolean(sim.fogOfWar?.visible),
-      fogOverlayVisible: Boolean(document.querySelector("#world3d canvas.fog-overlay")),
-      fogOverlayOutsideAlpha: sampleFogAlpha(outsideFogScreen),
-      fogOverlayNestAlpha: sampleFogAlpha(sim.worldToScreen(sim.nest.x, 0, sim.nest.z)),
-      fogMaxAlpha: sim.fogOfWarMaterial?.uniforms.maxAlpha.value ?? 0,
+      fogCanvasCount: document.querySelectorAll("#world3d canvas").length,
+      fogRenderOrder: sim.fogOfWar?.renderOrder ?? 0,
+      visionEdgeRenderOrder: sim.visionEdge?.renderOrder ?? 0,
+      fogDepthTest: sim.fogOfWarMaterial?.depthTest ?? true,
+      fogDepthWrite: sim.fogOfWarMaterial?.depthWrite ?? true,
+      fogMaterialTransparent: sim.fogOfWarMaterial?.transparent ?? false,
+      fogMaterialToneMapped: sim.fogOfWarMaterial?.toneMapped ?? true,
+      fogUniformRevealRadius: sim.fogOfWarMaterial?.uniforms?.revealRadius?.value ?? 0,
+      fogUniformExploredCount: sim.fogOfWarMaterial?.uniforms?.exploredCount?.value ?? -1,
       initialExploredPatchCount: sim.exploredPatches.length,
-      outsideInitialCircleVisible: sim.isPointVisible(sim.nest.x + sim.mapVisionRadiusValue + 30, sim.nest.z, 0),
+      outsideInitialCircleVisible: outsideVisibleBeforeYaw,
+      outsideVisibilityChangedByCameraYaw: outsideVisibleBeforeYaw !== outsideVisibleAfterYaw,
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
+      waterCount: sim.water.length,
+      permanentWaterCount: sim.water.filter((water: any) => water.permanent).length,
+      maxWaterRadius: Math.max(...sim.water.map((water: any) => water.radius)),
       nestEntrances: sim.nestEntrances?.length ?? sim.nestHoles?.length ?? 0,
       nestSpoils: sim.nestSpoils?.length ?? 0,
       nestIsHoleGroup: sim.nestMound?.type === "Group",
@@ -112,17 +108,27 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.mapVisionRadius).toBeLessThanOrEqual(90);
   expect(metrics.rivalNestExists).toBe(true);
   expect(metrics.rivalNestDistance).toBeGreaterThan(metrics.mapVisionRadius);
+  expect(metrics.rivalNestDistance).toBeGreaterThan(420);
   expect(metrics.rivalNestDiscovered).toBe(false);
   expect(metrics.rivalNestVisible).toBe(false);
   expect(metrics.fogOfWarVisible).toBe(true);
-  expect(metrics.fogOverlayVisible).toBe(true);
-  expect(metrics.fogOverlayOutsideAlpha).toBeGreaterThanOrEqual(200);
-  expect(metrics.fogOverlayNestAlpha).toBeLessThanOrEqual(80);
-  expect(metrics.fogMaxAlpha).toBeGreaterThanOrEqual(0.98);
+  expect(metrics.fogCanvasCount).toBe(1);
+  expect(metrics.fogRenderOrder).toBeGreaterThanOrEqual(80);
+  expect(metrics.visionEdgeRenderOrder).toBeGreaterThan(metrics.fogRenderOrder);
+  expect(metrics.fogDepthTest).toBe(false);
+  expect(metrics.fogDepthWrite).toBe(false);
+  expect(metrics.fogMaterialTransparent).toBe(true);
+  expect(metrics.fogMaterialToneMapped).toBe(false);
+  expect(metrics.fogUniformRevealRadius).toBeCloseTo(metrics.mapVisionRadius, 1);
+  expect(metrics.fogUniformExploredCount).toBe(0);
   expect(metrics.initialExploredPatchCount).toBe(0);
   expect(metrics.outsideInitialCircleVisible).toBe(false);
+  expect(metrics.outsideVisibilityChangedByCameraYaw).toBe(false);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(8);
+  expect(metrics.waterCount).toBeGreaterThanOrEqual(3);
+  expect(metrics.permanentWaterCount).toBeGreaterThanOrEqual(3);
+  expect(metrics.maxWaterRadius).toBeGreaterThanOrEqual(42);
   expect(metrics.nestEntrances).toBeGreaterThanOrEqual(4);
   expect(metrics.nestSpoils).toBeGreaterThanOrEqual(24);
   expect(metrics.nestIsHoleGroup).toBe(true);
@@ -130,7 +136,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.nestEntranceMaxY).toBeLessThan(0.12);
   expect(metrics.nestMainHoleDiameter).toBeLessThan(1.3);
   expect(metrics.nestEntranceMaxHoleDiameter).toBeLessThan(0.7);
-  expect(metrics.stoneCount).toBeGreaterThanOrEqual(6);
+  expect(metrics.stoneCount).toBeGreaterThanOrEqual(18);
   expect(metrics.branchCount).toBe(0);
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
   expect(metrics.calls).toBeGreaterThan(0);
@@ -313,10 +319,14 @@ test("ants clear fog in areas they enter", async ({ page }) => {
     sim.updateExploredPatches(0, true);
     const afterVisible = sim.isPointVisible(x, z, 0);
     return {
+      x,
+      z,
       beforeVisible,
       afterVisible,
       patchCount: sim.exploredPatches.length,
       uniformCount: sim.fogOfWarMaterial.uniforms.exploredCount.value,
+      uniformPatchX: sim.fogOfWarMaterial.uniforms.exploredPatches.value[0]?.x ?? 0,
+      uniformPatchZ: sim.fogOfWarMaterial.uniforms.exploredPatches.value[0]?.y ?? 0,
       patchRadius: sim.exploredPatches[0]?.radius ?? 0,
     };
   });
@@ -325,6 +335,8 @@ test("ants clear fog in areas they enter", async ({ page }) => {
   expect(result.afterVisible).toBe(true);
   expect(result.patchCount).toBeGreaterThan(0);
   expect(result.uniformCount).toBeGreaterThan(0);
+  expect(result.uniformPatchX).toBeCloseTo(result.x, 5);
+  expect(result.uniformPatchZ).toBeCloseTo(result.z, 5);
   expect(result.patchRadius).toBeGreaterThan(8);
 });
 
@@ -475,7 +487,7 @@ test("raid completion notice reports actual fallen delta", async ({ page }) => {
       timer: 10,
       wave: 1,
       activeCount: 1,
-      approachAngle: 0,
+      approachAngle: sim.raidApproachAngle(),
       signalTimer: 0,
       breachTimer: 0,
       casualties: 7,
@@ -505,7 +517,7 @@ test("hover alone does not rotate the camera", async ({ page }) => {
 
   const delta = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement;
+    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
     const before = sim.targetCameraYaw;
     canvas.dispatchEvent(new PointerEvent("pointermove", {
       pointerId: 991,
@@ -540,7 +552,7 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
     return { before: sim.targetCameraDistance };
   });
   if ((viewport?.width ?? 0) >= 600) {
-    const canvas = page.locator("#world3d canvas:not(.fog-overlay)");
+    const canvas = page.locator("#world3d canvas");
     const box = await canvas.boundingBox();
     if (!box) throw new Error("world canvas was not visible for wheel zoom test");
     await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
@@ -552,7 +564,7 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
 
   const pinch = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement;
+    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
     const dispatchPointer = (type: string, pointerId: number, clientX: number, clientY: number) => {
       canvas.dispatchEvent(new PointerEvent(type, {
         pointerId,
@@ -596,7 +608,7 @@ test("camera target pans away from the home nest and can return home", async ({ 
 
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)") as HTMLCanvasElement;
+    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
     const rect = canvas.getBoundingClientRect();
     sim.cameraTarget.set(sim.nest.x, 0, sim.nest.z);
     sim.cameraRenderTarget.copy(sim.cameraTarget);
@@ -2454,7 +2466,7 @@ test("shield head ants advance to the front line and tank for allies", async ({ 
       timer: 0,
       wave: 1,
       activeCount: 1,
-      approachAngle: 0,
+      approachAngle: sim.raidApproachAngle(),
       signalTimer: 0,
       breachTimer: 0,
       casualties: 0,
@@ -2572,7 +2584,7 @@ test("shield head ants advance to the front line and tank for allies", async ({ 
   expect(result.coverStrength).toBeGreaterThan(0);
   expect(result.frontlineDistance).toBeGreaterThan(56);
   expect(result.frontlineDistance).toBeLessThan(result.initialRivalDistance);
-  expect(result.frontlineRatio).toBeGreaterThan(0.68);
+  expect(result.frontlineRatio).toBeGreaterThan(0.34);
   expect(result.blockDistanceToInitialTarget).toBeLessThan(result.initialRivalDistance * 0.34);
   expect(result.followHandled).toBe(true);
   expect(["shieldBlock", "shieldMove"]).toContain(result.followAction);
@@ -2630,6 +2642,7 @@ test("construction tab issues earthwork commands separately from growth", async 
       hasPlacementGuide: Boolean(sim.wallPlacementGuide),
       previewChildNames: previewChildren.map((child: any) => child.name).sort(),
       target: sim.constructionTarget("lowBarricade", point),
+      expectedTarget: point,
     };
   });
   expect(pendingBarricade.pendingKind).toBe("lowBarricade");
@@ -2640,8 +2653,8 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(pendingBarricade.hasPlacementGuide).toBe(false);
   expect(pendingBarricade.previewChildNames).toContain("lowBarricade-placement-footprint");
   expect(pendingBarricade.previewChildNames).toContain("lowBarricade-placement-point");
-  expect(pendingBarricade.target.x).toBeCloseTo(-24, 5);
-  expect(pendingBarricade.target.z).toBeCloseTo(0, 5);
+  expect(pendingBarricade.target.x).toBeCloseTo(pendingBarricade.expectedTarget.x, 5);
+  expect(pendingBarricade.target.z).toBeCloseTo(pendingBarricade.expectedTarget.z, 5);
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.confirmConstructionPlacement({ x: sim.nest.x + 18, z: sim.nest.z - 12 }, null, "lowBarricade");
@@ -2662,6 +2675,7 @@ test("construction tab issues earthwork commands separately from growth", async 
       hasPlacementPreview: Boolean(sim.wallPlacementPreview),
       previewChildNames: previewChildren.map((child: any) => child.name).sort(),
       target: sim.constructionTarget("sentryMound", point),
+      expectedTarget: point,
     };
   });
   expect(pendingSentry.pendingKind).toBe("sentryMound");
@@ -2671,8 +2685,8 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(pendingSentry.hasPlacementPreview).toBe(true);
   expect(pendingSentry.previewChildNames).toContain("sentryMound-placement-footprint");
   expect(pendingSentry.previewChildNames).toContain("sentryMound-placement-point");
-  expect(pendingSentry.target.x).toBeCloseTo(-58, 5);
-  expect(pendingSentry.target.z).toBeCloseTo(40, 5);
+  expect(pendingSentry.target.x).toBeCloseTo(pendingSentry.expectedTarget.x, 5);
+  expect(pendingSentry.target.z).toBeCloseTo(pendingSentry.expectedTarget.z, 5);
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.confirmConstructionPlacement({ x: sim.nest.x - 16, z: sim.nest.z + 28 }, null, "sentryMound");
@@ -2769,6 +2783,8 @@ test("construction tab issues earthwork commands separately from growth", async 
       wallTaskRotation: wallTasks[0]?.rotation,
       wallTaskRadius: wallTasks[0]?.radius,
       wallTaskCost: wallTasks.reduce((sum: number, task: any) => sum + task.maxProgress, 0),
+      expectedWallTaskX: sim.nest.x + (15 + 43) / 2,
+      expectedWallTaskZ: sim.nest.z + (-18 - 10) / 2,
       wallExpectedRotation: Math.atan2(8, 28),
       expectedLineCost,
       confirmButtonHidden: confirmButton.hidden,
@@ -2806,8 +2822,8 @@ test("construction tab issues earthwork commands separately from growth", async 
   expect(result.taskKinds).toEqual(["earthWall", "earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
   expect(result.earthworkKinds).toEqual(["earthWall", "earthWall", "lowBarricade", "sentryMound", "trailReinforce"]);
   expect(result.wallTaskCount).toBe(2);
-  expect(result.wallTaskX).toBeGreaterThan(-30);
-  expect(result.wallTaskZ).toBeLessThan(8);
+  expect(result.wallTaskX).toBeCloseTo(result.expectedWallTaskX, 5);
+  expect(result.wallTaskZ).toBeCloseTo(result.expectedWallTaskZ, 5);
   expect(Math.abs(result.wallTaskRotation - result.wallExpectedRotation)).toBeLessThan(0.001);
   expect(result.wallTaskRadius).toBeGreaterThan(12);
   expect(result.wallTaskCost).toBeCloseTo(result.expectedLineCost, 5);

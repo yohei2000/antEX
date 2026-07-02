@@ -118,13 +118,21 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       isMobile: width < 600,
     });
     const page = await context.newPage();
+    const browserIssues = [];
+    page.on("console", (message) => {
+      const text = message.text();
+      if (message.type() === "error" || /Shader Error|WebGLProgram|program not valid/i.test(text)) {
+        browserIssues.push(`${message.type()}: ${text}`);
+      }
+    });
+    page.on("pageerror", (error) => browserIssues.push(`pageerror: ${error.message}`));
     await page.goto(targetUrl);
 
     const ready = await page.evaluate(`
       (() => new Promise((resolve) => {
         const started = Date.now();
         const tick = () => {
-          if (window.__ANT_SIM_READY && document.querySelector("#world3d canvas:not(.fog-overlay)")) resolve(true);
+          if (window.__ANT_SIM_READY && document.querySelector("#world3d canvas")) resolve(true);
           else if (Date.now() - started > 15000) resolve(false);
           else setTimeout(tick, 120);
         };
@@ -133,10 +141,13 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
     `);
     if (!ready) throw new Error(`${label}: Three.js scene did not become ready.`);
     await delay(900);
+    if (browserIssues.length) {
+      throw new Error(`${label}: browser console errors: ${JSON.stringify(browserIssues.slice(0, 6))}`);
+    }
 
     const hoverProbe = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
-        const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)");
+        const canvas = document.querySelector("#world3d canvas");
         const before = sim.targetCameraYaw;
         const first = new PointerEvent("pointermove", {
           pointerId: 9981,
@@ -181,7 +192,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
 
     const pinchProbe = await page.evaluate(`(() => {
         const sim = window.__ANT_SIM;
-        const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)");
+        const canvas = document.querySelector("#world3d canvas");
         const dispatchPointer = (type, pointerId, clientX, clientY) => {
           canvas.dispatchEvent(new PointerEvent(type, {
             pointerId,
@@ -216,7 +227,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
     }
 
     const canvasProbe = await page.evaluate(({ hoverYawDelta, wheelProbe, pinchProbe }) => {
-        const canvas = document.querySelector("#world3d canvas:not(.fog-overlay)");
+        const canvas = document.querySelector("#world3d canvas");
         const rect = canvas.getBoundingClientRect();
         const sim = window.__ANT_SIM;
         const info = sim?.renderer?.info;
