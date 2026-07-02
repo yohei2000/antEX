@@ -76,7 +76,19 @@ test("renders the initial ant empire scene", async ({ page }) => {
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
       groundTextureSource: sim.groundTextureSource ?? "",
-      generatedMapTextureCount: ["groundTexture", "terrainMossTexture", "terrainSandTexture", "terrainGravelTexture", "stoneTexture", "waterTexture"].filter((key) =>
+      generatedMapTextureCount: [
+        "groundTexture",
+        "terrainMossTexture",
+        "terrainSandTexture",
+        "terrainGravelTexture",
+        "stoneTexture",
+        "waterTexture",
+        "grassTuftTexture",
+        "mossWetlandTexture",
+        "microGravelTexture",
+        "crackedMudTexture",
+        "shorelineWetEdgeTexture",
+      ].filter((key) =>
         Boolean(sim.assetService.get(key)),
       ).length,
       groundMaterialUsesGeneratedTexture: sim.materials.ground.map === sim.assetService.get("groundTexture"),
@@ -104,6 +116,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
       stoneMeshCount: sim.stones.reduce((count: number, stone: any) => count + (stone.group?.children?.filter((child: any) => child.type === "Mesh").length ?? 0), 0),
       irregularStoneSurfaces: stoneSurfaces.filter((surface: any) => Boolean(surface.geometry?.userData?.naturalBlob)).length,
       minStoneSurfaceProfileSpread: Math.min(...stoneSurfaceProfileSpreads),
+      naturalDetailObjects: sim.naturalDetails?.length ?? 0,
+      naturalDetailStats: sim.naturalDetailStats ?? {},
       branchCount: sim.branches.length,
       upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
       calls: info.render.calls,
@@ -151,7 +165,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(16);
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(20);
   expect(metrics.groundTextureSource).toBe("generated-soil-texture");
-  expect(metrics.generatedMapTextureCount).toBe(6);
+  expect(metrics.generatedMapTextureCount).toBe(11);
   expect(metrics.groundMaterialUsesGeneratedTexture).toBe(true);
   expect(metrics.groundTextureRepeatX).toBeGreaterThanOrEqual(7);
   expect(metrics.groundTextureFlipY).toBe(false);
@@ -177,6 +191,13 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.stoneMeshCount).toBeGreaterThan(metrics.stoneCount);
   expect(metrics.irregularStoneSurfaces).toBeGreaterThanOrEqual(metrics.stoneCount);
   expect(metrics.minStoneSurfaceProfileSpread).toBeGreaterThan(0.12);
+  expect(metrics.naturalDetailObjects).toBeGreaterThanOrEqual(20);
+  expect(metrics.naturalDetailStats.grassClumps).toBeGreaterThanOrEqual(64);
+  expect(metrics.naturalDetailStats.microPebbles).toBeGreaterThanOrEqual(280);
+  expect(metrics.naturalDetailStats.wetEdgeDecals).toBeGreaterThanOrEqual(8);
+  expect(metrics.naturalDetailStats.crackDecals).toBeGreaterThanOrEqual(5);
+  expect(metrics.naturalDetailStats.mossDecals).toBeGreaterThanOrEqual(6);
+  expect(metrics.naturalDetailStats.gravelDecals).toBeGreaterThanOrEqual(6);
   expect(metrics.branchCount).toBe(0);
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
   expect(metrics.calls).toBeGreaterThan(0);

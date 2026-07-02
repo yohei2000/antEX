@@ -139,6 +139,11 @@ const GENERATED_TEXTURE_ASSETS = {
   gravel: "terrain-gravel-tile-20260702.png",
   stone: "stone-surface-tile-20260702.png",
   water: "water-surface-tile-20260702.png",
+  grassTuft: "grass-tuft-cutout-20260702.png",
+  mossWetland: "terrain-moss-wetland-tile-20260702.png",
+  microGravel: "terrain-micro-gravel-tile-20260702.png",
+  crackedMud: "terrain-cracked-mud-tile-20260702.png",
+  shorelineWetEdge: "terrain-shoreline-wet-edge-tile-20260702.png",
 };
 
 const QUALITY_PRESETS = {
@@ -334,6 +339,18 @@ function configureGeneratedTexture(texture, { repeat = 1, anisotropy = 4 } = {})
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(repeatX, repeatY);
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = anisotropy;
+  texture.flipY = false;
+  return texture;
+}
+
+function configureGeneratedSpriteTexture(texture, { anisotropy = 4 } = {}) {
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = true;
@@ -545,6 +562,11 @@ class AssetService {
     this.cache.set("terrainGravelTexture", loadTexture(GENERATED_TEXTURE_ASSETS.gravel, { repeat: 3.2, anisotropy: 6 }));
     this.cache.set("stoneTexture", loadTexture(GENERATED_TEXTURE_ASSETS.stone, { repeat: 3.8, anisotropy: 6 }));
     this.cache.set("waterTexture", loadTexture(GENERATED_TEXTURE_ASSETS.water, { repeat: 1.8, anisotropy: 6 }));
+    this.cache.set("grassTuftTexture", configureGeneratedSpriteTexture(loader.load(`${GENERATED_TEXTURE_BASE_URL}${GENERATED_TEXTURE_ASSETS.grassTuft}`), { anisotropy: 6 }));
+    this.cache.set("mossWetlandTexture", loadTexture(GENERATED_TEXTURE_ASSETS.mossWetland, { repeat: 2.5, anisotropy: 6 }));
+    this.cache.set("microGravelTexture", loadTexture(GENERATED_TEXTURE_ASSETS.microGravel, { repeat: 2.8, anisotropy: 6 }));
+    this.cache.set("crackedMudTexture", loadTexture(GENERATED_TEXTURE_ASSETS.crackedMud, { repeat: 2.2, anisotropy: 6 }));
+    this.cache.set("shorelineWetEdgeTexture", loadTexture(GENERATED_TEXTURE_ASSETS.shorelineWetEdge, { repeat: 1.7, anisotropy: 6 }));
     this.cache.set("groundTextureSource", "generated-soil-texture");
   }
 
@@ -3343,6 +3365,8 @@ class AntColony3D {
     this.combatEffects = [];
     this.terrain = [];
     this.terrainBumps = [];
+    this.naturalDetails = [];
+    this.naturalDetailStats = { grassClumps: 0, microPebbles: 0, wetEdgeDecals: 0, crackDecals: 0, mossDecals: 0, gravelDecals: 0 };
     this.nestEntrances = [];
     this.nestSpoils = [];
     this.predators = [];
@@ -3447,6 +3471,7 @@ class AntColony3D {
       earthworkVoxel: new THREE.BoxGeometry(1, 1, 1),
       terrainBump: new THREE.SphereGeometry(1, 12, 8),
       stoneRock: new THREE.DodecahedronGeometry(1, 0),
+      detailPlane: new THREE.PlaneGeometry(1, 1),
     };
 
     this.materials = {
@@ -3482,21 +3507,37 @@ class AntColony3D {
         toneMapped: false,
       }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
-      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x6c8f56, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.23, depthWrite: false }),
-      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x8a6b3b, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
-      terrainSand: new THREE.MeshBasicMaterial({ color: 0xf3ce84, map: this.assetService.get("terrainSandTexture"), transparent: true, opacity: 0.24, depthWrite: false }),
-      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x5c887f, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.22, depthWrite: false }),
-      terrainGravel: new THREE.MeshBasicMaterial({ color: 0xb0aaa0, map: this.assetService.get("terrainGravelTexture"), transparent: true, opacity: 0.24, depthWrite: false }),
+      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x6c8f56, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
+      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x8a6b3b, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.14, depthWrite: false }),
+      terrainSand: new THREE.MeshBasicMaterial({ color: 0xf3ce84, map: this.assetService.get("terrainSandTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
+      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x4f7662, map: this.assetService.get("mossWetlandTexture"), transparent: true, opacity: 0.2, depthWrite: false }),
+      terrainGravel: new THREE.MeshBasicMaterial({ color: 0xb0aaa0, map: this.assetService.get("microGravelTexture") ?? this.assetService.get("terrainGravelTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
       terrainDryClay: new THREE.MeshBasicMaterial({ color: 0xc68e55, map: this.assetService.get("groundTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
       terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x9b5236, map: this.assetService.get("groundTexture"), transparent: true, opacity: 0.22, depthWrite: false }),
+      terrainMossWetland: new THREE.MeshBasicMaterial({ color: 0x607447, map: this.assetService.get("mossWetlandTexture"), transparent: true, opacity: 0.22, depthWrite: false, toneMapped: false }),
+      terrainMicroGravel: new THREE.MeshBasicMaterial({ color: 0xb7b0a1, map: this.assetService.get("microGravelTexture"), transparent: true, opacity: 0.24, depthWrite: false, toneMapped: false }),
+      terrainCrackedMud: new THREE.MeshBasicMaterial({ color: 0xd1a866, map: this.assetService.get("crackedMudTexture"), transparent: true, opacity: 0.28, depthWrite: false, toneMapped: false }),
+      terrainWetEdge: new THREE.MeshBasicMaterial({ color: 0x6f8f72, map: this.assetService.get("shorelineWetEdgeTexture"), transparent: true, opacity: 0.24, depthWrite: false, toneMapped: false }),
       terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
+      grassTuft: new THREE.MeshBasicMaterial({
+        color: 0xd8e8a8,
+        map: this.assetService.get("grassTuftTexture"),
+        transparent: true,
+        alphaTest: 0.06,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      }),
+      microPebble: new THREE.MeshStandardMaterial({ color: 0x6f6a62, roughness: 0.96 }),
+      palePebble: new THREE.MeshStandardMaterial({ color: 0xc2b58f, roughness: 0.9 }),
+      wetPebble: new THREE.MeshStandardMaterial({ color: 0x4a5651, roughness: 0.78 }),
       predatorBody: new THREE.MeshStandardMaterial({ color: 0x2b211c, roughness: 0.78 }),
       predatorAccent: new THREE.MeshBasicMaterial({ color: 0xb44a36, transparent: true, opacity: 0.58 }),
       water: new THREE.MeshBasicMaterial({
-        color: 0x55b9e3,
+        color: 0x4aa6b7,
         map: this.assetService.get("waterTexture"),
         transparent: true,
-        opacity: 0.68,
+        opacity: 0.6,
         depthWrite: false,
         toneMapped: false,
       }),
@@ -4942,7 +4983,7 @@ class AntColony3D {
   }
 
   reset(newGame = true) {
-    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.buildTasks, this.earthworks, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses]) {
+    for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.buildTasks, this.earthworks, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses, this.naturalDetails]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
     this.dynamicObjects.clear();
@@ -4956,6 +4997,8 @@ class AntColony3D {
     this.buildTasks = [];
     this.earthworks = [];
     this.combatEffects = [];
+    this.naturalDetails = [];
+    this.naturalDetailStats = { grassClumps: 0, microPebbles: 0, wetEdgeDecals: 0, crackDecals: 0, mossDecals: 0, gravelDecals: 0 };
     this.predators = [];
     this.rivalCorpses = [];
     this.colonyCorpses = [];
@@ -6657,6 +6700,7 @@ class AntColony3D {
     }));
     for (const site of this.foodSpawnSites) this.respawnFoodAtSite(site, true);
     this.seedNaturalObstacles();
+    this.seedReferenceNaturalDetails();
   }
 
   seedNaturalObstacles() {
@@ -6701,6 +6745,145 @@ class AntColony3D {
       { x: -98, z: 168, radius: 2.6, scaleY: 0.44, rotation: -2.4, pebbles: 2 },
     ];
     for (const stone of stones) this.addNaturalStone(stone);
+  }
+
+  addGroundDetailDecal(config) {
+    const blob = createIrregularBlobGeometry(`detail-${config.kind}-${config.x}-${config.z}-${config.rx}-${config.rz}`, config.segments ?? 48, {
+      roughness: config.roughness ?? 0.26,
+      minRadius: config.minRadius ?? 0.64,
+      maxRadius: config.maxRadius ?? 1.32,
+      uvScale: config.uvScale ?? 2.45,
+    });
+    const mesh = new THREE.Mesh(blob.geometry, config.material);
+    mesh.name = `natural-detail-${config.kind}`;
+    mesh.rotation.set(-Math.PI / 2, 0, config.rotation ?? 0);
+    mesh.position.set(config.x, config.y ?? 0.012, config.z);
+    mesh.scale.set(config.rx, config.rz, 1);
+    mesh.renderOrder = config.renderOrder ?? 3;
+    this.scene.add(mesh);
+    this.dynamicObjects.add(mesh);
+    this.naturalDetails.push({ kind: config.kind, mesh });
+    if (config.statsKey) this.naturalDetailStats[config.statsKey] = (this.naturalDetailStats[config.statsKey] ?? 0) + 1;
+    return mesh;
+  }
+
+  addInstancedNaturalDetail(kind, geometry, material, placements) {
+    const mesh = new THREE.InstancedMesh(geometry, material, placements.length);
+    mesh.name = `natural-detail-${kind}`;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = kind === "grass" ? 12 : 8;
+    const dummy = new THREE.Object3D();
+    placements.forEach((item, index) => {
+      dummy.position.set(item.x, item.y ?? 0.08, item.z);
+      dummy.rotation.set(item.rotationX ?? -Math.PI / 2, item.rotationY ?? 0, item.rotationZ ?? 0);
+      dummy.scale.set(item.scaleX ?? item.scale ?? 1, item.scaleY ?? item.scale ?? 1, item.scaleZ ?? item.scale ?? 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(mesh);
+    this.dynamicObjects.add(mesh);
+    this.naturalDetails.push({ kind, mesh });
+    return mesh;
+  }
+
+  scatterClusteredPlacements(seedKey, clusters, mapper) {
+    const rng = seededRandom(hashSeed(seedKey));
+    const placements = [];
+    for (const cluster of clusters) {
+      for (let i = 0; i < cluster.count; i += 1) {
+        const angle = rng() * Math.PI * 2;
+        const radius = Math.sqrt(rng());
+        const localX = Math.cos(angle) * radius * cluster.rx;
+        const localZ = Math.sin(angle) * radius * cluster.rz;
+        const rotation = cluster.rotation ?? 0;
+        const cos = Math.cos(rotation);
+        const sin = Math.sin(rotation);
+        const x = cluster.x + localX * cos - localZ * sin;
+        const z = cluster.z + localX * sin + localZ * cos;
+        if (Math.hypot(x, z) > this.worldRadius - 8) continue;
+        placements.push(mapper({ x, z, rng, cluster, index: i }));
+      }
+    }
+    return placements;
+  }
+
+  seedReferenceNaturalDetails() {
+    const wetEdges = [
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 118, z: -78, rx: 108, rz: 78, rotation: -0.24, material: this.materials.terrainWetEdge, y: 0.018, renderOrder: 6 },
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 86, z: -34, rx: 42, rz: 30, rotation: 0.34, material: this.materials.terrainWetEdge, y: 0.019, renderOrder: 6 },
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -200, z: 132, rx: 48, rz: 35, rotation: 0.12, material: this.materials.terrainWetEdge, y: 0.019, renderOrder: 6 },
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -170, z: 50, rx: 46, rz: 34, rotation: -0.28, material: this.materials.terrainWetEdge, y: 0.019, renderOrder: 6 },
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -238, z: -42, rx: 34, rz: 22, rotation: -0.48, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -92, z: 92, rx: 36, rz: 24, rotation: 0.42, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 18, z: -16, rx: 42, rz: 26, rotation: -0.16, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 204, z: 64, rx: 36, rz: 23, rotation: 0.58, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+    ];
+    const mossDecals = [
+      { kind: "mossMat", statsKey: "mossDecals", x: -150, z: -76, rx: 76, rz: 48, rotation: -0.2, material: this.materials.terrainMossWetland, y: 0.014 },
+      { kind: "mossMat", statsKey: "mossDecals", x: -42, z: -54, rx: 78, rz: 44, rotation: -0.36, material: this.materials.terrainMossWetland, y: 0.014 },
+      { kind: "mossMat", statsKey: "mossDecals", x: 42, z: 30, rx: 86, rz: 48, rotation: 0.26, material: this.materials.terrainMossWetland, y: 0.014 },
+      { kind: "mossMat", statsKey: "mossDecals", x: 154, z: 30, rx: 74, rz: 42, rotation: -0.52, material: this.materials.terrainMossWetland, y: 0.014 },
+      { kind: "mossMat", statsKey: "mossDecals", x: -120, z: 124, rx: 88, rz: 54, rotation: 0.18, material: this.materials.terrainMossWetland, y: 0.014 },
+      { kind: "mossMat", statsKey: "mossDecals", x: -218, z: 42, rx: 48, rz: 32, rotation: 0.4, material: this.materials.terrainMossWetland, y: 0.014 },
+    ];
+    const crackDecals = [
+      { kind: "crackedMud", statsKey: "crackDecals", x: -218, z: -132, rx: 66, rz: 48, rotation: 0.18, material: this.materials.terrainCrackedMud, y: 0.017, renderOrder: 5 },
+      { kind: "crackedMud", statsKey: "crackDecals", x: -118, z: -172, rx: 58, rz: 38, rotation: -0.28, material: this.materials.terrainCrackedMud, y: 0.017, renderOrder: 5 },
+      { kind: "crackedMud", statsKey: "crackDecals", x: -44, z: 160, rx: 66, rz: 36, rotation: -0.12, material: this.materials.terrainCrackedMud, y: 0.017, renderOrder: 5 },
+      { kind: "crackedMud", statsKey: "crackDecals", x: 36, z: -168, rx: 56, rz: 34, rotation: -0.18, material: this.materials.terrainCrackedMud, y: 0.017, renderOrder: 5 },
+      { kind: "crackedMud", statsKey: "crackDecals", x: 210, z: 166, rx: 52, rz: 36, rotation: 0.22, material: this.materials.terrainCrackedMud, y: 0.017, renderOrder: 5 },
+    ];
+    const gravelDecals = [
+      { kind: "gravelFan", statsKey: "gravelDecals", x: 172, z: 112, rx: 72, rz: 40, rotation: 0.4, material: this.materials.terrainMicroGravel, y: 0.015 },
+      { kind: "gravelFan", statsKey: "gravelDecals", x: 214, z: 144, rx: 62, rz: 34, rotation: -0.4, material: this.materials.terrainMicroGravel, y: 0.015 },
+      { kind: "gravelFan", statsKey: "gravelDecals", x: 106, z: 88, rx: 64, rz: 32, rotation: 0.08, material: this.materials.terrainMicroGravel, y: 0.015 },
+      { kind: "gravelFan", statsKey: "gravelDecals", x: -86, z: 24, rx: 58, rz: 32, rotation: -0.18, material: this.materials.terrainMicroGravel, y: 0.015 },
+      { kind: "gravelFan", statsKey: "gravelDecals", x: 168, z: -116, rx: 74, rz: 36, rotation: -0.28, material: this.materials.terrainMicroGravel, y: 0.015 },
+      { kind: "gravelFan", statsKey: "gravelDecals", x: -224, z: 82, rx: 44, rz: 28, rotation: 0.52, material: this.materials.terrainMicroGravel, y: 0.015 },
+    ];
+    for (const decal of [...wetEdges, ...mossDecals, ...crackDecals, ...gravelDecals]) this.addGroundDetailDecal(decal);
+
+    const grassPlacements = this.scatterClusteredPlacements("reference-grass-clumps", [
+      { x: -226, z: -56, rx: 34, rz: 26, count: 8, rotation: -0.4 },
+      { x: -166, z: 52, rx: 52, rz: 32, count: 10, rotation: -0.1 },
+      { x: -118, z: 128, rx: 70, rz: 34, count: 12, rotation: 0.18 },
+      { x: 18, z: 28, rx: 64, rz: 34, count: 10, rotation: 0.28 },
+      { x: 112, z: -40, rx: 88, rz: 40, count: 14, rotation: -0.22 },
+      { x: 174, z: 68, rx: 70, rz: 34, count: 10, rotation: 0.3 },
+      { x: 214, z: 144, rx: 48, rz: 30, count: 7, rotation: -0.36 },
+      { x: -46, z: -104, rx: 58, rz: 30, count: 8, rotation: -0.42 },
+    ], ({ x, z, rng }) => {
+      const scale = 4.2 + rng() * 4.8;
+      return { x, z, y: 0.075 + rng() * 0.02, rotationZ: rng() * Math.PI * 2, scaleX: scale * (0.8 + rng() * 0.45), scaleY: scale * (0.72 + rng() * 0.38), scaleZ: 1 };
+    });
+    this.addInstancedNaturalDetail("grass", this.geometries.detailPlane, this.materials.grassTuft, grassPlacements);
+    this.naturalDetailStats.grassClumps = grassPlacements.length;
+
+    const pebblePlacements = this.scatterClusteredPlacements("reference-micro-pebbles", [
+      { x: 170, z: 114, rx: 78, rz: 44, count: 82, rotation: 0.42 },
+      { x: 218, z: 152, rx: 54, rz: 32, count: 48, rotation: -0.24 },
+      { x: 104, z: 84, rx: 82, rz: 34, count: 54, rotation: -0.08 },
+      { x: 122, z: -78, rx: 98, rz: 64, count: 54, rotation: -0.22 },
+      { x: -84, z: 28, rx: 58, rz: 34, count: 32, rotation: -0.18 },
+      { x: -210, z: 122, rx: 56, rz: 36, count: 28, rotation: 0.2 },
+      { x: -210, z: -118, rx: 66, rz: 42, count: 32, rotation: 0.34 },
+    ], ({ x, z, rng }) => {
+      const radius = 0.16 + rng() * 0.48;
+      return {
+        x,
+        z,
+        y: radius * 0.16,
+        rotationX: rng() * 0.5,
+        rotationY: rng() * Math.PI * 2,
+        rotationZ: rng() * 0.5,
+        scaleX: radius * (0.85 + rng() * 0.6),
+        scaleY: radius * (0.24 + rng() * 0.22),
+        scaleZ: radius * (0.78 + rng() * 0.46),
+      };
+    });
+    this.addInstancedNaturalDetail("microPebble", this.geometries.soilPebble, this.materials.microPebble, pebblePlacements);
+    this.naturalDetailStats.microPebbles = pebblePlacements.length;
   }
 
   ensureRaidState() {

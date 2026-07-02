@@ -29,7 +29,7 @@ const report = {
   totalBytes,
   assets,
   notes: [
-    "Runtime binary assets include small role-label icons plus AI-generated 512px terrain material tiles; the map remains composed from placed scene geometry with irregular natural blob meshes for material patches.",
+    "Runtime binary assets include small role-label icons plus AI-generated terrain, grass, wetland, gravel, cracked mud, and shoreline material tiles; the map remains composed from placed scene geometry with irregular natural blob meshes and instanced fine detail.",
     "When GLB assets are introduced, prefer Meshopt first, Draco only for bandwidth-heavy static meshes.",
     "When color textures are introduced, convert large color maps to KTX2/BasisU and keep normal/roughness/metalness linear.",
   ],
