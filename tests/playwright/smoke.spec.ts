@@ -24,6 +24,12 @@ test("renders the initial ant empire scene", async ({ page }) => {
     sim.targetCameraYaw = beforeTargetYaw;
     sim.updateCamera();
     const info = sim.renderer.info;
+    const profileSpread = (profile: number[] = []) => (profile.length ? Math.max(...profile) - Math.min(...profile) : 0);
+    const terrainProfileSpreads = sim.terrain.map((patch: any) => profileSpread(patch.boundaryProfile));
+    const waterPools = sim.water.map((water: any) => water.group?.children?.find((child: any) => child.name === "natural-water-pool"));
+    const waterProfileSpreads = sim.water.map((water: any) => profileSpread(water.boundaryProfile));
+    const stoneSurfaces = sim.stones.flatMap((stone: any) => stone.group?.children?.filter((child: any) => child.name === "natural-stone-surface") ?? []);
+    const stoneSurfaceProfileSpreads = stoneSurfaces.map((surface: any) => profileSpread(surface.geometry?.userData?.irregularProfile));
     return {
       hasCanvas: Boolean(canvas),
       cssWidth: rect?.width ?? 0,
@@ -70,12 +76,23 @@ test("renders the initial ant empire scene", async ({ page }) => {
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
       groundTextureSource: sim.groundTextureSource ?? "",
-      groundMaterialUsesProceduralTexture: sim.materials.ground.map === sim.assetService.get("groundTexture"),
+      generatedMapTextureCount: ["groundTexture", "terrainMossTexture", "terrainSandTexture", "terrainGravelTexture", "stoneTexture", "waterTexture"].filter((key) =>
+        Boolean(sim.assetService.get(key)),
+      ).length,
+      groundMaterialUsesGeneratedTexture: sim.materials.ground.map === sim.assetService.get("groundTexture"),
       groundTextureRepeatX: sim.materials.ground.map?.repeat?.x ?? 0,
       groundTextureFlipY: sim.materials.ground.map?.flipY ?? true,
+      texturedTerrainPatches: sim.terrain.filter((patch: any) => Boolean(patch.mesh?.material?.map)).length,
+      irregularTerrainPatches: sim.terrain.filter((patch: any) => Boolean(patch.mesh?.geometry?.userData?.naturalBlob)).length,
+      minTerrainProfileSpread: Math.min(...terrainProfileSpreads),
+      stoneMaterialUsesGeneratedTexture: sim.materials.stone.map === sim.assetService.get("stoneTexture"),
+      stoneSurfaceUsesGeneratedTexture: sim.materials.stoneSurface.map === sim.assetService.get("stoneTexture"),
+      waterMaterialUsesGeneratedTexture: sim.materials.water.map === sim.assetService.get("waterTexture"),
       waterCount: sim.water.length,
       permanentWaterCount: sim.water.filter((water: any) => water.permanent).length,
       maxWaterRadius: Math.max(...sim.water.map((water: any) => water.radius)),
+      irregularWaterPools: waterPools.filter((pool: any) => Boolean(pool?.geometry?.userData?.naturalBlob)).length,
+      minWaterProfileSpread: Math.min(...waterProfileSpreads),
       nestEntrances: sim.nestEntrances?.length ?? sim.nestHoles?.length ?? 0,
       nestSpoils: sim.nestSpoils?.length ?? 0,
       nestIsHoleGroup: sim.nestMound?.type === "Group",
@@ -85,6 +102,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
       nestEntranceMaxHoleDiameter: Math.max(...(sim.nestEntrances ?? []).map((entrance: any) => (entrance.children?.[0]?.scale?.x ?? 0) * 2)),
       stoneCount: sim.stones.length,
       stoneMeshCount: sim.stones.reduce((count: number, stone: any) => count + (stone.group?.children?.filter((child: any) => child.type === "Mesh").length ?? 0), 0),
+      irregularStoneSurfaces: stoneSurfaces.filter((surface: any) => Boolean(surface.geometry?.userData?.naturalBlob)).length,
+      minStoneSurfaceProfileSpread: Math.min(...stoneSurfaceProfileSpreads),
       branchCount: sim.branches.length,
       upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
       calls: info.render.calls,
@@ -131,13 +150,22 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.outsideVisibilityChangedByCameraYaw).toBe(false);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(16);
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(20);
-  expect(metrics.groundTextureSource).toBe("procedural-soil-canvas");
-  expect(metrics.groundMaterialUsesProceduralTexture).toBe(true);
-  expect(metrics.groundTextureRepeatX).toBeGreaterThanOrEqual(4);
+  expect(metrics.groundTextureSource).toBe("generated-soil-texture");
+  expect(metrics.generatedMapTextureCount).toBe(6);
+  expect(metrics.groundMaterialUsesGeneratedTexture).toBe(true);
+  expect(metrics.groundTextureRepeatX).toBeGreaterThanOrEqual(7);
   expect(metrics.groundTextureFlipY).toBe(false);
+  expect(metrics.texturedTerrainPatches).toBeGreaterThanOrEqual(16);
+  expect(metrics.irregularTerrainPatches).toBe(metrics.terrainPatches);
+  expect(metrics.minTerrainProfileSpread).toBeGreaterThan(0.12);
+  expect(metrics.stoneMaterialUsesGeneratedTexture).toBe(true);
+  expect(metrics.stoneSurfaceUsesGeneratedTexture).toBe(true);
+  expect(metrics.waterMaterialUsesGeneratedTexture).toBe(true);
   expect(metrics.waterCount).toBeGreaterThanOrEqual(4);
   expect(metrics.permanentWaterCount).toBeGreaterThanOrEqual(4);
   expect(metrics.maxWaterRadius).toBeGreaterThanOrEqual(42);
+  expect(metrics.irregularWaterPools).toBe(metrics.waterCount);
+  expect(metrics.minWaterProfileSpread).toBeGreaterThan(0.12);
   expect(metrics.nestEntrances).toBeGreaterThanOrEqual(4);
   expect(metrics.nestSpoils).toBeGreaterThanOrEqual(24);
   expect(metrics.nestIsHoleGroup).toBe(true);
@@ -147,6 +175,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.nestEntranceMaxHoleDiameter).toBeLessThan(0.7);
   expect(metrics.stoneCount).toBeGreaterThanOrEqual(34);
   expect(metrics.stoneMeshCount).toBeGreaterThan(metrics.stoneCount);
+  expect(metrics.irregularStoneSurfaces).toBeGreaterThanOrEqual(metrics.stoneCount);
+  expect(metrics.minStoneSurfaceProfileSpread).toBeGreaterThan(0.12);
   expect(metrics.branchCount).toBe(0);
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
   expect(metrics.calls).toBeGreaterThan(0);

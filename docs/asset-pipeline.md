@@ -1,6 +1,6 @@
 # Asset Pipeline
 
-Current runtime assets are mostly procedural. The broad world ground uses a generated soil canvas texture as a base, while terrain variation is built from placed scene objects: translucent ground patches, water pools, stone groups, terrain rises, food, and construction visuals. Branch obstacle meshes exist in legacy code but are not placed in the normal map because they can snag ant movement. There are no GLB/KTX2/HDR files in the shipping path yet.
+Current runtime assets are mixed. The world is still composed from placed scene objects, but the key materials now use AI-generated 512px texture tiles in `public/assets/generated/`: soil, moss/damp ground, sand, gravel, stone surface, and water surface. Terrain patches, water pools, and stone surface details use seeded irregular blob meshes instead of visible circle or ellipse plates. Stone groups, water pools, terrain rises, food, and construction visuals remain individual scene objects rather than a single baked map image. Branch obstacle meshes exist in legacy code but are not placed in the normal map because they can snag ant movement. There are no GLB/KTX2/HDR files in the shipping path yet.
 
 ## When Adding Assets
 

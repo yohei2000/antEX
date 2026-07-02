@@ -131,6 +131,15 @@ const ui = {
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
+const GENERATED_TEXTURE_BASE_URL = `${import.meta.env.BASE_URL}assets/generated/`;
+const GENERATED_TEXTURE_ASSETS = {
+  soil: "terrain-soil-tile-20260702.png",
+  moss: "terrain-moss-damp-tile-20260702.png",
+  sand: "terrain-sand-tile-20260702.png",
+  gravel: "terrain-gravel-tile-20260702.png",
+  stone: "stone-surface-tile-20260702.png",
+  water: "water-surface-tile-20260702.png",
+};
 
 const QUALITY_PRESETS = {
   low: {
@@ -318,6 +327,133 @@ function makeGroundTexture() {
   return texture;
 }
 
+function configureGeneratedTexture(texture, { repeat = 1, anisotropy = 4 } = {}) {
+  const repeatX = Array.isArray(repeat) ? repeat[0] : repeat;
+  const repeatY = Array.isArray(repeat) ? repeat[1] : repeat;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = anisotropy;
+  texture.flipY = false;
+  return texture;
+}
+
+function hashSeed(value) {
+  const source = String(value);
+  let hash = 2166136261;
+  for (let i = 0; i < source.length; i += 1) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function makeIrregularBlobProfile(seedKey, segments = 48, { roughness = 0.18, minRadius = 0.76, maxRadius = 1.24 } = {}) {
+  const rng = seededRandom(hashSeed(seedKey));
+  const lobeA = 2 + Math.floor(rng() * 3);
+  const lobeB = lobeA + 2 + Math.floor(rng() * 3);
+  const lobeC = lobeB + 4 + Math.floor(rng() * 5);
+  const phaseA = rng() * Math.PI * 2;
+  const phaseB = rng() * Math.PI * 2;
+  const phaseC = rng() * Math.PI * 2;
+  const notches = Array.from({ length: 1 + Math.floor(rng() * 3) }, () => ({
+    angle: rng() * Math.PI * 2,
+    width: 0.22 + rng() * 0.2,
+    depth: roughness * (0.28 + rng() * 0.32),
+  }));
+  let values = Array.from({ length: segments }, (_, index) => {
+    const angle = (index / segments) * Math.PI * 2;
+    const large = Math.sin(angle * lobeA + phaseA) * roughness * 0.64;
+    const small = Math.sin(angle * lobeB + phaseB) * roughness * 0.34;
+    const grain = Math.sin(angle * lobeC + phaseC) * roughness * 0.18;
+    const chip = (rng() - 0.5) * roughness * 0.52;
+    const notch = notches.reduce((sum, item) => {
+      const delta = Math.atan2(Math.sin(angle - item.angle), Math.cos(angle - item.angle));
+      return sum - item.depth * Math.exp(-(delta * delta) / (2 * item.width * item.width));
+    }, 0);
+    return clamp(1 + large + small + grain + chip + notch, minRadius, maxRadius);
+  });
+  for (let pass = 0; pass < 1; pass += 1) {
+    values = values.map((value, index) => {
+      const prev = values[(index - 1 + segments) % segments];
+      const next = values[(index + 1) % segments];
+      return clamp(value * 0.66 + (prev + next) * 0.17, minRadius, maxRadius);
+    });
+  }
+  return values;
+}
+
+function createIrregularBlobGeometry(seedKey, segments = 48, options = {}) {
+  const profile = makeIrregularBlobProfile(seedKey, segments, options);
+  const uvScale = options.uvScale ?? 2.7;
+  const positions = [0, 0, 0];
+  const normals = [0, 0, 1];
+  const uvs = [0.5, 0.5];
+  const indices = [];
+  for (let i = 0; i < segments; i += 1) {
+    const angle = (i / segments) * Math.PI * 2;
+    const radius = profile[i];
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    positions.push(x, y, 0);
+    normals.push(0, 0, 1);
+    uvs.push(0.5 + x / uvScale, 0.5 + y / uvScale);
+    indices.push(0, i + 1, i === segments - 1 ? 1 : i + 2);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setIndex(indices);
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.userData.naturalBlob = true;
+  geometry.userData.irregularProfile = profile;
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return { geometry, profile };
+}
+
+function sampleIrregularProfile(profile, angle) {
+  if (!profile?.length) return 1;
+  const turn = Math.PI * 2;
+  const wrapped = ((angle % turn) + turn) % turn;
+  const scaled = (wrapped / turn) * profile.length;
+  const index = Math.floor(scaled);
+  const nextIndex = (index + 1) % profile.length;
+  const t = scaled - index;
+  return profile[index] * (1 - t) + profile[nextIndex] * t;
+}
+
+function naturalPatchDistance(patch, x, z, padding = 0) {
+  const dx = x - patch.x;
+  const dz = z - patch.z;
+  const cos = patch.cos ?? Math.cos(patch.rotation ?? 0);
+  const sin = patch.sin ?? Math.sin(patch.rotation ?? 0);
+  const localX = dx * cos + dz * sin;
+  const localZ = -dx * sin + dz * cos;
+  const rx = Math.max(0.001, (patch.rx ?? patch.radius ?? 1) + padding);
+  const rz = Math.max(0.001, (patch.rz ?? patch.radius ?? 1) + padding);
+  const normalizedX = localX / rx;
+  const normalizedZ = localZ / rz;
+  const baseDistance = Math.hypot(normalizedX, normalizedZ);
+  const boundary = sampleIrregularProfile(patch.boundaryProfile, Math.atan2(normalizedZ, normalizedX));
+  return baseDistance / Math.max(0.001, boundary);
+}
+
 function roundedRect(context, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);
   context.beginPath();
@@ -401,12 +537,15 @@ class AssetService {
   }
 
   preloadAssets() {
-    this.manager.itemStart("procedural-ground");
-    const groundTexture = makeGroundTexture();
-    groundTexture.anisotropy = 6;
-    this.cache.set("groundTexture", groundTexture);
-    this.cache.set("groundTextureSource", "procedural-soil-canvas");
-    this.manager.itemEnd("procedural-ground");
+    const loader = new THREE.TextureLoader(this.manager);
+    const loadTexture = (fileName, options) => configureGeneratedTexture(loader.load(`${GENERATED_TEXTURE_BASE_URL}${fileName}`), options);
+    this.cache.set("groundTexture", loadTexture(GENERATED_TEXTURE_ASSETS.soil, { repeat: 7, anisotropy: 8 }));
+    this.cache.set("terrainMossTexture", loadTexture(GENERATED_TEXTURE_ASSETS.moss, { repeat: 2.4, anisotropy: 6 }));
+    this.cache.set("terrainSandTexture", loadTexture(GENERATED_TEXTURE_ASSETS.sand, { repeat: 2.8, anisotropy: 6 }));
+    this.cache.set("terrainGravelTexture", loadTexture(GENERATED_TEXTURE_ASSETS.gravel, { repeat: 3.2, anisotropy: 6 }));
+    this.cache.set("stoneTexture", loadTexture(GENERATED_TEXTURE_ASSETS.stone, { repeat: 3.8, anisotropy: 6 }));
+    this.cache.set("waterTexture", loadTexture(GENERATED_TEXTURE_ASSETS.water, { repeat: 1.8, anisotropy: 6 }));
+    this.cache.set("groundTextureSource", "generated-soil-texture");
   }
 
   get(name) {
@@ -875,12 +1014,13 @@ class Ant3D {
 
     for (const patch of sim.water) {
       const d = distance2(this.x, this.z, patch.x, patch.z);
-      const reach = patch.radius + 10;
+      const reach = Math.max(patch.radius, patch.rx ?? 0, patch.rz ?? 0) + 10;
       if (d < reach) {
         const strength = (1 - d / reach) * patch.power;
         hazard.x += ((this.x - patch.x) / (d || 1)) * strength * 1.7;
         hazard.z += ((this.z - patch.z) / (d || 1)) * strength * 1.7;
-        if (d < patch.radius) sensed.waterDepth = Math.max(sensed.waterDepth, (1 - d / patch.radius) * patch.power);
+        const waterDistance = naturalPatchDistance(patch, this.x, this.z);
+        if (waterDistance < 1) sensed.waterDepth = Math.max(sensed.waterDepth, (1 - waterDistance * waterDistance) * patch.power);
       }
     }
 
@@ -3154,7 +3294,7 @@ class AntColony3D {
     this.raidSoonMode = IS_RAID_SOON;
     document.body.classList.toggle("is-raid-soon", this.raidSoonMode);
     this.worldRadius = WORLD_RADIUS;
-    this.groundTextureSource = this.assetService.get("groundTextureSource") ?? "procedural-soil-canvas";
+    this.groundTextureSource = "generated-soil-texture";
     this.nest = { x: -164, z: -154, radius: 8 };
     this.rivalNest = {
       x: 188,
@@ -3296,7 +3436,6 @@ class AntColony3D {
     this.geometries = {
       antSphere: new THREE.SphereGeometry(1, 12, 8),
       foodCrumb: new THREE.SphereGeometry(0.8, 10, 8),
-      waterCircle: new THREE.CircleGeometry(1, 64),
       trailCircle: new THREE.CircleGeometry(1, 18),
       wallPlacementLine: new THREE.BoxGeometry(1, 1, 1),
       wallPlacementMarker: new THREE.SphereGeometry(1, 14, 8),
@@ -3312,7 +3451,7 @@ class AntColony3D {
 
     this.materials = {
       ground: new THREE.MeshBasicMaterial({
-        map: this.assetService.get("groundTexture"),
+        map: this.assetService.get("groundTexture") ?? makeGroundTexture(),
         color: 0xffffff,
         toneMapped: false,
       }),
@@ -3333,23 +3472,33 @@ class AntColony3D {
       foodFruit: new THREE.MeshStandardMaterial({ color: 0xc45b33, roughness: 0.7 }),
       foodSeed: new THREE.MeshStandardMaterial({ color: 0xb28c45, roughness: 0.72 }),
       foodLeaf: new THREE.MeshStandardMaterial({ color: 0x6f8d38, roughness: 0.8 }),
-      stone: new THREE.MeshStandardMaterial({ color: 0x777c75, roughness: 0.86 }),
+      stone: new THREE.MeshStandardMaterial({ color: 0x9ea49d, map: this.assetService.get("stoneTexture"), roughness: 0.88 }),
+      stoneSurface: new THREE.MeshBasicMaterial({
+        color: 0xc7cbc3,
+        map: this.assetService.get("stoneTexture"),
+        transparent: true,
+        opacity: 0.62,
+        depthWrite: false,
+        toneMapped: false,
+      }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
-      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x3f7142, transparent: true, opacity: 0.16, depthWrite: false }),
-      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x735329, transparent: true, opacity: 0.15, depthWrite: false }),
-      terrainSand: new THREE.MeshBasicMaterial({ color: 0xd8bd75, transparent: true, opacity: 0.18, depthWrite: false }),
-      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x2e5f56, transparent: true, opacity: 0.18, depthWrite: false }),
-      terrainGravel: new THREE.MeshBasicMaterial({ color: 0x7e8078, transparent: true, opacity: 0.17, depthWrite: false }),
-      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0xa47447, transparent: true, opacity: 0.14, depthWrite: false }),
-      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x8a4a2f, transparent: true, opacity: 0.16, depthWrite: false }),
+      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x6c8f56, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.23, depthWrite: false }),
+      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x8a6b3b, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
+      terrainSand: new THREE.MeshBasicMaterial({ color: 0xf3ce84, map: this.assetService.get("terrainSandTexture"), transparent: true, opacity: 0.24, depthWrite: false }),
+      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x5c887f, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.22, depthWrite: false }),
+      terrainGravel: new THREE.MeshBasicMaterial({ color: 0xb0aaa0, map: this.assetService.get("terrainGravelTexture"), transparent: true, opacity: 0.24, depthWrite: false }),
+      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0xc68e55, map: this.assetService.get("groundTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
+      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x9b5236, map: this.assetService.get("groundTexture"), transparent: true, opacity: 0.22, depthWrite: false }),
       terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
       predatorBody: new THREE.MeshStandardMaterial({ color: 0x2b211c, roughness: 0.78 }),
       predatorAccent: new THREE.MeshBasicMaterial({ color: 0xb44a36, transparent: true, opacity: 0.58 }),
       water: new THREE.MeshBasicMaterial({
         color: 0x55b9e3,
+        map: this.assetService.get("waterTexture"),
         transparent: true,
-        opacity: 0.62,
+        opacity: 0.68,
         depthWrite: false,
+        toneMapped: false,
       }),
       waterRing: new THREE.MeshBasicMaterial({ color: 0x9ce7ff, transparent: true, opacity: 0.48 }),
       impact: new THREE.MeshBasicMaterial({ color: 0xe47f63, transparent: true, opacity: 0.42 }),
@@ -3473,7 +3622,14 @@ class AntColony3D {
   }
 
   createTerrainPatch(patch) {
-    const mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 48), patch.material);
+    const blob = createIrregularBlobGeometry(`terrain-${patch.kind}-${patch.x}-${patch.z}`, 72, {
+      roughness: 0.23,
+      minRadius: 0.72,
+      maxRadius: 1.28,
+      uvScale: 2.65,
+    });
+    const mesh = new THREE.Mesh(blob.geometry, patch.material);
+    mesh.name = `natural-terrain-${patch.kind}`;
     mesh.rotation.set(-Math.PI / 2, 0, patch.rotation);
     mesh.position.set(patch.x, 0.004, patch.z);
     mesh.scale.set(patch.rx, patch.rz, 1);
@@ -3488,6 +3644,7 @@ class AntColony3D {
       rotation: patch.rotation,
       cos: Math.cos(patch.rotation),
       sin: Math.sin(patch.rotation),
+      boundaryProfile: blob.profile,
       speed: patch.speed,
       mesh,
     });
@@ -3546,9 +3703,11 @@ class AntColony3D {
       const dz = z - patch.z;
       const localX = dx * patch.cos + dz * patch.sin;
       const localZ = -dx * patch.sin + dz * patch.cos;
-      const normalized = (localX * localX) / (patch.rx * patch.rx) + (localZ * localZ) / (patch.rz * patch.rz);
+      const baseDistance = Math.hypot(localX / patch.rx, localZ / patch.rz);
+      const boundary = sampleIrregularProfile(patch.boundaryProfile, Math.atan2(localZ / patch.rz, localX / patch.rx));
+      const normalized = baseDistance / boundary;
       if (normalized >= 1) continue;
-      const influence = (1 - normalized) * 0.75;
+      const influence = (1 - normalized * normalized) * 0.75;
       multiplier *= 1 + (patch.speed - 1) * influence;
     }
     return clamp(multiplier, 0.64, 1.12);
@@ -7123,7 +7282,15 @@ class AntColony3D {
     const rx = options.rx ?? radius * 1.18;
     const rz = options.rz ?? radius * 0.82;
     const group = new THREE.Group();
-    const pool = new THREE.Mesh(this.geometries.waterCircle, this.materials.water.clone());
+    const rotation = options.rotation ?? 0;
+    const blob = createIrregularBlobGeometry(options.seed ?? `water-${Math.round(x * 10)}-${Math.round(z * 10)}-${Math.round(radius * 10)}`, 96, {
+      roughness: options.permanent ? 0.24 : 0.18,
+      minRadius: 0.7,
+      maxRadius: 1.3,
+      uvScale: 2.75,
+    });
+    const pool = new THREE.Mesh(blob.geometry, this.materials.water.clone());
+    pool.name = "natural-water-pool";
     pool.rotation.x = -Math.PI / 2;
     pool.scale.set(rx, rz, 1);
     pool.position.y = 0.035;
@@ -7136,7 +7303,7 @@ class AntColony3D {
       ring.position.y = 0.08;
       group.add(ring);
     }
-    group.rotation.y = options.rotation ?? 0;
+    group.rotation.y = rotation;
     group.position.set(x, 0, z);
     this.scene.add(group);
     this.dynamicObjects.add(group);
@@ -7144,6 +7311,12 @@ class AntColony3D {
       x,
       z,
       radius,
+      rx,
+      rz,
+      rotation,
+      cos: Math.cos(rotation),
+      sin: Math.sin(rotation),
+      boundaryProfile: blob.profile,
       power: options.power ?? clamp(0.45 + intensity * 0.13 * scale, 0.35, 1.08),
       age: 0,
       group,
@@ -7161,6 +7334,18 @@ class AntColony3D {
     stone.castShadow = this.quality.shadowQuality !== "off";
     stone.receiveShadow = this.quality.shadowQuality !== "off";
     group.add(stone);
+    const surfaceBlob = createIrregularBlobGeometry(`stone-surface-${config.x}-${config.z}-${config.radius}`, 32, {
+      roughness: 0.28,
+      minRadius: 0.68,
+      maxRadius: 1.26,
+      uvScale: 2.35,
+    });
+    const surface = new THREE.Mesh(surfaceBlob.geometry, this.materials.stoneSurface);
+    surface.name = "natural-stone-surface";
+    surface.rotation.set(-Math.PI / 2, 0, config.rotation);
+    surface.position.y = config.radius * (0.48 + config.scaleY * 0.62);
+    surface.scale.set(config.radius * (config.scaleX ?? 0.9), config.radius * (config.scaleZ ?? 0.72), 1);
+    group.add(surface);
     const pebbleCount = Math.max(0, Math.floor(config.pebbles ?? 0));
     for (let i = 0; i < pebbleCount; i += 1) {
       const angle = config.rotation + i * 2.16 + config.radius * 0.31;
