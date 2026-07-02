@@ -1,6 +1,6 @@
 # Asset Pipeline
 
-Current runtime assets are mixed. The broad world ground uses the generated texture at `public/assets/generated/ant-world-map-20260702.png`, while ant meshes, food, stones, water overlays, and construction visuals remain procedural at startup. Branch obstacle meshes exist in legacy code but are not placed in the normal map because they can snag ant movement. There are no GLB/KTX2/HDR files in the shipping path yet.
+Current runtime assets are mostly procedural. The broad world ground uses a generated soil canvas texture as a base, while terrain variation is built from placed scene objects: translucent ground patches, water pools, stone groups, terrain rises, food, and construction visuals. Branch obstacle meshes exist in legacy code but are not placed in the normal map because they can snag ant movement. There are no GLB/KTX2/HDR files in the shipping path yet.
 
 ## When Adding Assets
 

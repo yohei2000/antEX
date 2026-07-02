@@ -69,8 +69,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
       outsideVisibilityChangedByCameraYaw: outsideVisibleBeforeYaw !== outsideVisibleAfterYaw,
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
-      groundMapAssetUrl: sim.groundMapAssetUrl ?? "",
-      groundMaterialUsesGeneratedMap: sim.materials.ground.map === sim.assetService.get("groundTexture"),
+      groundTextureSource: sim.groundTextureSource ?? "",
+      groundMaterialUsesProceduralTexture: sim.materials.ground.map === sim.assetService.get("groundTexture"),
+      groundTextureRepeatX: sim.materials.ground.map?.repeat?.x ?? 0,
       groundTextureFlipY: sim.materials.ground.map?.flipY ?? true,
       waterCount: sim.water.length,
       permanentWaterCount: sim.water.filter((water: any) => water.permanent).length,
@@ -83,6 +84,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       nestMainHoleDiameter: ((sim.nestMound?.children?.[0]?.scale?.x ?? 0) as number) * 2,
       nestEntranceMaxHoleDiameter: Math.max(...(sim.nestEntrances ?? []).map((entrance: any) => (entrance.children?.[0]?.scale?.x ?? 0) * 2)),
       stoneCount: sim.stones.length,
+      stoneMeshCount: sim.stones.reduce((count: number, stone: any) => count + (stone.group?.children?.filter((child: any) => child.type === "Mesh").length ?? 0), 0),
       branchCount: sim.branches.length,
       upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
       calls: info.render.calls,
@@ -127,13 +129,14 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.initialExploredPatchCount).toBe(0);
   expect(metrics.outsideInitialCircleVisible).toBe(false);
   expect(metrics.outsideVisibilityChangedByCameraYaw).toBe(false);
-  expect(metrics.terrainPatches).toBeGreaterThanOrEqual(8);
-  expect(metrics.terrainBumps).toBeGreaterThanOrEqual(8);
-  expect(metrics.groundMapAssetUrl).toContain("assets/generated/ant-world-map-20260702.png");
-  expect(metrics.groundMaterialUsesGeneratedMap).toBe(true);
+  expect(metrics.terrainPatches).toBeGreaterThanOrEqual(16);
+  expect(metrics.terrainBumps).toBeGreaterThanOrEqual(20);
+  expect(metrics.groundTextureSource).toBe("procedural-soil-canvas");
+  expect(metrics.groundMaterialUsesProceduralTexture).toBe(true);
+  expect(metrics.groundTextureRepeatX).toBeGreaterThanOrEqual(4);
   expect(metrics.groundTextureFlipY).toBe(false);
-  expect(metrics.waterCount).toBeGreaterThanOrEqual(3);
-  expect(metrics.permanentWaterCount).toBeGreaterThanOrEqual(3);
+  expect(metrics.waterCount).toBeGreaterThanOrEqual(4);
+  expect(metrics.permanentWaterCount).toBeGreaterThanOrEqual(4);
   expect(metrics.maxWaterRadius).toBeGreaterThanOrEqual(42);
   expect(metrics.nestEntrances).toBeGreaterThanOrEqual(4);
   expect(metrics.nestSpoils).toBeGreaterThanOrEqual(24);
@@ -142,7 +145,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.nestEntranceMaxY).toBeLessThan(0.12);
   expect(metrics.nestMainHoleDiameter).toBeLessThan(1.3);
   expect(metrics.nestEntranceMaxHoleDiameter).toBeLessThan(0.7);
-  expect(metrics.stoneCount).toBeGreaterThanOrEqual(18);
+  expect(metrics.stoneCount).toBeGreaterThanOrEqual(34);
+  expect(metrics.stoneMeshCount).toBeGreaterThan(metrics.stoneCount);
   expect(metrics.branchCount).toBe(0);
   expect(metrics.upgradeButtons).toBeGreaterThanOrEqual(15);
   expect(metrics.calls).toBeGreaterThan(0);

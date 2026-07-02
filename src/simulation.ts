@@ -131,8 +131,6 @@ const ui = {
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
-const WORLD_MAP_TEXTURE_PATH = "assets/generated/ant-world-map-20260702.png";
-const WORLD_MAP_TEXTURE_URL = `${import.meta.env.BASE_URL}${WORLD_MAP_TEXTURE_PATH}`;
 
 const QUALITY_PRESETS = {
   low: {
@@ -316,16 +314,6 @@ function makeGroundTexture() {
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(4, 4);
   texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function configureWorldMapTexture(texture) {
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.generateMipmaps = true;
   texture.flipY = false;
   return texture;
 }
@@ -414,15 +402,11 @@ class AssetService {
 
   preloadAssets() {
     this.manager.itemStart("procedural-ground");
-    const fallbackGroundTexture = makeGroundTexture();
-    fallbackGroundTexture.anisotropy = 4;
-    this.cache.set("fallbackGroundTexture", fallbackGroundTexture);
+    const groundTexture = makeGroundTexture();
+    groundTexture.anisotropy = 6;
+    this.cache.set("groundTexture", groundTexture);
+    this.cache.set("groundTextureSource", "procedural-soil-canvas");
     this.manager.itemEnd("procedural-ground");
-
-    const worldMapTexture = configureWorldMapTexture(new THREE.TextureLoader(this.manager).load(WORLD_MAP_TEXTURE_URL));
-    worldMapTexture.anisotropy = 8;
-    this.cache.set("groundTexture", worldMapTexture);
-    this.cache.set("groundTextureUrl", WORLD_MAP_TEXTURE_URL);
   }
 
   get(name) {
@@ -3170,7 +3154,7 @@ class AntColony3D {
     this.raidSoonMode = IS_RAID_SOON;
     document.body.classList.toggle("is-raid-soon", this.raidSoonMode);
     this.worldRadius = WORLD_RADIUS;
-    this.groundMapAssetUrl = WORLD_MAP_TEXTURE_URL;
+    this.groundTextureSource = this.assetService.get("groundTextureSource") ?? "procedural-soil-canvas";
     this.nest = { x: -164, z: -154, radius: 8 };
     this.rivalNest = {
       x: 188,
@@ -3351,25 +3335,20 @@ class AntColony3D {
       foodLeaf: new THREE.MeshStandardMaterial({ color: 0x6f8d38, roughness: 0.8 }),
       stone: new THREE.MeshStandardMaterial({ color: 0x777c75, roughness: 0.86 }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
-      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x456f42, transparent: true, opacity: 0.08, depthWrite: false }),
-      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x7b5b30, transparent: true, opacity: 0.07, depthWrite: false }),
-      terrainSand: new THREE.MeshBasicMaterial({ color: 0xd8c082, transparent: true, opacity: 0.08, depthWrite: false }),
-      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x2f5149, transparent: true, opacity: 0.08, depthWrite: false }),
-      terrainGravel: new THREE.MeshBasicMaterial({ color: 0x848075, transparent: true, opacity: 0.07, depthWrite: false }),
-      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0x9d7650, transparent: true, opacity: 0.07, depthWrite: false }),
-      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x8a4a2f, transparent: true, opacity: 0.08, depthWrite: false }),
+      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x3f7142, transparent: true, opacity: 0.16, depthWrite: false }),
+      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x735329, transparent: true, opacity: 0.15, depthWrite: false }),
+      terrainSand: new THREE.MeshBasicMaterial({ color: 0xd8bd75, transparent: true, opacity: 0.18, depthWrite: false }),
+      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x2e5f56, transparent: true, opacity: 0.18, depthWrite: false }),
+      terrainGravel: new THREE.MeshBasicMaterial({ color: 0x7e8078, transparent: true, opacity: 0.17, depthWrite: false }),
+      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0xa47447, transparent: true, opacity: 0.14, depthWrite: false }),
+      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x8a4a2f, transparent: true, opacity: 0.16, depthWrite: false }),
       terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
       predatorBody: new THREE.MeshStandardMaterial({ color: 0x2b211c, roughness: 0.78 }),
       predatorAccent: new THREE.MeshBasicMaterial({ color: 0xb44a36, transparent: true, opacity: 0.58 }),
-      water: new THREE.MeshPhysicalMaterial({
+      water: new THREE.MeshBasicMaterial({
         color: 0x55b9e3,
         transparent: true,
-        opacity: 0.56,
-        roughness: 0.12,
-        metalness: 0,
-        transmission: 0.15,
-        emissive: 0x073243,
-        emissiveIntensity: 0.18,
+        opacity: 0.62,
         depthWrite: false,
       }),
       waterRing: new THREE.MeshBasicMaterial({ color: 0x9ce7ff, transparent: true, opacity: 0.48 }),
@@ -3441,7 +3420,7 @@ class AntColony3D {
     this.scene.add(sun);
 
     const ground = new THREE.Mesh(new THREE.CircleGeometry(this.worldRadius + 12, 144), this.materials.ground);
-    ground.name = "generated-world-map-ground";
+    ground.name = "procedural-soil-ground";
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.03;
     ground.receiveShadow = this.quality.shadowQuality !== "off";
@@ -3468,17 +3447,25 @@ class AntColony3D {
   seedTerrain() {
     const patches = [
       { kind: "dryClay", x: -178, z: -158, rx: 82, rz: 58, rotation: -0.28, speed: 0.96, material: this.materials.terrainDryClay },
+      { kind: "dryClay", x: -232, z: -118, rx: 48, rz: 28, rotation: 0.38, speed: 0.97, material: this.materials.terrainDryClay },
       { kind: "damp", x: 118, z: -82, rx: 104, rz: 72, rotation: -0.22, speed: 0.72, material: this.materials.terrainDamp },
+      { kind: "damp", x: 76, z: -38, rx: 58, rz: 38, rotation: 0.24, speed: 0.78, material: this.materials.terrainDamp },
+      { kind: "damp", x: 164, z: -134, rx: 50, rz: 32, rotation: -0.64, speed: 0.77, material: this.materials.terrainDamp },
       { kind: "damp", x: -198, z: 128, rx: 42, rz: 34, rotation: 0.12, speed: 0.72, material: this.materials.terrainDamp },
       { kind: "damp", x: -172, z: 48, rx: 38, rz: 30, rotation: -0.2, speed: 0.72, material: this.materials.terrainDamp },
       { kind: "moss", x: -116, z: 120, rx: 96, rz: 58, rotation: 0.12, speed: 0.87, material: this.materials.terrainMoss },
       { kind: "moss", x: -42, z: -78, rx: 74, rz: 46, rotation: -0.36, speed: 0.88, material: this.materials.terrainMoss },
       { kind: "moss", x: 40, z: 22, rx: 92, rz: 54, rotation: 0.28, speed: 0.88, material: this.materials.terrainMoss },
+      { kind: "moss", x: 138, z: 34, rx: 62, rz: 36, rotation: -0.54, speed: 0.89, material: this.materials.terrainMoss },
       { kind: "sand", x: -28, z: 134, rx: 58, rz: 34, rotation: 0.08, speed: 1.04, material: this.materials.terrainSand },
       { kind: "sand", x: 58, z: -160, rx: 64, rz: 34, rotation: -0.18, speed: 1.03, material: this.materials.terrainSand },
+      { kind: "sand", x: -84, z: 184, rx: 70, rz: 32, rotation: -0.28, speed: 1.03, material: this.materials.terrainSand },
       { kind: "gravel", x: 28, z: 104, rx: 78, rz: 40, rotation: -0.04, speed: 0.9, material: this.materials.terrainGravel },
+      { kind: "gravel", x: 136, z: 104, rx: 58, rz: 32, rotation: 0.5, speed: 0.91, material: this.materials.terrainGravel },
+      { kind: "gravel", x: -84, z: 28, rx: 52, rz: 34, rotation: -0.18, speed: 0.92, material: this.materials.terrainGravel },
       { kind: "enemySoil", x: 188, z: 170, rx: 72, rz: 52, rotation: 0.18, speed: 0.9, material: this.materials.terrainEnemySoil },
       { kind: "leaf", x: 206, z: -28, rx: 70, rz: 42, rotation: -0.28, speed: 0.86, material: this.materials.terrainLeaf },
+      { kind: "leaf", x: -216, z: 54, rx: 42, rz: 30, rotation: 0.4, speed: 0.89, material: this.materials.terrainLeaf },
     ];
 
     for (const patch of patches) this.createTerrainPatch(patch);
@@ -3508,6 +3495,7 @@ class AntColony3D {
 
   seedPermanentWater() {
     this.addWater(122, -78, 1, { permanent: true, radius: 52, rx: 82, rz: 62, rotation: -0.22, power: 0.86, ring: false });
+    this.addWater(82, -36, 1, { permanent: true, radius: 20, rx: 28, rz: 20, rotation: 0.34, power: 0.48, ring: false });
     this.addWater(-200, 132, 1, { permanent: true, radius: 24, rx: 35, rz: 27, rotation: 0.16, power: 0.5, ring: false });
     this.addWater(-170, 48, 1, { permanent: true, radius: 22, rx: 34, rz: 27, rotation: -0.32, power: 0.46, ring: false });
   }
@@ -3530,6 +3518,12 @@ class AntColony3D {
       { x: -34, z: -156, rx: 4.8, rz: 1.8, h: 0.32, rotation: -0.62 },
       { x: 34, z: 24, rx: 5.2, rz: 2.0, h: 0.34, rotation: 0.42 },
       { x: 118, z: 12, rx: 4.6, rz: 2.0, h: 0.3, rotation: -0.24 },
+      { x: 54, z: -26, rx: 4.4, rz: 1.7, h: 0.26, rotation: 0.48 },
+      { x: 190, z: -114, rx: 5.0, rz: 2.0, h: 0.32, rotation: -0.38 },
+      { x: 102, z: -38, rx: 4.8, rz: 1.9, h: 0.28, rotation: 0.82 },
+      { x: -92, z: 180, rx: 5.4, rz: 2.2, h: 0.34, rotation: -0.42 },
+      { x: 164, z: 176, rx: 5.2, rz: 2.2, h: 0.34, rotation: 0.18 },
+      { x: 232, z: 166, rx: 4.6, rz: 1.9, h: 0.28, rotation: -0.58 },
     ];
     for (const bump of bumps) this.addTerrainBump(bump);
   }
@@ -6508,28 +6502,44 @@ class AntColony3D {
 
   seedNaturalObstacles() {
     const stones = [
-      { x: -236, z: -86, radius: 2.6, scaleY: 0.42, rotation: -0.3 },
-      { x: -192, z: -186, radius: 3.2, scaleY: 0.46, rotation: 1.1 },
-      { x: -150, z: 104, radius: 2.8, scaleY: 0.44, rotation: -1.2 },
-      { x: -186, z: 122, radius: 3.1, scaleY: 0.48, rotation: 0.6 },
-      { x: -220, z: 90, radius: 2.4, scaleY: 0.42, rotation: 2.2 },
-      { x: -115, z: -18, radius: 3.4, scaleY: 0.5, rotation: 1.7 },
-      { x: -74, z: -48, radius: 2.5, scaleY: 0.44, rotation: -0.8 },
-      { x: 36, z: 18, radius: 2.8, scaleY: 0.46, rotation: 0.2 },
-      { x: 52, z: -64, radius: 3.0, scaleY: 0.46, rotation: -0.4 },
-      { x: 118, z: -10, radius: 3.7, scaleY: 0.5, rotation: 1.3 },
-      { x: 134, z: -82, radius: 2.7, scaleY: 0.44, rotation: 2.5 },
-      { x: 142, z: 40, radius: 2.9, scaleY: 0.42, rotation: -1.0 },
-      { x: 156, z: -168, radius: 3.4, scaleY: 0.5, rotation: 0.4 },
-      { x: 192, z: -72, radius: 2.6, scaleY: 0.45, rotation: -1.6 },
-      { x: 218, z: -32, radius: 3.1, scaleY: 0.46, rotation: 0.8 },
-      { x: 104, z: -196, radius: 3.8, scaleY: 0.52, rotation: -0.2 },
-      { x: 148, z: 84, radius: 2.7, scaleY: 0.44, rotation: 1.8 },
-      { x: 174, z: 132, radius: 3.2, scaleY: 0.48, rotation: -0.5 },
-      { x: 208, z: 92, radius: 2.5, scaleY: 0.44, rotation: 2.7 },
-      { x: 222, z: 118, radius: 3.0, scaleY: 0.45, rotation: -2.0 },
-      { x: -48, z: 148, radius: 2.9, scaleY: 0.43, rotation: 0.9 },
-      { x: 26, z: 138, radius: 2.5, scaleY: 0.42, rotation: -0.7 },
+      { x: -236, z: -86, radius: 2.6, scaleY: 0.42, rotation: -0.3, pebbles: 2 },
+      { x: -212, z: -132, radius: 1.8, scaleY: 0.4, rotation: 0.7, pebbles: 1 },
+      { x: -192, z: -186, radius: 3.2, scaleY: 0.46, rotation: 1.1, scaleX: 1.18, pebbles: 3 },
+      { x: -122, z: -206, radius: 2.2, scaleY: 0.42, rotation: -1.7, pebbles: 1 },
+      { x: -150, z: 104, radius: 2.8, scaleY: 0.44, rotation: -1.2, pebbles: 2 },
+      { x: -186, z: 122, radius: 3.1, scaleY: 0.48, rotation: 0.6, scaleZ: 0.72, pebbles: 3 },
+      { x: -220, z: 90, radius: 2.4, scaleY: 0.42, rotation: 2.2, pebbles: 2 },
+      { x: -226, z: 152, radius: 2.1, scaleY: 0.4, rotation: -0.8, pebbles: 1 },
+      { x: -174, z: 62, radius: 2.2, scaleY: 0.4, rotation: 1.6, pebbles: 2 },
+      { x: -115, z: -18, radius: 3.4, scaleY: 0.5, rotation: 1.7, pebbles: 3 },
+      { x: -74, z: -48, radius: 2.5, scaleY: 0.44, rotation: -0.8, pebbles: 1 },
+      { x: -42, z: 18, radius: 1.9, scaleY: 0.38, rotation: 1.3, pebbles: 1 },
+      { x: 36, z: 18, radius: 2.8, scaleY: 0.46, rotation: 0.2, pebbles: 2 },
+      { x: 52, z: -64, radius: 3.0, scaleY: 0.46, rotation: -0.4, pebbles: 3 },
+      { x: 78, z: -16, radius: 2.1, scaleY: 0.4, rotation: 2.1, pebbles: 2 },
+      { x: 118, z: -10, radius: 3.7, scaleY: 0.5, rotation: 1.3, scaleX: 0.96, scaleZ: 1.08, pebbles: 4 },
+      { x: 134, z: -82, radius: 2.7, scaleY: 0.44, rotation: 2.5, pebbles: 2 },
+      { x: 72, z: -118, radius: 2.5, scaleY: 0.42, rotation: -1.9, pebbles: 2 },
+      { x: 42, z: -126, radius: 2.2, scaleY: 0.39, rotation: 0.2, pebbles: 2 },
+      { x: 178, z: -116, radius: 2.8, scaleY: 0.43, rotation: 1.1, pebbles: 2 },
+      { x: 205, z: -80, radius: 2.6, scaleY: 0.44, rotation: -2.2, pebbles: 2 },
+      { x: 198, z: -36, radius: 2.4, scaleY: 0.41, rotation: -0.4, pebbles: 1 },
+      { x: 142, z: 40, radius: 2.9, scaleY: 0.42, rotation: -1.0, pebbles: 2 },
+      { x: 156, z: -168, radius: 3.4, scaleY: 0.5, rotation: 0.4, pebbles: 3 },
+      { x: 192, z: -72, radius: 2.6, scaleY: 0.45, rotation: -1.6, pebbles: 2 },
+      { x: 218, z: -32, radius: 3.1, scaleY: 0.46, rotation: 0.8, pebbles: 3 },
+      { x: 104, z: -196, radius: 3.8, scaleY: 0.52, rotation: -0.2, scaleX: 1.2, pebbles: 4 },
+      { x: 146, z: -214, radius: 2.2, scaleY: 0.4, rotation: 1.8, pebbles: 1 },
+      { x: 148, z: 84, radius: 2.7, scaleY: 0.44, rotation: 1.8, pebbles: 2 },
+      { x: 174, z: 132, radius: 3.2, scaleY: 0.48, rotation: -0.5, pebbles: 3 },
+      { x: 208, z: 92, radius: 2.5, scaleY: 0.44, rotation: 2.7, pebbles: 2 },
+      { x: 222, z: 118, radius: 3.0, scaleY: 0.45, rotation: -2.0, pebbles: 3 },
+      { x: 206, z: 176, radius: 2.4, scaleY: 0.42, rotation: 0.4, pebbles: 2 },
+      { x: 244, z: 154, radius: 2.0, scaleY: 0.38, rotation: -1.2, pebbles: 1 },
+      { x: -48, z: 148, radius: 2.9, scaleY: 0.43, rotation: 0.9, pebbles: 2 },
+      { x: 26, z: 138, radius: 2.5, scaleY: 0.42, rotation: -0.7, pebbles: 2 },
+      { x: 62, z: 106, radius: 2.2, scaleY: 0.4, rotation: 1.4, pebbles: 1 },
+      { x: -98, z: 168, radius: 2.6, scaleY: 0.44, rotation: -2.4, pebbles: 2 },
     ];
     for (const stone of stones) this.addNaturalStone(stone);
   }
@@ -7146,11 +7156,24 @@ class AntColony3D {
     const group = new THREE.Group();
     const stone = new THREE.Mesh(this.geometries.stoneRock, this.materials.stone);
     stone.position.y = config.radius * 0.42;
-    stone.scale.set(config.radius * 1.05, config.radius * config.scaleY, config.radius * 0.86);
-    stone.rotation.set(0.14, config.rotation, -0.08);
+    stone.scale.set(config.radius * (config.scaleX ?? 1.05), config.radius * config.scaleY, config.radius * (config.scaleZ ?? 0.86));
+    stone.rotation.set(config.tiltX ?? 0.14, config.rotation, config.tiltZ ?? -0.08);
     stone.castShadow = this.quality.shadowQuality !== "off";
     stone.receiveShadow = this.quality.shadowQuality !== "off";
     group.add(stone);
+    const pebbleCount = Math.max(0, Math.floor(config.pebbles ?? 0));
+    for (let i = 0; i < pebbleCount; i += 1) {
+      const angle = config.rotation + i * 2.16 + config.radius * 0.31;
+      const distance = config.radius * (0.66 + (i % 3) * 0.24);
+      const pebbleRadius = config.radius * (0.18 + (i % 2) * 0.06);
+      const pebble = new THREE.Mesh(this.geometries.soilPebble, this.materials.stone);
+      pebble.position.set(Math.cos(angle) * distance, pebbleRadius * 0.34, Math.sin(angle) * distance);
+      pebble.scale.set(pebbleRadius * 1.1, pebbleRadius * 0.38, pebbleRadius * 0.9);
+      pebble.rotation.set(0.18, angle, -0.1);
+      pebble.castShadow = this.quality.shadowQuality !== "off";
+      pebble.receiveShadow = this.quality.shadowQuality !== "off";
+      group.add(pebble);
+    }
     group.position.set(config.x, 0, config.z);
     this.scene.add(group);
     this.dynamicObjects.add(group);
