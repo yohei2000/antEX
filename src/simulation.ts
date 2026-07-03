@@ -5185,6 +5185,8 @@ class AntColony3D {
     this.boundKeyDown = (event) => this.onKeyDown(event);
     this.boundKeyUp = (event) => this.onKeyUp(event);
     window.addEventListener("resize", this.boundResize);
+    window.visualViewport?.addEventListener("resize", this.boundResize);
+    window.visualViewport?.addEventListener("scroll", this.boundResize);
     window.addEventListener("pagehide", this.boundPageHide, { once: true });
     window.addEventListener("keydown", this.boundKeyDown, { passive: false });
     window.addEventListener("keyup", this.boundKeyUp, { passive: false });
@@ -6872,9 +6874,17 @@ class AntColony3D {
     }
   }
 
+  getViewportSize() {
+    const viewport = window.visualViewport;
+    const width = Math.max(1, Math.round(viewport?.width ?? window.innerWidth));
+    const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+    document.documentElement.style.setProperty("--app-viewport-width", `${width}px`);
+    document.documentElement.style.setProperty("--app-viewport-height", `${height}px`);
+    return { width, height };
+  }
+
   resize() {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    const { width, height } = this.getViewportSize();
     if (width === this.resizeWidth && height === this.resizeHeight) return;
     this.resizeWidth = width;
     this.resizeHeight = height;
@@ -7154,6 +7164,8 @@ class AntColony3D {
       ui.panelGrip.removeEventListener("pointercancel", this.boundPanelPointerUp);
     }
     window.removeEventListener("resize", this.boundResize);
+    window.visualViewport?.removeEventListener("resize", this.boundResize);
+    window.visualViewport?.removeEventListener("scroll", this.boundResize);
     window.removeEventListener("pagehide", this.boundPageHide);
     window.removeEventListener("keydown", this.boundKeyDown);
     window.removeEventListener("keyup", this.boundKeyUp);
