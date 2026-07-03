@@ -70,6 +70,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
       fogMaterialToneMapped: sim.fogOfWarMaterial?.toneMapped ?? true,
       fogUniformRevealRadius: sim.fogOfWarMaterial?.uniforms?.revealRadius?.value ?? 0,
       fogUniformExploredCount: sim.fogOfWarMaterial?.uniforms?.exploredCount?.value ?? -1,
+      fogUniformActiveSightCount: sim.fogOfWarMaterial?.uniforms?.activeSightCount?.value ?? -1,
+      fogUniformRememberedAlpha: sim.fogOfWarMaterial?.uniforms?.rememberedAlpha?.value ?? 0,
+      fogUniformMaxAlpha: sim.fogOfWarMaterial?.uniforms?.maxAlpha?.value ?? 0,
       initialExploredPatchCount: sim.exploredPatches.length,
       outsideInitialCircleVisible: outsideVisibleBeforeYaw,
       outsideVisibilityChangedByCameraYaw: outsideVisibleBeforeYaw !== outsideVisibleAfterYaw,
@@ -159,6 +162,9 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.fogMaterialToneMapped).toBe(false);
   expect(metrics.fogUniformRevealRadius).toBeCloseTo(metrics.mapVisionRadius, 1);
   expect(metrics.fogUniformExploredCount).toBe(0);
+  expect(metrics.fogUniformActiveSightCount).toBeGreaterThanOrEqual(0);
+  expect(metrics.fogUniformRememberedAlpha).toBeGreaterThan(0.3);
+  expect(metrics.fogUniformRememberedAlpha).toBeLessThan(metrics.fogUniformMaxAlpha);
   expect(metrics.initialExploredPatchCount).toBe(0);
   expect(metrics.outsideInitialCircleVisible).toBe(false);
   expect(metrics.outsideVisibilityChangedByCameraYaw).toBe(false);
@@ -357,7 +363,7 @@ test("near food supports early colonies while distant food unlocks wider growth"
   expect(result.nestLevelAfterTerritory).toBe(3);
 });
 
-test("ants clear fog in areas they enter", async ({ page }) => {
+test("ants reveal current sight while remembered areas stay hazed", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -378,14 +384,30 @@ test("ants clear fog in areas they enter", async ({ page }) => {
     ant.prevX = x;
     ant.prevZ = z;
     sim.updateExploredPatches(0, true);
+    sim.updateMapVisibility();
     const afterVisible = sim.isPointVisible(x, z, 0);
+    const afterExplored = sim.isPointExplored(x, z, 0);
+    const rememberedRival = { x, z, defeated: false, leftRaid: false, retreat: 0, clash: null, scoutMarkTimer: 0 };
+    const rivalVisibleInCurrentSight = sim.shouldRenderRival(rememberedRival);
+    ant.inNest = true;
+    ant.nestStayTimer = 12;
+    sim.updateMapVisibility();
+    const rememberedVisible = sim.isPointVisible(x, z, 0);
+    const rememberedExplored = sim.isPointExplored(x, z, 0);
+    const rivalVisibleInRememberedArea = sim.shouldRenderRival(rememberedRival);
     return {
       x,
       z,
       beforeVisible,
       afterVisible,
+      afterExplored,
+      rememberedVisible,
+      rememberedExplored,
+      rivalVisibleInCurrentSight,
+      rivalVisibleInRememberedArea,
       patchCount: sim.exploredPatches.length,
       uniformCount: sim.fogOfWarMaterial.uniforms.exploredCount.value,
+      activeSightCount: sim.fogOfWarMaterial.uniforms.activeSightCount.value,
       uniformPatchX: sim.fogOfWarMaterial.uniforms.exploredPatches.value[0]?.x ?? 0,
       uniformPatchZ: sim.fogOfWarMaterial.uniforms.exploredPatches.value[0]?.y ?? 0,
       patchRadius: sim.exploredPatches[0]?.radius ?? 0,
@@ -394,8 +416,14 @@ test("ants clear fog in areas they enter", async ({ page }) => {
 
   expect(result.beforeVisible).toBe(false);
   expect(result.afterVisible).toBe(true);
+  expect(result.afterExplored).toBe(true);
+  expect(result.rememberedVisible).toBe(false);
+  expect(result.rememberedExplored).toBe(true);
+  expect(result.rivalVisibleInCurrentSight).toBe(true);
+  expect(result.rivalVisibleInRememberedArea).toBe(false);
   expect(result.patchCount).toBeGreaterThan(0);
   expect(result.uniformCount).toBeGreaterThan(0);
+  expect(result.activeSightCount).toBeGreaterThanOrEqual(0);
   expect(result.uniformPatchX).toBeCloseTo(result.x, 5);
   expect(result.uniformPatchZ).toBeCloseTo(result.z, 5);
   expect(result.patchRadius).toBeGreaterThan(8);

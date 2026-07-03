@@ -357,6 +357,8 @@ const MAP_SCOUT_UPGRADE_VISION_BONUS = 10;
 const MAP_VISION_FADE_WIDTH = 9;
 const MAP_UNEXPLORED_MAX_ALPHA = 0.995;
 const MAP_UNEXPLORED_COLOR = 0x030403;
+const MAP_REMEMBERED_FOG_ALPHA = 0.56;
+const MAP_REMEMBERED_FOG_COLOR = 0x727a74;
 const MAP_FOG_RENDER_ORDER = 80;
 const MAP_RAID_FOOD_PRESSURE_RADIUS = 160;
 const RAID_SORTIE_SIGNAL_SEEK_RANGE = 148;
@@ -366,6 +368,7 @@ const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
 const CAMERA_TARGET_PADDING = 18;
 const CAMERA_KEY_PAN_SPEED = 92;
 const EXPLORED_PATCH_LIMIT = 80;
+const ACTIVE_SIGHT_PATCH_LIMIT = 48;
 const EXPLORED_PATCH_UPDATE_SECONDS = 0.38;
 const EXPLORED_PATCH_BASE_RADIUS = 18;
 const FOOD_RESPAWN_MIN_SECONDS = 70;
@@ -4807,9 +4810,13 @@ class AntColony3D {
       revealRadius: { value: this.mapVisionRadiusValue },
       fadeWidth: { value: MAP_VISION_FADE_WIDTH },
       maxAlpha: { value: MAP_UNEXPLORED_MAX_ALPHA },
+      rememberedAlpha: { value: MAP_REMEMBERED_FOG_ALPHA },
       fogColor: { value: new THREE.Color(MAP_UNEXPLORED_COLOR) },
+      rememberedFogColor: { value: new THREE.Color(MAP_REMEMBERED_FOG_COLOR) },
       exploredCount: { value: 0 },
       exploredPatches: { value: Array.from({ length: EXPLORED_PATCH_LIMIT }, () => new THREE.Vector3(0, 0, 0)) },
+      activeSightCount: { value: 0 },
+      activeSightPatches: { value: Array.from({ length: ACTIVE_SIGHT_PATCH_LIMIT }, () => new THREE.Vector3(0, 0, 0)) },
     };
     const material = new THREE.ShaderMaterial({
       uniforms,
@@ -4831,22 +4838,37 @@ class AntColony3D {
         uniform float revealRadius;
         uniform float fadeWidth;
         uniform float maxAlpha;
+        uniform float rememberedAlpha;
         uniform vec3 fogColor;
+        uniform vec3 rememberedFogColor;
         uniform int exploredCount;
         uniform vec3 exploredPatches[${EXPLORED_PATCH_LIMIT}];
+        uniform int activeSightCount;
+        uniform vec3 activeSightPatches[${ACTIVE_SIGHT_PATCH_LIMIT}];
         varying vec3 vWorldPosition;
         void main() {
           vec2 point = vWorldPosition.xz;
           float d = distance(point, visionCenter);
-          float visibility = 1.0 - smoothstep(revealRadius - fadeWidth, revealRadius + fadeWidth, d);
+          float currentVisibility = 1.0 - smoothstep(revealRadius - fadeWidth, revealRadius + fadeWidth, d);
+          float rememberedVisibility = currentVisibility;
           for (int i = 0; i < ${EXPLORED_PATCH_LIMIT}; i++) {
             if (i >= exploredCount) break;
             vec3 exploredPatch = exploredPatches[i];
             float pd = distance(point, exploredPatch.xy);
-            visibility = max(visibility, 1.0 - smoothstep(exploredPatch.z - fadeWidth, exploredPatch.z + fadeWidth, pd));
+            rememberedVisibility = max(rememberedVisibility, 1.0 - smoothstep(exploredPatch.z - fadeWidth, exploredPatch.z + fadeWidth, pd));
           }
-          float alpha = (1.0 - visibility) * maxAlpha;
-          gl_FragColor = vec4(fogColor, alpha);
+          for (int i = 0; i < ${ACTIVE_SIGHT_PATCH_LIMIT}; i++) {
+            if (i >= activeSightCount) break;
+            vec3 activePatch = activeSightPatches[i];
+            float pd = distance(point, activePatch.xy);
+            currentVisibility = max(currentVisibility, 1.0 - smoothstep(activePatch.z - fadeWidth, activePatch.z + fadeWidth, pd));
+          }
+          rememberedVisibility = max(rememberedVisibility, currentVisibility);
+          float rememberedBlend = clamp(rememberedVisibility, 0.0, 1.0);
+          vec3 color = mix(fogColor, rememberedFogColor, rememberedBlend);
+          float layerAlpha = mix(maxAlpha, rememberedAlpha, rememberedBlend);
+          float alpha = layerAlpha * (1.0 - clamp(currentVisibility, 0.0, 1.0));
+          gl_FragColor = vec4(color, alpha);
         }
       `,
     });
@@ -4900,10 +4922,28 @@ class AntColony3D {
     return Boolean(this.rivalNest?.discovered || this.rivalNest?.defeated);
   }
 
+  currentSightRadiusForAnt(ant) {
+    if (!ant) return EXPLORED_PATCH_BASE_RADIUS + 6;
+    return clamp(this.explorationRadiusForAnt(ant) + 8, 16, 42);
+  }
+
+  isPointInActiveAntSight(x, z, padding = 0) {
+    for (const ant of this.ants ?? []) {
+      if (!this.shouldRenderAnt(ant)) continue;
+      if (distance2(x, z, ant.x, ant.z) <= this.currentSightRadiusForAnt(ant) + padding) return true;
+    }
+    return false;
+  }
+
   isPointVisible(x, z, padding = 0) {
     const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
     if (distance2(x, z, this.nest.x, this.nest.z) <= radius + padding) return true;
-    if (this.isRivalNestKnown() && distance2(x, z, this.rivalNest.x, this.rivalNest.z) <= RIVAL_NEST_REVEAL_RADIUS + padding) return true;
+    if (this.isPointInActiveAntSight(x, z, padding)) return true;
+    return false;
+  }
+
+  isPointExplored(x, z, padding = 0) {
+    if (this.isPointVisible(x, z, padding)) return true;
     for (const patch of this.exploredPatches ?? []) {
       if (distance2(x, z, patch.x, patch.z) <= patch.radius + padding) return true;
     }
@@ -4932,6 +4972,21 @@ class AntColony3D {
     this.updateMapVisibility();
   }
 
+  activeSightPatchesForShader() {
+    const baseRadius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    return (this.ants ?? [])
+      .filter((ant) => this.shouldRenderAnt(ant))
+      .map((ant) => ({
+        x: ant.x,
+        z: ant.z,
+        radius: this.currentSightRadiusForAnt(ant),
+        priority: Math.max(0, distance2(ant.x, ant.z, this.nest.x, this.nest.z) - baseRadius),
+      }))
+      .filter((patch) => patch.priority > 0 || distance2(patch.x, patch.z, this.nest.x, this.nest.z) > baseRadius * 0.68)
+      .sort((a, b) => b.priority - a.priority)
+      .slice(0, ACTIVE_SIGHT_PATCH_LIMIT);
+  }
+
   updateMapVisibility() {
     if (this.fogOfWarMaterial) {
       this.fogOfWarMaterial.uniforms.revealRadius.value = this.mapVisionRadiusValue || this.mapVisionRadius();
@@ -4943,6 +4998,13 @@ class AntColony3D {
         const patch = this.exploredPatches[i];
         patches[i].set(patch.x, patch.z, patch.radius);
       }
+      const activeSightPatches = this.fogOfWarMaterial.uniforms.activeSightPatches.value;
+      const activeSight = this.activeSightPatchesForShader();
+      this.fogOfWarMaterial.uniforms.activeSightCount.value = activeSight.length;
+      for (let i = 0; i < activeSight.length; i += 1) {
+        const patch = activeSight[i];
+        activeSightPatches[i].set(patch.x, patch.z, patch.radius);
+      }
     }
     if (this.visionEdge) {
       const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
@@ -4950,7 +5012,14 @@ class AntColony3D {
       this.visionEdge.scale.setScalar(radius);
       this.visionEdge.visible = radius < this.worldRadius + 12;
     }
+    this.updateObservedObjectVisibility();
     this.updateRivalNestVisual();
+  }
+
+  updateObservedObjectVisibility() {
+    for (const food of this.food ?? []) {
+      if (food.group) food.group.visible = this.isPointVisible(food.x, food.z, food.radius + 5);
+    }
   }
 
   explorationRadiusForAnt(ant) {
@@ -5017,7 +5086,7 @@ class AntColony3D {
   updateRivalNestVisual() {
     const nest = this.rivalNest;
     if (!nest?.group) return;
-    nest.group.visible = this.isRivalNestKnown();
+    nest.group.visible = this.isRivalNestKnown() && (this.hasScoutIntel() || this.isPointVisible(nest.x, nest.z, RIVAL_NEST_REVEAL_RADIUS));
     const defeatedScale = nest.defeated ? 0.76 : 1;
     const strain = 1 - clamp(nest.integrity ?? 1, 0, 1);
     nest.group.scale.setScalar(defeatedScale * (1 - strain * 0.08));

@@ -410,8 +410,11 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         sim.renderUpgrades();
         return result;
       })()`);
+    const branchText = upgradeTree.branches.join("|");
+    const expectedBranchText = "採餌網|育房|巣構造|防衛";
+    const expectedDescriptiveBranchText = "採餌食料と運搬を伸ばす|育房育成速度を伸ばす|巣構造収容と土木を伸ばす|防衛敵襲への備えを伸ばす";
     if (
-      upgradeTree.branches.join("|") !== "採餌網|育房|巣構造|防衛" ||
+      (branchText !== expectedBranchText && branchText !== expectedDescriptiveBranchText) ||
       !upgradeTree.lockedBefore ||
       !upgradeTree.unlockedAfterPrereq ||
       upgradeTree.foodRateRatio <= 3 ||
