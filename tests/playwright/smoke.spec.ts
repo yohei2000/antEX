@@ -794,7 +794,7 @@ test("empire panel can be collapsed and expanded by swipe", async ({ page }) => 
   expect(result.compact).toBe(true);
   expect(result.expandedAgain).toBe(true);
   expect(result.expandedTabsDisplay).not.toBe("none");
-  expect(result.compactTabsDisplay).toBe("none");
+  expect(result.compactTabsDisplay).not.toBe("none");
 });
 
 test("food only increases when a carrying ant returns to the nest", async ({ page }) => {
@@ -3312,7 +3312,7 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
     for (const key of Object.keys(sim.colony.upgrades)) sim.colony.upgrades[key] = 0;
     sim.renderUpgrades();
     const buttons = [...document.querySelectorAll("[data-upgrade]")] as HTMLButtonElement[];
-    const branches = [...document.querySelectorAll(".upgrade-branch")].map((node) => node.textContent);
+    const branches = [...document.querySelectorAll(".upgrade-branch strong")].map((node) => node.textContent);
     const lockedBefore = (document.querySelector('[data-upgrade="broodClimate"]') as HTMLButtonElement).disabled;
     const base = sim.computeDerived();
 
@@ -3362,7 +3362,7 @@ test("expanded nest upgrade tree gates deeper branches and stays bounded", async
   });
 
   expect(tree.buttonCount).toBeGreaterThanOrEqual(15);
-  expect(tree.branches).toEqual(["採餌網", "育房", "巣構造", "防衛"]);
+  expect(tree.branches).toEqual(["採餌", "育房", "巣構造", "防衛"]);
   expect(tree.lockedBefore).toBe(true);
   expect(tree.unlockedAfterPrereq).toBe(true);
   expect(tree.foodRateRatio).toBeGreaterThan(3);
@@ -3835,6 +3835,144 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
   expect(fight.repelNoticeHidden).toBe(false);
   expect(fight.repelNoticeText).toContain("敵アリ撃退");
   expect(fight.repelNoticeKind).toBe("repelled");
+});
+
+test("raid rivals keep cumulative damage across repeated one-on-one clashes", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.antPopulation = 18;
+    sim.colony.woundedAnts = 0;
+    sim.colony.enemyThreat = 0;
+    sim.colony.fallenAnts = 0;
+    sim.syncAntPopulation();
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: 0,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    const fighters = sim.ants.slice(0, 5);
+
+    for (const ant of sim.ants) {
+      ant.setVariant?.("worker");
+      ant.role = "worker";
+      ant.isSortieSoldier = false;
+      ant.state = "stunned";
+      ant.stun = 30;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.x = 80 + ant.id * 0.8;
+      ant.z = 80;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+
+    rival.x = 0.5;
+    rival.z = 0;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.aggression = 0.88;
+    rival.stubbornness = 0.85;
+    rival.scale = 1.35;
+    rival.combatDamage = 0;
+    rival.combatDamageFlash = 0;
+    rival.acidDebuff = 0;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.fightCooldown = 0;
+    rival.defeated = false;
+    rival.leftRaid = false;
+
+    const prepareFighter = (ant: any) => {
+      ant.setVariant?.("soldier");
+      ant.role = "guard";
+      ant.isSortieSoldier = true;
+      ant.traits.persistence = 0.75;
+      ant.traits.caution = 0.72;
+      ant.state = "explore";
+      ant.stun = 0;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.carrying = 0;
+      ant.energy = 1;
+      ant.x = 0;
+      ant.z = 0;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.angle = Math.PI / 2;
+    };
+
+    const runSingleClash = (ant: any) => {
+      prepareFighter(ant);
+      rival.x = 0.5;
+      rival.z = 0;
+      rival.prevX = rival.x;
+      rival.prevZ = rival.z;
+      rival.retreat = 0;
+      rival.clash = null;
+      rival.fightCooldown = 0;
+      rival.leftRaid = false;
+      const powerBefore = rival.combatPowers(ant, sim).rivalPower;
+      const started = rival.startClash(ant, 0.25, 0, sim);
+      if (!started || !rival.clash) return { started, winner: rival.lastFightWinner, damage: rival.combatDamage, defeated: rival.defeated, antAlive: sim.ants.includes(ant), powerBefore, powerAfter: powerBefore };
+      rival.clash.elapsed = rival.clash.duration;
+      rival.finishClash(sim);
+      const antAlive = sim.ants.includes(ant);
+      const powerAfter = rival.defeated ? 0 : rival.combatPowers(antAlive ? ant : fighters.find((item: any) => sim.ants.includes(item)) ?? ant, sim).rivalPower;
+      return {
+        started,
+        winner: rival.lastFightWinner,
+        damage: rival.combatDamage,
+        defeated: rival.defeated,
+        antAlive,
+        powerBefore,
+        powerAfter,
+      };
+    };
+
+    prepareFighter(fighters[0]);
+    const initialPower = rival.combatPowers(fighters[0], sim).rivalPower;
+    const outcomes = [];
+    for (const fighter of fighters) {
+      outcomes.push(runSingleClash(fighter));
+      if (rival.defeated) break;
+    }
+
+    return {
+      initialPower,
+      outcomes,
+      finalDamage: rival.combatDamage,
+      defeated: rival.defeated,
+      enemyCasualties: sim.colony.raidState.enemyCasualties,
+      casualties: sim.colony.raidState.casualties,
+    };
+  });
+
+  expect(result.outcomes[0].started).toBe(true);
+  expect(result.outcomes[0].winner).toBe("rival");
+  expect(result.outcomes[0].damage).toBeGreaterThan(0);
+  expect(result.outcomes[0].antAlive).toBe(true);
+  expect(result.outcomes[1].damage).toBeGreaterThan(result.outcomes[0].damage);
+  expect(result.outcomes[1].powerAfter).toBeLessThan(result.initialPower);
+  expect(result.outcomes.some((outcome: any) => outcome.winner === "colony" || outcome.defeated)).toBe(true);
+  expect(result.defeated).toBe(true);
+  expect(result.finalDamage).toBeGreaterThanOrEqual(1);
+  expect(result.enemyCasualties).toBe(1);
+  expect(result.casualties).toBeGreaterThanOrEqual(0);
 });
 
 test("rival ants actively harass ants near food instead of only camping", async ({ page }) => {

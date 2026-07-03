@@ -46,6 +46,12 @@ import {
   RAID_SOON_WARNING_SECONDS,
   RAID_WARNING_SECONDS,
   RIVAL_CLASH_DURATION,
+  RIVAL_COMBAT_DAMAGE_DEFEAT_THRESHOLD,
+  RIVAL_COMBAT_DAMAGE_LOSS_SCALE,
+  RIVAL_COMBAT_DAMAGE_POWER_PENALTY,
+  RIVAL_COMBAT_DAMAGE_SORTIE_ESCAPE_THRESHOLD,
+  RIVAL_COMBAT_DAMAGE_UNSUPPORTED_SORTIE_ESCAPE_THRESHOLD,
+  RIVAL_COMBAT_DAMAGE_WIN_SCALE,
   RIVAL_CONTACT_RADIUS,
   RIVAL_CORPSE_CAP,
   RIVAL_GRAPPLER_RECRUIT_RANGE,
@@ -88,6 +94,18 @@ const ui = {
   statThreat: document.querySelector("#statThreat"),
   colonySummary: document.querySelector("#colonySummary"),
   growthFill: document.querySelector("#growthFill"),
+  nextActionDock: document.querySelector("#nextActionDock"),
+  nextActionReason: document.querySelector("#nextActionReason"),
+  nextActionPrimaryBtn: document.querySelector("#nextActionPrimaryBtn"),
+  nextActionPrimaryIcon: document.querySelector(".next-action-primary-icon"),
+  nextActionPrimaryText: document.querySelector("#nextActionPrimaryText"),
+  nextActionQueueCount: document.querySelector("#nextActionQueueCount"),
+  nextActionQueueSlots: document.querySelector("#nextActionQueueSlots"),
+  nextActionQueueHint: document.querySelector("#nextActionQueueHint"),
+  nextActionGrowthHint: document.querySelector("#nextActionGrowthHint"),
+  nextActionBarracksHint: document.querySelector("#nextActionBarracksHint"),
+  nextActionSoldierHint: document.querySelector("#nextActionSoldierHint"),
+  actionFeedback: document.querySelector("#actionFeedback"),
   upgradeList: document.querySelector("#upgradeList"),
   growthTab: document.querySelector("#growthTab"),
   constructionTab: document.querySelector("#constructionTab"),
@@ -144,6 +162,85 @@ const GENERATED_TEXTURE_ASSETS = {
   microGravel: "terrain-micro-gravel-tile-20260702.png",
   crackedMud: "terrain-cracked-mud-tile-20260702.png",
   shorelineWetEdge: "terrain-shoreline-wet-edge-tile-20260702.png",
+};
+
+const UI_ICON_ASSETS = {
+  colonyMark: "/assets/generated/ant-ui-colony-mark-20260703.png",
+  foodSeed: "/assets/generated/ant-ui-food-seed-20260703.png",
+  territoryLeaf: "/assets/generated/ant-ui-territory-leaf-20260703.png",
+  antPopulation: "/assets/generated/ant-ui-ant-population-20260703.png",
+  soilMound: "/assets/generated/ant-ui-soil-mound-20260703.png",
+  upgradeArrow: "/assets/generated/ant-ui-upgrade-arrow-20260703.png",
+  scoutFlag: "/assets/generated/ant-ui-scout-flag-20260703.png",
+  defenseShield: "/assets/generated/ant-ui-defense-shield-20260703.png",
+  growthLeaf: "/assets/generated/ant-ui-growth-leaf-20260703.png",
+  constructionShovel: "/assets/generated/ant-ui-construction-shovel-20260703.png",
+  nurseryEggs: "/assets/generated/ant-ui-nursery-eggs-20260703.png",
+  militaryMandibles: "/assets/generated/ant-ui-military-mandibles-20260703.png",
+  forageTrail: "/assets/generated/ant-ui-forage-trail-20260703.png",
+  tunnelEntrance: "/assets/generated/ant-ui-tunnel-entrance-20260703.png",
+  raidWarning: "/assets/generated/ant-ui-raid-warning-20260703.png",
+  queenCare: "/assets/generated/ant-ui-queen-care-20260703.png",
+};
+
+const BRANCH_ICON_ASSETS = {
+  foraging: UI_ICON_ASSETS.forageTrail,
+  nursery: UI_ICON_ASSETS.nurseryEggs,
+  architecture: UI_ICON_ASSETS.tunnelEntrance,
+  defense: UI_ICON_ASSETS.defenseShield,
+};
+
+const UPGRADE_ICON_ASSETS = {
+  foragerTrails: UI_ICON_ASSETS.forageTrail,
+  trailPheromones: UI_ICON_ASSETS.territoryLeaf,
+  storageChambers: UI_ICON_ASSETS.tunnelEntrance,
+  chamberExcavation: UI_ICON_ASSETS.tunnelEntrance,
+  builderTraining: UI_ICON_ASSETS.constructionShovel,
+  ventilationShafts: UI_ICON_ASSETS.soilMound,
+  wasteGallery: UI_ICON_ASSETS.soilMound,
+  broodNursery: UI_ICON_ASSETS.nurseryEggs,
+  broodClimate: UI_ICON_ASSETS.nurseryEggs,
+  foodDistribution: UI_ICON_ASSETS.foodSeed,
+  queenCare: UI_ICON_ASSETS.queenCare,
+  soldierTraining: UI_ICON_ASSETS.militaryMandibles,
+  heavySoldierBrood: UI_ICON_ASSETS.antPopulation,
+  shieldHeadBrood: UI_ICON_ASSETS.defenseShield,
+  acidShooterBrood: UI_ICON_ASSETS.militaryMandibles,
+  scoutBrood: UI_ICON_ASSETS.scoutFlag,
+  medicBrood: UI_ICON_ASSETS.queenCare,
+  captainBrood: UI_ICON_ASSETS.scoutFlag,
+  nestGuard: UI_ICON_ASSETS.defenseShield,
+  sentinelPosts: UI_ICON_ASSETS.scoutFlag,
+};
+
+const UPGRADE_BRANCH_UI = {
+  foraging: { label: "採餌", icon: "葉", summary: "食料と運搬を伸ばす" },
+  nursery: { label: "育房", icon: "卵", summary: "育成速度を伸ばす" },
+  architecture: { label: "巣構造", icon: "巣", summary: "収容と土木を伸ばす" },
+  defense: { label: "防衛", icon: "盾", summary: "敵襲への備えを伸ばす" },
+};
+
+const UPGRADE_UI = {
+  foragerTrails: { name: "採餌道", effect: "運搬量と採餌の往復効率を上げる", reason: "食料の持ち帰りが伸びます", icon: "道", priority: 10 },
+  trailPheromones: { name: "匂い道の維持", effect: "採餌中の移動速度を上げる", reason: "遠い餌場への往復が軽くなります", icon: "香", priority: 8 },
+  storageChambers: { name: "貯蔵室", effect: "収容上限と運搬受け入れを上げる", reason: "巣に余裕を作れます", icon: "蔵", priority: 7 },
+  chamberExcavation: { name: "通路拡張", effect: "収容上限と巣内移動を上げる", reason: "成長の詰まりを減らせます", icon: "穴", priority: 8 },
+  builderTraining: { name: "土木アリを育てる", effect: "土木アリ育成を解禁する", reason: "地表工事へ進めます", icon: "土", priority: 9 },
+  ventilationShafts: { name: "換気孔", effect: "収容、防御、脅威耐性を上げる", reason: "大きい巣の安定性が増します", icon: "風", priority: 5 },
+  wasteGallery: { name: "廃棄坑", effect: "回復、防御、脅威耐性を上げる", reason: "負傷後の立て直しが早くなります", icon: "坑", priority: 4 },
+  broodNursery: { name: "育児室", effect: "育成速度と負傷回復を上げる", reason: "育成待ちの時間を短くできます", icon: "卵", priority: 9 },
+  broodClimate: { name: "育房の保温", effect: "育成速度を上げる", reason: "育成キューの回転が良くなります", icon: "温", priority: 6 },
+  foodDistribution: { name: "食料分配", effect: "育成速度と運搬効率を上げる", reason: "食料と育成を同時に支えます", icon: "配", priority: 6 },
+  queenCare: { name: "女王の世話", effect: "育成速度を大きく上げる", reason: "コロニーの増え方が強くなります", icon: "王", priority: 7 },
+  soldierTraining: { name: "兵隊訓練", effect: "兵隊比率と攻撃力を上げる", reason: "敵襲への対応力が増えます", icon: "剣", priority: 7 },
+  heavySoldierBrood: { name: "重兵装アリを育てる", effect: "強い兵隊の育成を解禁する", reason: "押し合いに強い前線を作れます", icon: "重", priority: 5 },
+  shieldHeadBrood: { name: "盾頭アリを育てる", effect: "敵を押し返す兵隊を解禁する", reason: "侵入を遅らせやすくなります", icon: "盾", priority: 5 },
+  acidShooterBrood: { name: "酸射アリを育てる", effect: "酸で敵を弱らせる兵隊を解禁する", reason: "硬い敵への支援が増えます", icon: "酸", priority: 5 },
+  scoutBrood: { name: "斥候アリを育てる", effect: "敵を標識する支援兵を解禁する", reason: "狙いを揃えやすくなります", icon: "斥", priority: 5 },
+  medicBrood: { name: "救護アリを育てる", effect: "消耗した味方を支援する", reason: "前線から戻しやすくなります", icon: "救", priority: 4 },
+  captainBrood: { name: "小隊長アリを育てる", effect: "小隊の集合位置と目標を揃える", reason: "混成小隊がまとまりやすくなります", icon: "隊", priority: 4 },
+  nestGuard: { name: "巣の守り", effect: "防御力と負傷回復を上げる", reason: "入口周辺の守りが固くなります", icon: "守", priority: 6 },
+  sentinelPosts: { name: "見張り哨", effect: "防御、攻撃、脅威耐性を上げる", reason: "敵襲に備える力が増えます", icon: "哨", priority: 5 },
 };
 
 const QUALITY_PRESETS = {
@@ -1922,6 +2019,8 @@ class RivalAnt3D {
     this.prevX = 0;
     this.prevZ = 0;
     this.disrupt = 0;
+    this.combatDamage = 0;
+    this.combatDamageFlash = 0;
     this.acidDebuff = 0;
     this.acidFlash = 0;
     this.scoutMarkTimer = 0;
@@ -2009,6 +2108,7 @@ class RivalAnt3D {
     this.prevAngle = this.angle;
     this.fightCooldown = Math.max(0, this.fightCooldown - dt);
     this.disrupt = Math.max(0, this.disrupt - dt * 0.72);
+    this.combatDamageFlash = Math.max(0, this.combatDamageFlash - dt * 1.6);
     this.acidDebuff = Math.max(0, this.acidDebuff - dt / ACID_DEBUFF_SECONDS);
     this.acidFlash = Math.max(0, this.acidFlash - dt * 2.6);
     this.scoutMarkTimer = Math.max(0, this.scoutMarkTimer - dt);
@@ -2185,12 +2285,14 @@ class RivalAnt3D {
     const defenseBonus = sim ? Math.max(0, (sim.computeDerived().defensePower ?? 1) - 1) : 0;
     const variant = ant.variantConfig ?? getAntVariantConfig(ant.variant);
     const acidPenalty = 1 - Math.min(0.26, this.acidDebuff * 0.13);
-    const rivalPower = (0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28 + threatPressure) * acidPenalty;
+    const scoutMarkPenalty = this.scoutMarkTimer > 0 ? 1 - Math.min(0.18, Math.max(0.35, this.scoutMarkStrength ?? 0) * 0.18) : 1;
+    const rivalPower = (0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28 + threatPressure) * acidPenalty * scoutMarkPenalty * this.combatDamagePowerScale();
     const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
     const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
     const braceBonus = ant.braceIntent > 0 ? variant.brace * 0.34 + (sim?.braceBonusAt(ant.x, ant.z) ?? 0) : 0;
     const wallAttackBonus = sim?.wallAttackBonusAt?.(ant.x, ant.z) ?? 0;
     const nestDefense = defenseBonus * (ant.variant === "shieldHead" ? 0.78 : ant.role === "guard" || ant.variant === "heavySoldier" ? 0.62 : 0.26);
+    const squadSupportBonus = this.squadSupportPowerBonus(ant, sim);
     const antPower =
       0.7 +
       ant.traits.persistence * 0.74 +
@@ -2203,8 +2305,91 @@ class RivalAnt3D {
       nestDefense +
       braceBonus +
       wallAttackBonus +
+      squadSupportBonus +
       carriedPenalty;
     return { rivalPower, antPower };
+  }
+
+  squadSupportPowerBonus(ant, sim = null) {
+    if (!sim || !ant.isSortieSoldier || ant.squadId == null) return 0;
+    const squad = sim.squadForAnt?.(ant);
+    if (!squad || (squad.memberIds?.length ?? 0) < 1) return 0;
+    const cohesion = clamp(Math.max(ant.squadCohesion ?? 0, squad.cohesion ?? 0), 0, 1);
+    const variantCounts = squad.memberVariantCounts ?? {};
+    const supportVariety = Object.entries(variantCounts).filter(([variant, count]) =>
+      variant !== "soldier" && variant !== "builder" && (count ?? 0) > 0
+    ).length;
+    const roleBonus =
+      ant.variant === "captain" ? 0.16 :
+      ant.variant === "heavySoldier" ? 0.14 :
+      ant.variant === "soldier" ? 0.12 :
+      0.08;
+    return clamp(roleBonus + cohesion * 0.18 + Math.min(0.14, supportVariety * 0.035), 0, 0.42);
+  }
+
+  squadCoordinationPressure(ants, sim = null) {
+    if (!sim || !ants.length) return 0;
+    const support = ants.reduce((sum, ant) => sum + this.squadSupportPowerBonus(ant, sim), 0);
+    return clamp(support / Math.max(0.42, ants.length * 0.34), 0, 1);
+  }
+
+  combatDamagePowerScale() {
+    return 1 - Math.min(RIVAL_COMBAT_DAMAGE_POWER_PENALTY, this.combatDamage * RIVAL_COMBAT_DAMAGE_POWER_PENALTY);
+  }
+
+  applyCombatDamage(amount) {
+    if (!Number.isFinite(amount) || amount <= 0) return this.combatDamage;
+    this.combatDamage = clamp(this.combatDamage + amount, 0, RIVAL_COMBAT_DAMAGE_DEFEAT_THRESHOLD);
+    this.combatDamageFlash = 1;
+    this.disrupt = Math.max(this.disrupt, 0.52 + this.combatDamage * 0.42);
+    return this.combatDamage;
+  }
+
+  combatDamageWeight(ant) {
+    if (ant.isSortieSoldier) {
+      if (ant.variant === "heavySoldier") return 1.18;
+      if (ant.variant === "soldier" || ant.variant === "captain") return 1;
+      if (ant.variant === "acidShooter") return 0.64;
+      return 0.42;
+    }
+    if (ant.variant === "heavySoldier") return 0.9;
+    if (ant.variant === "soldier" || ant.variant === "captain" || ant.role === "guard") return 0.74;
+    if (ant.variant === "builder") return 0.1;
+    if (ant.variant === "worker") return 0.08;
+    return 0.03;
+  }
+
+  combatDamagePressure(ants) {
+    return clamp(ants.reduce((sum, ant) => sum + this.combatDamageWeight(ant), 0), 0, 1.35);
+  }
+
+  combatSupportPressure(sim, grapplers = []) {
+    if (!sim) return 0;
+    const grapplerIds = new Set(grapplers.map((ant) => ant.id));
+    let pressure = 0;
+    for (const ant of sim.ants) {
+      if (!ant.isSortieSoldier || grapplerIds.has(ant.id)) continue;
+      if (ant.state === "return" || ant.state === "flee" || ant.stun > 0) continue;
+      const range =
+        ant.variant === "acidShooter" ? ACID_SPRAY_RANGE + 4 :
+        ant.variant === "scout" ? SCOUT_MARK_RANGE + 4 :
+        ant.variant === "captain" ? CAPTAIN_COHESION_RADIUS + 5 :
+        ant.variant === "medic" ? 15 :
+        11;
+      const d = distance2(ant.x, ant.z, this.x, this.z);
+      if (d > range) continue;
+      const proximity = clamp(1 - d / Math.max(1, range), 0, 1);
+      const rolePressure =
+        ant.variant === "acidShooter" ? 0.34 :
+        ant.variant === "scout" ? 0.3 :
+        ant.variant === "captain" ? 0.28 :
+        ant.variant === "medic" ? 0.18 :
+        ant.variant === "shieldHead" ? 0.16 :
+        0.08;
+      const cohesion = ant.squadLeaderId != null ? 0.72 + clamp(ant.squadCohesion ?? 0, 0, 1) * 0.28 : 1;
+      pressure += rolePressure * proximity * cohesion;
+    }
+    return clamp(pressure, 0, 0.72);
   }
 
   startClash(ant, anchorX, anchorZ, sim) {
@@ -2413,9 +2598,17 @@ class RivalAnt3D {
 
     const groupPower = ants.reduce((sum, ant) => sum + this.combatPowers(ant, sim).antPower, 0);
     const groupBonus = 0.82 + Math.min(0.42, Math.max(0, ants.length - 1) * 0.14);
-    const colonyPower = groupPower * groupBonus;
+    const supportPressure = this.combatSupportPressure(sim, ants);
+    const squadCoordination = this.squadCoordinationPressure(ants, sim);
+    const damagePressure = clamp(this.combatDamagePressure(ants) + supportPressure * 0.42 + squadCoordination * 0.12, 0, 1.55);
+    const combatReadiness = ants.some((ant) => ant.isSortieSoldier) ? 1 : clamp(0.42 + damagePressure * 0.5, 0.42, 0.95);
+    const colonyPower = groupPower * groupBonus * combatReadiness * (1 + supportPressure * 0.18 + squadCoordination * 0.08);
     const threatPressure = this.isRaidRival ? clamp(sim.colony.enemyThreat / 14, 0, 0.95) : 0;
-    const rivalPower = 1.35 + this.aggression * 1.04 + this.stubbornness * 0.64 + this.scale * 0.36 + threatPressure;
+    const baseRivalPower = 1.35 + this.aggression * 1.04 + this.stubbornness * 0.64 + this.scale * 0.36 + threatPressure;
+    const acidPenalty = 1 - Math.min(0.26, this.acidDebuff * 0.13);
+    const scoutMarkPenalty = this.scoutMarkTimer > 0 ? 1 - Math.min(0.18, Math.max(0.35, this.scoutMarkStrength ?? 0) * 0.18) : 1;
+    const supportPenalty = 1 - supportPressure * 0.12;
+    const rivalPower = baseRivalPower * this.combatDamagePowerScale() * acidPenalty * scoutMarkPenalty * supportPenalty;
     const dx = primaryAnt.x - this.x;
     const dz = primaryAnt.z - this.z;
     const d = Math.hypot(dx, dz) || 1;
@@ -2423,6 +2616,8 @@ class RivalAnt3D {
     const nz = dz / d;
 
     if (rivalPower >= colonyPower * 0.94) {
+      const lossDamage = clamp(((colonyPower / Math.max(rivalPower, 0.001)) * RIVAL_COMBAT_DAMAGE_LOSS_SCALE + Math.max(0, ants.length - 1) * 0.03 + squadCoordination * 0.04) * damagePressure, 0.015, 0.32);
+      this.applyCombatDamage(lossDamage);
       const victim = ants
         .slice()
         .sort((a, b) => this.combatPowers(a, sim).antPower - this.combatPowers(b, sim).antPower)[0];
@@ -2433,7 +2628,11 @@ class RivalAnt3D {
         ant.energy = clamp(ant.energy - 0.16 * this.aggression, 0, 1);
         if (ant !== victim) ant.startFleeHome(this.x, this.z, 4.2 + this.aggression * 1.2);
       }
-      if (this.isRaidRival && sim.canLoseAnt()) {
+      const raidSize = this.isRaidRival ? Math.floor(sim.ensureRaidState().activeCount ?? 0) : 0;
+      const unsupportedSoloSortie = raidSize >= 8 && ants.length === 1 && victim.variant === "soldier" && victim.squadId == null;
+      const sortieEscapeThreshold = unsupportedSoloSortie ? RIVAL_COMBAT_DAMAGE_UNSUPPORTED_SORTIE_ESCAPE_THRESHOLD : RIVAL_COMBAT_DAMAGE_SORTIE_ESCAPE_THRESHOLD;
+      const sortieCanEscape = victim.isSortieSoldier && damagePressure >= 1 && this.combatDamage >= sortieEscapeThreshold;
+      if (this.isRaidRival && sim.canLoseAnt() && !sortieCanEscape) {
         sim.killAnt(victim, this);
       } else {
         victim.startFleeHome(this.x, this.z, 4.8 + this.aggression * 1.5);
@@ -2442,6 +2641,8 @@ class RivalAnt3D {
       this.lastFightWinner = "rival";
       sim.registerRivalFight("rival", victim, this, { grapplers: ants.length, casualty: this.isRaidRival });
     } else {
+      const winDamage = clamp(((colonyPower / Math.max(rivalPower, 0.001) - 0.84) * RIVAL_COMBAT_DAMAGE_WIN_SCALE + 0.1 + Math.max(0, ants.length - 1) * 0.08 + squadCoordination * 0.12) * damagePressure, 0.04, 0.72);
+      this.applyCombatDamage(winDamage);
       this.x -= nx * 0.38;
       this.z -= nz * 0.38;
       this.angle = Math.atan2(this.homeX - this.x, this.homeZ - this.z);
@@ -2453,7 +2654,8 @@ class RivalAnt3D {
       }
       this.lastFightWinner = "colony";
       let enemyDefeated = false;
-      if (this.isRaidRival && colonyPower > rivalPower * 1.24) {
+      const damageDefeatThreshold = RIVAL_COMBAT_DAMAGE_DEFEAT_THRESHOLD * (1 - squadCoordination * 0.22);
+      if (this.isRaidRival && (colonyPower > rivalPower * 1.24 || this.combatDamage >= damageDefeatThreshold)) {
         enemyDefeated = sim.defeatRivalAnt(this, primaryAnt);
       }
       sim.registerRivalFight("colony", primaryAnt, this, { grapplers: ants.length, enemyCasualty: enemyDefeated });
@@ -2575,7 +2777,7 @@ class RivalAnt3D {
   }
 
   renderState(sim, alpha) {
-    const jitter = this.disrupt > 0 || this.victoryFlash > 0 || this.acidFlash > 0 || this.scoutMarkTimer > 0 || this.clash ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.045 : 0;
+    const jitter = this.disrupt > 0 || this.victoryFlash > 0 || this.acidFlash > 0 || this.combatDamageFlash > 0 || this.scoutMarkTimer > 0 || this.clash ? Math.sin(sim.renderTime * 0.018 + this.id) * 0.045 : 0;
     return {
       x: this.prevX + (this.x - this.prevX) * alpha,
       z: this.prevZ + (this.z - this.prevZ) * alpha,
@@ -4867,6 +5069,112 @@ class AntColony3D {
     this.nestSpoils.push(pebble);
   }
 
+  iconImage(src, className = "generated-ui-icon", fallback = "") {
+    if (!src) return fallback;
+    return `<img class="${className}" src="${src}" alt="" aria-hidden="true" loading="lazy">`;
+  }
+
+  attachButtonIcon(button, src, className) {
+    if (!button || !src || button.querySelector(`.${className}`)) return;
+    const image = document.createElement("img");
+    image.className = className;
+    image.src = src;
+    image.alt = "";
+    image.loading = "lazy";
+    image.setAttribute("aria-hidden", "true");
+    button.prepend(image);
+  }
+
+  decorateGeneratedUiAssets() {
+    document.querySelector(".title-mark")?.classList.add("uses-generated-mark");
+    const tabIcons = {
+      growth: UI_ICON_ASSETS.growthLeaf,
+      construction: UI_ICON_ASSETS.constructionShovel,
+      barracks: UI_ICON_ASSETS.nurseryEggs,
+      soldiers: UI_ICON_ASSETS.militaryMandibles,
+    };
+    for (const button of ui.buttons) {
+      this.attachButtonIcon(button, tabIcons[button.dataset.tab], "tab-icon");
+    }
+    const statIcons = [UI_ICON_ASSETS.foodSeed, UI_ICON_ASSETS.antPopulation, UI_ICON_ASSETS.growthLeaf, UI_ICON_ASSETS.territoryLeaf];
+    document.querySelectorAll(".stats-strip div").forEach((card, index) => {
+      if (statIcons[index]) this.attachButtonIcon(card, statIcons[index], "stat-card-icon");
+    });
+    const shortcuts = [
+      [ui.nextActionDock?.querySelector('[data-next-action="growth"]'), UI_ICON_ASSETS.upgradeArrow],
+      [ui.nextActionDock?.querySelector('[data-next-action="barracks"]'), UI_ICON_ASSETS.nurseryEggs],
+      [ui.nextActionDock?.querySelector('[data-next-action="soldiers"]'), UI_ICON_ASSETS.defenseShield],
+    ];
+    for (const [button, src] of shortcuts) this.attachButtonIcon(button, src, "shortcut-icon");
+  }
+
+  buttonFeedbackText(button) {
+    if (!button) return "操作しました";
+    if (button.dataset.feedback) return button.dataset.feedback;
+    if (button.dataset.nextAction === "primary") {
+      const kind = button.dataset.actionKind ?? "";
+      const value = button.dataset.actionValue ?? "";
+      if (kind === "train") return `${getBarracksTrainingDef(value).label}を育成キューへ`;
+      if (kind === "upgrade") return `${UPGRADE_UI[value]?.name ?? upgradeName(value)}を強化`;
+      if (kind === "sortie") return value === "expedition" ? "遠征出動" : "防衛出動";
+      if (kind === "tab") return value === "barracks" ? "育房を表示" : "成長を表示";
+      return "主要アクションを実行";
+    }
+    if (button.dataset.nextAction === "status") return "状況パネルを表示";
+    if (button.dataset.nextAction === "growth") return "成長を表示";
+    if (button.dataset.nextAction === "barracks") return "育房を表示";
+    if (button.dataset.nextAction === "soldiers") return "軍事を表示";
+    if (button.dataset.tab) {
+      const labels = { growth: "成長", construction: "土木", barracks: "育房", soldiers: "軍事" };
+      return `${labels[button.dataset.tab] ?? "タブ"}を表示`;
+    }
+    if (button.dataset.upgrade) {
+      return `${UPGRADE_UI[button.dataset.upgrade]?.name ?? upgradeName(button.dataset.upgrade)}を強化`;
+    }
+    if (button.dataset.trainVariant) {
+      return `${getBarracksTrainingDef(button.dataset.trainVariant).label}を育成キューへ`;
+    }
+    if (button.dataset.buildTask && button.dataset.crewDelta) return "担当数を変更";
+    if (button.id === "homeViewBtn") return "巣へ戻る";
+    if (button.id === "pauseBtn") return "一時停止を切り替え";
+    if (button.id === "resetBtn") return "リセット";
+    if (button.id === "panelGrip") return "パネルを開閉";
+    if (button.id === "soldierSortieBtn") return "防衛出動";
+    if (button.id === "expeditionSortieBtn") return "遠征出動";
+    if (button.id === "constructionTrailBtn") return "採餌道を整える";
+    if (button.id === "constructionBarricadeBtn") return "低い土塁を置く";
+    if (button.id === "constructionWallBtn") return "土壁を指定";
+    if (button.id === "constructionSentryBtn") return "見張り塚を置く";
+    if (button.id === "constructionWallConfirmBtn") return "土壁の指定を確定";
+    const label = button.querySelector(".button-main")?.textContent?.trim() || button.textContent?.trim();
+    return label ? `${label}を操作` : "操作しました";
+  }
+
+  showActionFeedback(message, button = null) {
+    if (!ui.actionFeedback) return;
+    const text = message || "操作しました";
+    ui.actionFeedback.textContent = text;
+    ui.actionFeedback.hidden = false;
+    ui.actionFeedback.classList.remove("is-visible");
+    window.clearTimeout(this.actionFeedbackTimer);
+    window.requestAnimationFrame(() => ui.actionFeedback?.classList.add("is-visible"));
+    this.actionFeedbackTimer = window.setTimeout(() => {
+      ui.actionFeedback?.classList.remove("is-visible");
+      if (ui.actionFeedback) ui.actionFeedback.hidden = true;
+    }, 1300);
+    if (button) {
+      button.classList.remove("is-pressed-feedback");
+      window.requestAnimationFrame(() => button.classList.add("is-pressed-feedback"));
+      window.setTimeout(() => button.classList.remove("is-pressed-feedback"), 260);
+    }
+  }
+
+  handleButtonFeedback(event) {
+    const button = event.target?.closest?.("button");
+    if (!button || button.disabled) return;
+    this.showActionFeedback(this.buttonFeedbackText(button), button);
+  }
+
   bindEvents() {
     this.boundResize = () => this.resize();
     this.boundPageHide = () => {
@@ -4880,12 +5188,22 @@ class AntColony3D {
     window.addEventListener("keydown", this.boundKeyDown, { passive: false });
     window.addEventListener("keyup", this.boundKeyUp, { passive: false });
     this.setPanelCompact(this.panelCompact, false);
+    this.decorateGeneratedUiAssets();
     this.bindPanelGestures();
+    this.boundButtonFeedback = (event) => this.handleButtonFeedback(event);
+    document.addEventListener("click", this.boundButtonFeedback, true);
 
     ui.buttons.forEach((button) => {
       button.addEventListener("click", () => {
         this.setActiveTab(button.dataset.tab);
       });
+    });
+
+    ui.nextActionDock?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-next-action]");
+      if (!button) return;
+      event.preventDefault();
+      this.performNextAction(button.dataset.nextAction, button);
     });
 
     ui.homeView?.addEventListener("click", () => this.focusCameraOnNest());
@@ -4899,6 +5217,12 @@ class AntColony3D {
 
     ui.reset.addEventListener("click", () => this.reset(true));
     ui.upgradeList.addEventListener("click", (event) => {
+      const actionButton = event.target.closest("[data-next-action]");
+      if (actionButton) {
+        event.preventDefault();
+        this.performNextAction(actionButton.dataset.nextAction, actionButton);
+        return;
+      }
       const button = event.target.closest("[data-upgrade]");
       if (!button) return;
       event.preventDefault();
@@ -4936,6 +5260,41 @@ class AntColony3D {
     ui.barracksTab?.classList.toggle("active", this.activeTab === "barracks");
     ui.soldierTab.classList.toggle("active", this.activeTab === "soldiers");
     this.updateStats();
+  }
+
+  performNextAction(action, button = null) {
+    const kind = button?.dataset?.actionKind ?? "";
+    const value = button?.dataset?.actionValue ?? "";
+    if (action === "primary") {
+      if (kind === "train" && this.startBarracksTraining(value)) return true;
+      if (kind === "upgrade" && this.buyUpgrade(value)) return true;
+      if (kind === "sortie" && this.startSoldierSortie(value || "defense")) return true;
+      if (kind === "tab") {
+        this.setPanelCompact(false);
+        this.setActiveTab(value || "growth");
+        return true;
+      }
+    }
+    if (action === "status") {
+      this.setPanelCompact(false);
+      return true;
+    }
+    if (action === "growth") {
+      this.setPanelCompact(false);
+      this.setActiveTab("growth");
+      return true;
+    }
+    if (action === "barracks") {
+      this.setPanelCompact(false);
+      this.setActiveTab("barracks");
+      return true;
+    }
+    if (action === "soldiers") {
+      this.setPanelCompact(false);
+      this.setActiveTab("soldiers");
+      return true;
+    }
+    return false;
   }
 
   bindPanelGestures() {
@@ -6215,7 +6574,263 @@ class AntColony3D {
     }
   }
 
+  upgradeUi(upgrade) {
+    const branch = UPGRADE_BRANCH_UI[upgrade.branch] ?? { label: upgrade.branch, icon: "枝", summary: "" };
+    const branchIconAsset = BRANCH_ICON_ASSETS[upgrade.branch] ?? UI_ICON_ASSETS.growthLeaf;
+    return {
+      branch: { ...branch, iconAsset: branchIconAsset },
+      name: UPGRADE_UI[upgrade.id]?.name ?? upgrade.name,
+      effect: UPGRADE_UI[upgrade.id]?.effect ?? upgrade.effect,
+      reason: UPGRADE_UI[upgrade.id]?.reason ?? upgrade.desc,
+      icon: UPGRADE_UI[upgrade.id]?.icon ?? branch.icon,
+      iconAsset: UPGRADE_ICON_ASSETS[upgrade.id] ?? branchIconAsset,
+      priority: UPGRADE_UI[upgrade.id]?.priority ?? 0,
+    };
+  }
+
+  readableMissingRequirements(upgrade, cost) {
+    const missing = [];
+    if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}不足`);
+    if (upgrade.requires.ants && this.colony.antPopulation < upgrade.requires.ants) missing.push(`アリ ${fmt(upgrade.requires.ants, 0)}匹`);
+    if (upgrade.requires.lifetimeFood && this.colony.lifetimeFood < upgrade.requires.lifetimeFood) missing.push(`累計食料 ${fmt(upgrade.requires.lifetimeFood, 0)}`);
+    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`領土 ${fmt(upgrade.requires.territory, 0)}`);
+    if (upgrade.requires.nestLevel && this.colony.nestLevel < upgrade.requires.nestLevel) missing.push(`巣Lv ${fmt(upgrade.requires.nestLevel, 0)}`);
+    for (const [id, requiredLevel] of Object.entries(upgrade.requires.upgrades ?? {})) {
+      const required = UPGRADE_UI[id]?.name ?? upgradeName(id);
+      if (upgradeLevel(this.colony.upgrades, id) < requiredLevel) missing.push(`${required} Lv${requiredLevel}`);
+    }
+    return missing;
+  }
+
+  growthBranchStats() {
+    return UPGRADE_BRANCHES.map((branch) => {
+      const upgrades = UPGRADE_DEFS.filter((upgrade) => upgrade.branch === branch.id);
+      const levels = upgrades.reduce((sum, upgrade) => sum + upgradeLevel(this.colony.upgrades, upgrade.id), 0);
+      const max = upgrades.reduce((sum, upgrade) => sum + upgrade.max, 0);
+      const available = upgrades.filter((upgrade) => {
+        const level = upgradeLevel(this.colony.upgrades, upgrade.id);
+        if (level >= upgrade.max) return false;
+        const cost = upgradeCost(upgrade, level);
+        return this.readableMissingRequirements(upgrade, cost).length === 0;
+      }).length;
+      return {
+        id: branch.id,
+        label: UPGRADE_BRANCH_UI[branch.id]?.label ?? branch.name,
+        summary: UPGRADE_BRANCH_UI[branch.id]?.summary ?? "",
+        iconAsset: BRANCH_ICON_ASSETS[branch.id] ?? UI_ICON_ASSETS.growthLeaf,
+        levels,
+        max,
+        available,
+      };
+    });
+  }
+
+  growthRecommendations(limit = 3) {
+    return UPGRADE_DEFS.map((upgrade) => {
+      const level = upgradeLevel(this.colony.upgrades, upgrade.id);
+      const complete = level >= upgrade.max;
+      const cost = complete ? 0 : upgradeCost(upgrade, level);
+      const missing = complete ? [] : this.readableMissingRequirements(upgrade, cost);
+      const uiDef = this.upgradeUi(upgrade);
+      const score =
+        (missing.length === 0 ? 1000 : 0) +
+        uiDef.priority * 20 +
+        (upgrade.max - level) * 4 -
+        Math.min(180, cost * 0.04) -
+        missing.length * 24;
+      return { upgrade, uiDef, level, complete, cost, missing, available: !complete && missing.length === 0, score };
+    })
+      .filter((item) => !item.complete)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+
+  renderLevelPips(level, max) {
+    return Array.from({ length: max }, (_, index) => `<span class="${index < level ? "is-filled" : ""}"></span>`).join("");
+  }
+
+  nextActionPlan(d = this.computeDerived()) {
+    const queue = this.barracksQueue();
+    const raid = this.ensureRaidState();
+    const cooldownLeft = Math.ceil(this.soldierSortieCooldown);
+    const plannedSortie = this.plannedSortieCount();
+    const raidNeedsDefense = raid.phase === "warning" || raid.phase === "active";
+
+    if (raidNeedsDefense && plannedSortie > 0 && cooldownLeft <= 0) {
+      return {
+        reason: "敵襲に対応できます",
+        text: `防衛出動 ${fmt(plannedSortie, 0)}`,
+        kind: "sortie",
+        value: "defense",
+        iconAsset: UI_ICON_ASSETS.defenseShield,
+        disabled: false,
+      };
+    }
+
+    const workerState = this.canStartBarracksTraining("worker");
+    if (queue.length <= 0) {
+      if (workerState.ok) {
+        return {
+          reason: "育成キューが空です",
+          text: "働きアリを育てる",
+          kind: "train",
+          value: "worker",
+          iconAsset: UI_ICON_ASSETS.antPopulation,
+          disabled: false,
+        };
+      }
+      return {
+        reason: `育成キューが空です / ${workerState.reason}`,
+        text: "育房を確認",
+        kind: "tab",
+        value: "barracks",
+        iconAsset: UI_ICON_ASSETS.nurseryEggs,
+        disabled: false,
+      };
+    }
+
+    const availableUpgrade = this.growthRecommendations(1).find((item) => item.available);
+    if (availableUpgrade) {
+      return {
+        reason: "強化できる成長があります",
+        text: `${availableUpgrade.uiDef.name}を強化`,
+        kind: "upgrade",
+        value: availableUpgrade.upgrade.id,
+        iconAsset: availableUpgrade.uiDef.iconAsset,
+        disabled: false,
+      };
+    }
+
+    return {
+      reason: "次の成長条件を確認できます",
+      text: "成長を見る",
+      kind: "tab",
+      value: "growth",
+      iconAsset: UI_ICON_ASSETS.growthLeaf,
+      disabled: false,
+    };
+  }
+
+  renderNextActionDock(d = this.computeDerived()) {
+    if (!ui.nextActionDock) return;
+    const plan = this.nextActionPlan(d);
+    const queue = this.barracksQueue();
+    const plannedSortie = this.plannedSortieCount();
+    const availableGrowth = this.growthRecommendations(20).filter((item) => item.available).length;
+
+    ui.nextActionReason.textContent = plan.reason;
+    ui.nextActionPrimaryText.textContent = plan.text;
+    if (ui.nextActionPrimaryIcon) {
+      ui.nextActionPrimaryIcon.innerHTML = this.iconImage(plan.iconAsset, "generated-ui-icon");
+    }
+    ui.nextActionPrimaryBtn.dataset.actionKind = plan.kind;
+    ui.nextActionPrimaryBtn.dataset.actionValue = plan.value;
+    ui.nextActionPrimaryBtn.disabled = plan.disabled;
+    ui.nextActionQueueCount.textContent = `${fmt(queue.length, 0)}/${fmt(BARRACKS_QUEUE_CAP, 0)}`;
+    ui.nextActionQueueHint.textContent = queue.length <= 0
+      ? "待ちアリなし・すぐに育成できます"
+      : queue[0] ? `${getBarracksTrainingDef(queue[0].variant).label}を育成中` : "育成待ちがあります";
+    ui.nextActionGrowthHint.textContent = availableGrowth > 0 ? `強化可 ${fmt(availableGrowth, 0)}` : "条件を見る";
+    ui.nextActionBarracksHint.textContent = queue.length <= 0 ? "キュー空き" : `待ち ${fmt(queue.length, 0)}件`;
+    ui.nextActionSoldierHint.textContent = plannedSortie > 0 ? `出撃可 ${fmt(plannedSortie, 0)}` : `巣内 ${fmt(this.sortieSoldierPool(d), 0)}`;
+    ui.nextActionQueueSlots.innerHTML = Array.from({ length: 6 }, (_, index) => {
+      const filled = index < Math.min(queue.length, 6);
+      return `<span class="${filled ? "is-filled" : ""}"></span>`;
+    }).join("");
+  }
+
+  renderGrowthFocus() {
+    const recommendations = this.growthRecommendations(3);
+    const branchStats = this.growthBranchStats();
+    const activeBranch = recommendations[0]?.upgrade.branch ?? branchStats[0]?.id;
+    const chips = branchStats.map((branch) => {
+      const progress = branch.max > 0 ? Math.round((branch.levels / branch.max) * 100) : 0;
+      const available = branch.available > 0 ? ` / 強化可 ${fmt(branch.available, 0)}` : "";
+      return `
+        <div class="growth-branch-chip ${branch.id === activeBranch ? "is-active" : ""}">
+          ${this.iconImage(branch.iconAsset, "branch-chip-icon")}
+          <strong>${branch.label}</strong>
+          <span>${fmt(progress, 0)}%${available}</span>
+        </div>
+      `;
+    }).join("");
+    const cards = recommendations.map((item) => {
+      const buttonText = item.available ? "強化" : "条件";
+      const disabled = item.available ? "" : "disabled";
+      const meta = item.available ? `食料 ${fmt(item.cost, 0)}` : item.missing.slice(0, 2).join(" / ");
+      return `
+        <article class="growth-recommend-card">
+          <div class="growth-recommend-icon">${this.iconImage(item.uiDef.iconAsset, "generated-ui-icon", item.uiDef.icon)}</div>
+          <div class="growth-recommend-body">
+            <div class="growth-recommend-heading">
+              <strong>${item.uiDef.name} Lv${item.level}/${item.upgrade.max}</strong>
+              <span class="growth-recommend-badge">${item.uiDef.branch.label}</span>
+            </div>
+            <p>${item.uiDef.effect}</p>
+            <p>${item.available ? item.uiDef.reason : `不足: ${meta}`}</p>
+          </div>
+          <div class="growth-recommend-action">
+            <span class="growth-recommend-cost">${meta || "最大"}</span>
+            <button type="button" data-upgrade="${item.upgrade.id}" ${disabled}>${buttonText}</button>
+          </div>
+        </article>
+      `;
+    }).join("");
+
+    return `
+      <section class="growth-focus" aria-label="次に効く成長">
+        <div class="growth-focus-header">
+          <div class="growth-focus-title">
+            <span class="growth-focus-mark">${this.iconImage(UI_ICON_ASSETS.growthLeaf, "generated-ui-icon", "成長")}</span>
+            <div>
+              <strong>次に効く成長</strong>
+              <span>条件を満たした強化から優先表示</span>
+            </div>
+          </div>
+        </div>
+        <div class="growth-branch-progress">${chips}</div>
+        <div class="growth-recommend-title">おすすめ3件</div>
+        <div class="growth-recommend-list">${cards}</div>
+        <button class="growth-full-link" type="button" data-next-action="growth">全ツリーを見る</button>
+      </section>
+      <div class="upgrade-tree-label">全ツリー</div>
+    `;
+  }
+
   renderUpgrades() {
+    const focus = this.renderGrowthFocus();
+    const tree = UPGRADE_BRANCHES.map((branch) => {
+      const branchUi = UPGRADE_BRANCH_UI[branch.id] ?? { label: branch.name, summary: "" };
+      const cards = UPGRADE_DEFS.filter((upgrade) => upgrade.branch === branch.id).map((upgrade) => {
+        const uiDef = this.upgradeUi(upgrade);
+        const level = upgradeLevel(this.colony.upgrades, upgrade.id);
+        const complete = level >= upgrade.max;
+        const cost = complete ? 0 : upgradeCost(upgrade, level);
+        const missing = complete ? [] : this.readableMissingRequirements(upgrade, cost);
+        const disabled = complete || missing.length > 0 ? "disabled" : "";
+        const locked = missing.length > 0 ? "is-locked" : "";
+        const meta = complete ? "最大Lv" : missing.length ? `不足: ${missing.slice(0, 2).join(" / ")}` : `食料 ${fmt(cost, 0)}`;
+        const buttonText = complete ? "最大" : missing.length ? "条件" : "強化";
+        return `
+          <article class="upgrade-card ${locked}" data-branch="${branch.id}">
+            <div class="upgrade-card-head">
+              <span class="upgrade-card-icon">${this.iconImage(uiDef.iconAsset, "generated-ui-icon", uiDef.icon)}</span>
+              <strong>${uiDef.name} Lv${level}/${upgrade.max}</strong>
+            </div>
+            <div class="upgrade-level-pips">${this.renderLevelPips(level, upgrade.max)}</div>
+            <p>${uiDef.reason}</p>
+            <div class="upgrade-effect">${uiDef.effect}</div>
+            <div class="upgrade-meta">${meta}</div>
+            <button type="button" data-upgrade="${upgrade.id}" ${disabled}>${buttonText}</button>
+          </article>
+        `;
+      }).join("");
+      return `<div class="upgrade-branch"><strong>${branchUi.label}</strong><span>${branchUi.summary}</span></div>${cards}`;
+    }).join("");
+    ui.upgradeList.innerHTML = focus + tree;
+  }
+
+  renderLegacyUpgrades() {
     const html = UPGRADE_BRANCHES.map((branch) => {
       const cards = UPGRADE_DEFS.filter((upgrade) => upgrade.branch === branch.id).map((upgrade) => {
         const level = upgradeLevel(this.colony.upgrades, upgrade.id);
@@ -6541,6 +7156,7 @@ class AntColony3D {
     window.removeEventListener("pagehide", this.boundPageHide);
     window.removeEventListener("keydown", this.boundKeyDown);
     window.removeEventListener("keyup", this.boundKeyUp);
+    if (this.boundButtonFeedback) document.removeEventListener("click", this.boundButtonFeedback, true);
     this.clearBranchPreview();
     this.clearWallPlacementPreview();
     this.antRenderer?.destroy();
@@ -8839,6 +9455,7 @@ class AntColony3D {
       : 0;
     const activeBarracksRate = activeBarracksOrder ? (60 * this.barracksTrainingSpeedMultiplier(activeBarracksOrder.variant)) / Math.max(activeBarracksOrder.totalSeconds, 0.001) : 0;
 
+    this.renderNextActionDock(d);
     ui.statFood.textContent = fmt(this.colony.food, 0);
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;
     ui.statFoodRate.textContent = fmt(this.recentForagingPerMinute(), 1);
