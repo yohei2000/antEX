@@ -150,6 +150,7 @@ const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
 const GENERATED_TEXTURE_BASE_URL = `${import.meta.env.BASE_URL}assets/generated/`;
+const generatedAssetUrl = (fileName) => `${GENERATED_TEXTURE_BASE_URL}${fileName}`;
 const GENERATED_TEXTURE_ASSETS = {
   soil: "terrain-soil-tile-20260702.png",
   moss: "terrain-moss-damp-tile-20260702.png",
@@ -165,22 +166,22 @@ const GENERATED_TEXTURE_ASSETS = {
 };
 
 const UI_ICON_ASSETS = {
-  colonyMark: "/assets/generated/ant-ui-colony-mark-20260703.png",
-  foodSeed: "/assets/generated/ant-ui-food-seed-20260703.png",
-  territoryLeaf: "/assets/generated/ant-ui-territory-leaf-20260703.png",
-  antPopulation: "/assets/generated/ant-ui-ant-population-20260703.png",
-  soilMound: "/assets/generated/ant-ui-soil-mound-20260703.png",
-  upgradeArrow: "/assets/generated/ant-ui-upgrade-arrow-20260703.png",
-  scoutFlag: "/assets/generated/ant-ui-scout-flag-20260703.png",
-  defenseShield: "/assets/generated/ant-ui-defense-shield-20260703.png",
-  growthLeaf: "/assets/generated/ant-ui-growth-leaf-20260703.png",
-  constructionShovel: "/assets/generated/ant-ui-construction-shovel-20260703.png",
-  nurseryEggs: "/assets/generated/ant-ui-nursery-eggs-20260703.png",
-  militaryMandibles: "/assets/generated/ant-ui-military-mandibles-20260703.png",
-  forageTrail: "/assets/generated/ant-ui-forage-trail-20260703.png",
-  tunnelEntrance: "/assets/generated/ant-ui-tunnel-entrance-20260703.png",
-  raidWarning: "/assets/generated/ant-ui-raid-warning-20260703.png",
-  queenCare: "/assets/generated/ant-ui-queen-care-20260703.png",
+  colonyMark: generatedAssetUrl("ant-ui-colony-mark-20260703.png"),
+  foodSeed: generatedAssetUrl("ant-ui-food-seed-20260703.png"),
+  territoryLeaf: generatedAssetUrl("ant-ui-territory-leaf-20260703.png"),
+  antPopulation: generatedAssetUrl("ant-ui-ant-population-20260703.png"),
+  soilMound: generatedAssetUrl("ant-ui-soil-mound-20260703.png"),
+  upgradeArrow: generatedAssetUrl("ant-ui-upgrade-arrow-20260703.png"),
+  scoutFlag: generatedAssetUrl("ant-ui-scout-flag-20260703.png"),
+  defenseShield: generatedAssetUrl("ant-ui-defense-shield-20260703.png"),
+  growthLeaf: generatedAssetUrl("ant-ui-growth-leaf-20260703.png"),
+  constructionShovel: generatedAssetUrl("ant-ui-construction-shovel-20260703.png"),
+  nurseryEggs: generatedAssetUrl("ant-ui-nursery-eggs-20260703.png"),
+  militaryMandibles: generatedAssetUrl("ant-ui-military-mandibles-20260703.png"),
+  forageTrail: generatedAssetUrl("ant-ui-forage-trail-20260703.png"),
+  tunnelEntrance: generatedAssetUrl("ant-ui-tunnel-entrance-20260703.png"),
+  raidWarning: generatedAssetUrl("ant-ui-raid-warning-20260703.png"),
+  queenCare: generatedAssetUrl("ant-ui-queen-care-20260703.png"),
 };
 
 const BRANCH_ICON_ASSETS = {
