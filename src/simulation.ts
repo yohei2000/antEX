@@ -82,6 +82,7 @@ const ui = {
   homeView: document.querySelector("#homeViewBtn"),
   pause: document.querySelector("#pauseBtn"),
   reset: document.querySelector("#resetBtn"),
+  panelToggle: document.querySelector("#panelToggleBtn"),
   statAnts: document.querySelector("#statAnts"),
   statFoodRate: document.querySelector("#statFoodRate"),
   statTerritory: document.querySelector("#statTerritory"),
@@ -3548,6 +3549,10 @@ class AntColony3D {
       const savedPanelCompact = readStorage("ant3d.panelCompact");
       this.panelCompact = savedPanelCompact == null ? window.innerWidth < 680 : savedPanelCompact === "1";
     }
+    {
+      const savedPanelHidden = readStorage("ant3d.panelHidden");
+      this.panelHidden = savedPanelHidden === "1";
+    }
     this.panelDrag = null;
     this.selectedAnt = null;
     this.collectedFood = 0;
@@ -5139,6 +5144,7 @@ class AntColony3D {
     if (button.id === "homeViewBtn") return "巣へ戻る";
     if (button.id === "pauseBtn") return "一時停止を切り替え";
     if (button.id === "resetBtn") return "リセット";
+    if (button.id === "panelToggleBtn") return this.panelHidden ? "Panel show" : "Panel hide";
     if (button.id === "panelGrip") return "パネルを開閉";
     if (button.id === "soldierSortieBtn") return "防衛出動";
     if (button.id === "expeditionSortieBtn") return "遠征出動";
@@ -5191,10 +5197,13 @@ class AntColony3D {
     window.addEventListener("keydown", this.boundKeyDown, { passive: false });
     window.addEventListener("keyup", this.boundKeyUp, { passive: false });
     this.setPanelCompact(this.panelCompact, false);
+    this.setPanelHidden(this.panelHidden, false);
     this.decorateGeneratedUiAssets();
     this.bindPanelGestures();
     this.boundButtonFeedback = (event) => this.handleButtonFeedback(event);
     document.addEventListener("click", this.boundButtonFeedback, true);
+    this.boundPanelToggle = () => this.setPanelHidden(!this.panelHidden);
+    ui.panelToggle?.addEventListener("click", this.boundPanelToggle);
 
     ui.buttons.forEach((button) => {
       button.addEventListener("click", () => {
@@ -5342,6 +5351,24 @@ class AntColony3D {
     ui.panelGrip?.setAttribute("aria-expanded", String(!this.panelCompact));
     ui.panelGrip?.setAttribute("aria-label", this.panelCompact ? "管理パネルを広げる" : "管理パネルを小さくする");
     if (persist) writeStorage("ant3d.panelCompact", this.panelCompact ? "1" : "0");
+  }
+
+  setPanelHidden(hidden, persist = true) {
+    this.panelHidden = Boolean(hidden);
+    document.body.classList.toggle("is-panel-hidden", this.panelHidden);
+    ui.empirePanel?.classList.toggle("is-hidden", this.panelHidden);
+    ui.panelToggle?.classList.toggle("is-panel-hidden", this.panelHidden);
+    ui.panelToggle?.setAttribute("aria-pressed", String(!this.panelHidden));
+    if (ui.panelToggle) {
+      ui.panelToggle.title = this.panelHidden ? "Panel show" : "Panel hide";
+      ui.panelToggle.setAttribute("aria-label", ui.panelToggle.title);
+    }
+    if (ui.empirePanel) {
+      if (this.panelHidden) ui.empirePanel.setAttribute("aria-hidden", "true");
+      else ui.empirePanel.removeAttribute("aria-hidden");
+      ui.empirePanel.inert = this.panelHidden;
+    }
+    if (persist) writeStorage("ant3d.panelHidden", this.panelHidden ? "1" : "0");
   }
 
   reset(newGame = true) {
@@ -6878,8 +6905,12 @@ class AntColony3D {
     const viewport = window.visualViewport;
     const width = Math.max(1, Math.round(viewport?.width ?? window.innerWidth));
     const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+    const left = Math.round(viewport?.offsetLeft ?? 0);
+    const top = Math.round(viewport?.offsetTop ?? 0);
     document.documentElement.style.setProperty("--app-viewport-width", `${width}px`);
     document.documentElement.style.setProperty("--app-viewport-height", `${height}px`);
+    document.documentElement.style.setProperty("--app-viewport-left", `${left}px`);
+    document.documentElement.style.setProperty("--app-viewport-top", `${top}px`);
     return { width, height };
   }
 
@@ -7169,6 +7200,7 @@ class AntColony3D {
     window.removeEventListener("pagehide", this.boundPageHide);
     window.removeEventListener("keydown", this.boundKeyDown);
     window.removeEventListener("keyup", this.boundKeyUp);
+    if (this.boundPanelToggle) ui.panelToggle?.removeEventListener("click", this.boundPanelToggle);
     if (this.boundButtonFeedback) document.removeEventListener("click", this.boundButtonFeedback, true);
     this.clearBranchPreview();
     this.clearWallPlacementPreview();

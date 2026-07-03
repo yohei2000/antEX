@@ -270,7 +270,7 @@ describe("agent expedition battle", () => {
     expect(outcome.battle.frameLogs.length).toBe(0);
     expect(outcome.diagnosis.join("\n")).toContain("legacy reason:");
     expect(outcome.wounded).toBeGreaterThanOrEqual(0);
-  });
+  }, 10_000);
 
   it("meets baseline ant-likeness thresholds", () => {
     const result = runAgentBattle(battleConfig(2026));

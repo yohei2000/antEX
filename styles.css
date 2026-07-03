@@ -11,6 +11,8 @@
   --shadow: rgba(0, 0, 0, 0.3);
   --app-viewport-width: 100vw;
   --app-viewport-height: 100dvh;
+  --app-viewport-left: 0px;
+  --app-viewport-top: 0px;
   font-family:
     "Inter",
     "Yu Gothic UI",
@@ -52,7 +54,8 @@ button {
 .app-shell,
 #world3d {
   position: fixed;
-  inset: 0;
+  top: var(--app-viewport-top, 0);
+  left: var(--app-viewport-left, 0);
   width: var(--app-viewport-width, 100vw);
   height: var(--app-viewport-height, 100dvh);
   min-height: min(560px, var(--app-viewport-height, 100dvh));
@@ -348,7 +351,8 @@ button.is-pressed-feedback {
 
 .home-icon,
 .pause-icon,
-.reset-icon {
+.reset-icon,
+.panel-toggle-icon {
   position: relative;
   display: block;
   width: 18px;
@@ -433,6 +437,45 @@ button.is-pressed-feedback {
   transform: rotate(28deg);
 }
 
+.panel-toggle-button {
+  position: absolute;
+  z-index: 8;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + min(calc(var(--app-viewport-height, 100dvh) * 0.5), 430px) + 8px);
+}
+
+.is-panel-hidden .panel-toggle-button {
+  bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.panel-toggle-icon::before {
+  content: "";
+  position: absolute;
+  inset: 2px 1px 4px;
+  border: 3px solid currentColor;
+  border-radius: 3px;
+}
+
+.panel-toggle-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 1px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.icon-button.is-panel-hidden .panel-toggle-icon::before {
+  inset: 7px 1px 1px;
+}
+
+.icon-button.is-panel-hidden .panel-toggle-icon::after {
+  top: 1px;
+  bottom: auto;
+}
+
 .stats-strip {
   position: absolute;
   z-index: 4;
@@ -455,11 +498,15 @@ button.is-pressed-feedback {
 }
 
 .stat-card-icon {
+  justify-self: center;
+  align-self: center;
   grid-row: 1 / span 2;
   width: 32px;
   height: 32px;
+  aspect-ratio: 1;
   border-radius: 7px;
   object-fit: cover;
+  object-position: center;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
@@ -506,6 +553,12 @@ button.is-pressed-feedback {
 .empire-panel.is-compact {
   max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.5), 430px);
   overflow: hidden;
+}
+
+.empire-panel.is-hidden {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(calc(100% + max(24px, env(safe-area-inset-bottom))));
 }
 
 .empire-panel:not(.is-compact) .next-action-dock,
@@ -658,6 +711,7 @@ button.is-pressed-feedback {
 .branch-chip-icon {
   display: block;
   object-fit: cover;
+  object-position: center;
 }
 
 .generated-ui-icon,
@@ -745,9 +799,12 @@ button.is-pressed-feedback {
 }
 
 .shortcut-icon {
+  justify-self: center;
+  align-self: center;
   grid-row: 1 / span 2;
   width: 28px;
   height: 28px;
+  aspect-ratio: 1;
   border-radius: 7px;
 }
 
@@ -817,8 +874,11 @@ button.is-pressed-feedback {
 }
 
 .tab-icon {
+  justify-self: center;
+  align-self: center;
   width: 24px;
   height: 24px;
+  aspect-ratio: 1;
   border-radius: 6px;
 }
 
@@ -871,6 +931,7 @@ button.is-pressed-feedback {
   flex: 0 0 auto;
   width: 42px;
   height: 42px;
+  aspect-ratio: 1;
   place-items: center;
   border: 1px solid rgba(81, 183, 166, 0.48);
   border-radius: 8px;
@@ -916,9 +977,12 @@ button.is-pressed-feedback {
 }
 
 .branch-chip-icon {
+  justify-self: center;
+  align-self: center;
   grid-row: 1 / span 2;
   width: 28px;
   height: 28px;
+  aspect-ratio: 1;
   border-radius: 7px;
 }
 
@@ -1108,9 +1172,11 @@ button.is-pressed-feedback {
 }
 
 .upgrade-card-icon {
-  display: block;
+  display: grid;
+  place-items: center;
   width: 34px;
   height: 34px;
+  aspect-ratio: 1;
   overflow: hidden;
   border: 1px solid rgba(81, 183, 166, 0.28);
   border-radius: 8px;
@@ -1454,6 +1520,14 @@ button.is-pressed-feedback {
     max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.62), 590px);
   }
 
+  .panel-toggle-button {
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + min(calc(var(--app-viewport-height, 100dvh) * 0.62), 590px) + 8px);
+  }
+
+  .is-panel-hidden .panel-toggle-button {
+    bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
   .empire-panel.is-compact {
     max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.51), 430px);
   }
@@ -1479,6 +1553,17 @@ button.is-pressed-feedback {
 
   .next-action-shortcuts {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tab-button {
+    grid-template-columns: 1fr;
+    grid-template-rows: 24px auto;
+    justify-items: center;
+    gap: 4px;
+    min-height: 62px;
+    padding: 6px 4px;
+    text-align: center;
+    line-height: 1.1;
   }
 
   .next-action-shortcuts button {
