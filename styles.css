@@ -1261,36 +1261,6 @@ button.is-pressed-feedback {
   max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.7), 680px);
 }
 
-.empire-panel.is-construction-tab:not(.is-compact) .panel-tabs {
-  gap: 0;
-  margin: -2px -2px 0;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.36);
-}
-
-.empire-panel.is-construction-tab:not(.is-compact) .tab-button {
-  grid-template-columns: 1fr;
-  min-height: 48px;
-  border: 0;
-  border-radius: 0;
-  background: rgba(0, 0, 0, 0.08);
-  color: rgba(244, 241, 232, 0.78);
-  font-size: 0.94rem;
-  font-weight: 850;
-}
-
-.empire-panel.is-construction-tab:not(.is-compact) .tab-button.active {
-  background: linear-gradient(180deg, rgba(28, 139, 126, 0.72), rgba(19, 96, 88, 0.64));
-  box-shadow: inset 0 -3px 0 #5be0cf;
-  color: var(--ink);
-}
-
-.empire-panel.is-construction-tab:not(.is-compact) .tab-icon {
-  display: none;
-}
-
 .construction-summary-strip {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
@@ -2682,10 +2652,6 @@ button.is-pressed-feedback {
 
   .construction-summary-strip strong {
     font-size: 0.78rem;
-  }
-
-  .empire-panel.is-construction-tab:not(.is-compact) .tab-button {
-    min-height: 44px;
   }
 
   .construction-command {
