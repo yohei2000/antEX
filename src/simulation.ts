@@ -111,13 +111,19 @@ const ui = {
   growthTab: document.querySelector("#growthTab"),
   constructionTab: document.querySelector("#constructionTab"),
   constructionBuilders: document.querySelector("#constructionBuilders"),
+  constructionIdle: document.querySelector("#constructionIdle"),
   constructionActive: document.querySelector("#constructionActive"),
   constructionComplete: document.querySelector("#constructionComplete"),
   constructionTrailBtn: document.querySelector("#constructionTrailBtn"),
   constructionBarricadeBtn: document.querySelector("#constructionBarricadeBtn"),
   constructionWallBtn: document.querySelector("#constructionWallBtn"),
+  constructionCancelBtn: document.querySelector("#constructionCancelBtn"),
   constructionWallConfirmBtn: document.querySelector("#constructionWallConfirmBtn"),
   constructionSentryBtn: document.querySelector("#constructionSentryBtn"),
+  constructionPlacementPanel: document.querySelector("#constructionPlacementPanel"),
+  constructionPlacementKind: document.querySelector("#constructionPlacementKind"),
+  constructionPlacementMode: document.querySelector("#constructionPlacementMode"),
+  constructionPlacementNote: document.querySelector("#constructionPlacementNote"),
   constructionStatus: document.querySelector("#constructionStatus"),
   constructionCrew: document.querySelector("#constructionCrew"),
   constructionProgressList: document.querySelector("#constructionProgressList"),
@@ -129,8 +135,19 @@ const ui = {
   barracksQueueList: document.querySelector("#barracksQueueList"),
   soldierTab: document.querySelector("#soldierTab"),
   soldierNest: document.querySelector("#soldierNest"),
+  soldierTotal: document.querySelector("#soldierTotal"),
+  soldierWaveCap: document.querySelector("#soldierWaveCap"),
   soldierDeployed: document.querySelector("#soldierDeployed"),
+  soldierCooldown: document.querySelector("#soldierCooldown"),
   soldierStatus: document.querySelector("#soldierStatus"),
+  sortiePlanList: document.querySelector("#sortiePlanList"),
+  sortiePlanTotal: document.querySelector("#sortiePlanTotal"),
+  soldierTargetTitle: document.querySelector("#soldierTargetTitle"),
+  soldierTargetDistance: document.querySelector("#soldierTargetDistance"),
+  soldierTargetRisk: document.querySelector("#soldierTargetRisk"),
+  soldierTargetIntegrityText: document.querySelector("#soldierTargetIntegrityText"),
+  soldierTargetIntegrityFill: document.querySelector("#soldierTargetIntegrityFill"),
+  soldierTargetHint: document.querySelector("#soldierTargetHint"),
   soldierSortieBtn: document.querySelector("#soldierSortieBtn"),
   expeditionSortieBtn: document.querySelector("#expeditionSortieBtn"),
   battleLog: document.querySelector("#battleLog"),
@@ -184,6 +201,67 @@ const UI_ICON_ASSETS = {
   raidWarning: generatedAssetUrl("ant-ui-raid-warning-20260703.png"),
   queenCare: generatedAssetUrl("ant-ui-queen-care-20260703.png"),
 };
+
+const SORTIE_PLAN_VARIANTS = [
+  {
+    variant: "shieldHead",
+    compositionKey: "shield",
+    derivedKey: "shieldHeads",
+    label: "盾頭",
+    role: "前線の盾・味方保護",
+    icon: UI_ICON_ASSETS.defenseShield,
+  },
+  {
+    variant: "heavySoldier",
+    compositionKey: "heavy",
+    derivedKey: "heavySoldiers",
+    label: "重兵装",
+    role: "高火力で敵を圧制",
+    icon: generatedAssetUrl("ant-role-heavy-soldier-20260627.png"),
+  },
+  {
+    variant: "acidShooter",
+    compositionKey: "acid",
+    derivedKey: "acidShooters",
+    label: "酸射",
+    role: "遠距離から持続ダメージ",
+    icon: UI_ICON_ASSETS.militaryMandibles,
+  },
+  {
+    variant: "scout",
+    compositionKey: "scout",
+    derivedKey: "scouts",
+    label: "斥候",
+    role: "敵標識・狙いを統一",
+    icon: UI_ICON_ASSETS.scoutFlag,
+  },
+  {
+    variant: "medic",
+    compositionKey: "medic",
+    derivedKey: "medics",
+    label: "救護",
+    role: "負傷者支援・後方退避",
+    icon: UI_ICON_ASSETS.queenCare,
+  },
+  {
+    variant: "captain",
+    compositionKey: "captain",
+    derivedKey: "captains",
+    label: "小隊長",
+    role: "小隊指揮・集合と集中",
+    icon: UI_ICON_ASSETS.scoutFlag,
+  },
+  {
+    variant: "soldier",
+    compositionKey: "normal",
+    derivedKey: "normalSoldiers",
+    label: "兵隊",
+    role: "近接戦闘の主力",
+    icon: generatedAssetUrl("ant-role-soldier-20260627.png"),
+  },
+];
+
+const SORTIE_PLAN_KEYS = SORTIE_PLAN_VARIANTS.map((item) => item.compositionKey);
 
 const BRANCH_ICON_ASSETS = {
   foraging: UI_ICON_ASSETS.forageTrail,
@@ -2911,6 +2989,46 @@ const ANT_ROLE_LABEL_CONFIG = {
   },
 };
 
+const BARRACKS_VARIANT_UI = {
+  worker: {
+    asset: UI_ICON_ASSETS.antPopulation,
+    tag: "バランス",
+  },
+  builder: {
+    asset: generatedAssetUrl("ant-role-builder-20260627.png"),
+    tag: "工事効率↑",
+  },
+  soldier: {
+    asset: generatedAssetUrl("ant-role-soldier-20260627.png"),
+    tag: "防衛力↑",
+  },
+  heavySoldier: {
+    asset: generatedAssetUrl("ant-role-heavy-soldier-20260627.png"),
+    tag: "前線維持",
+  },
+  shieldHead: {
+    asset: generatedAssetUrl("ant-role-heavy-soldier-20260627.png"),
+    tag: "押し返し",
+  },
+  acidShooter: {
+    asset: generatedAssetUrl("ant-role-soldier-20260627.png"),
+    tag: "足止め",
+  },
+  scout: {
+    asset: UI_ICON_ASSETS.scoutFlag,
+    tag: "標識",
+  },
+  medic: {
+    asset: UI_ICON_ASSETS.queenCare,
+    tag: "退避支援",
+  },
+  captain: {
+    asset: generatedAssetUrl("ant-role-heavy-soldier-20260627.png"),
+    tag: "集中指揮",
+  },
+};
+const BARRACKS_RECOMMENDED_VARIANTS = ["worker", "builder", "soldier"];
+
 class AntRoleLabelSystem {
   constructor(sim, capacity) {
     this.sim = sim;
@@ -3594,6 +3712,7 @@ class AntColony3D {
     this.squads = [];
     this.nextSquadId = 1;
     this.selectedSortieMode = "defense";
+    this.manualSortiePlan = null;
     this.lastUiUpdate = 0;
     this.resizeWidth = 0;
     this.resizeHeight = 0;
@@ -4315,6 +4434,16 @@ class AntColony3D {
     this.wallPlacementDraft = kind === "earthWall" ? { points: [], hover: null } : null;
     this.clearWallPlacementPreview();
     this.constructionMessage = kind === "earthWall" ? `${def.label}の一筆線指定中` : `${def.label}の場所指定中 / 地面をクリック`;
+    this.updateStats();
+    return true;
+  }
+
+  cancelConstructionPlacement() {
+    if (!this.pendingConstructionKind) return false;
+    this.pendingConstructionKind = null;
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
+    this.constructionMessage = "待機";
     this.updateStats();
     return true;
   }
@@ -5149,6 +5278,11 @@ class AntColony3D {
     return `<img class="${className}" src="${src}" alt="" aria-hidden="true" loading="lazy">`;
   }
 
+  barracksVariantUi(variant) {
+    const def = getBarracksTrainingDef(variant);
+    return BARRACKS_VARIANT_UI[def.variant] ?? BARRACKS_VARIANT_UI.worker;
+  }
+
   attachButtonIcon(button, src, className) {
     if (!button || !src || button.querySelector(`.${className}`)) return;
     const image = document.createElement("img");
@@ -5320,6 +5454,7 @@ class AntColony3D {
     ui.constructionTrailBtn?.addEventListener("click", () => this.startConstruction("trailReinforce"));
     ui.constructionBarricadeBtn?.addEventListener("click", () => this.startConstruction("lowBarricade"));
     ui.constructionWallBtn?.addEventListener("click", () => this.startConstruction("earthWall"));
+    ui.constructionCancelBtn?.addEventListener("click", () => this.cancelConstructionPlacement());
     ui.constructionWallConfirmBtn?.addEventListener("click", () => this.confirmWallPlacementDraft());
     ui.constructionSentryBtn?.addEventListener("click", () => this.startConstruction("sentryMound"));
     ui.constructionProgressList?.addEventListener("click", (event) => {
@@ -5335,11 +5470,15 @@ class AntColony3D {
 
   setActiveTab(tab) {
     this.activeTab = tab === "soldiers" || tab === "construction" || tab === "barracks" ? tab : "growth";
+    ui.empirePanel?.classList.toggle("is-military-tab", this.activeTab === "soldiers");
+    ui.empirePanel?.classList.toggle("is-barracks-tab", this.activeTab === "barracks");
+    ui.panelToggle?.classList.toggle("is-construction-tab-toggle", this.activeTab === "construction");
     ui.buttons.forEach((item) => item.classList.toggle("active", item.dataset.tab === this.activeTab));
     ui.growthTab.classList.toggle("active", this.activeTab === "growth");
     ui.constructionTab?.classList.toggle("active", this.activeTab === "construction");
     ui.barracksTab?.classList.toggle("active", this.activeTab === "barracks");
     ui.soldierTab.classList.toggle("active", this.activeTab === "soldiers");
+    ui.empirePanel?.classList.toggle("is-construction-tab", this.activeTab === "construction");
     this.updateStats();
   }
 
@@ -6379,16 +6518,32 @@ class AntColony3D {
     return Math.max(0, Math.min(remainingInNest, this.sortieSoldierLimit(d)));
   }
 
-  sortieComposition(count = this.plannedSortieCount()) {
-    const d = this.computeDerived();
+  sortiePlanCapacities(derived = this.computeDerived()) {
+    return {
+      heavy: Math.max(0, Math.floor((derived.heavySoldiers ?? 0) - this.deployedSoldierCountByVariant("heavySoldier"))),
+      shield: Math.max(0, Math.floor((derived.shieldHeads ?? 0) - this.deployedSoldierCountByVariant("shieldHead"))),
+      acid: Math.max(0, Math.floor((derived.acidShooters ?? 0) - this.deployedSoldierCountByVariant("acidShooter"))),
+      scout: Math.max(0, Math.floor((derived.scouts ?? 0) - this.deployedSoldierCountByVariant("scout"))),
+      medic: Math.max(0, Math.floor((derived.medics ?? 0) - this.deployedSoldierCountByVariant("medic"))),
+      captain: Math.max(0, Math.floor((derived.captains ?? 0) - this.deployedSoldierCountByVariant("captain"))),
+      normal: Math.max(0, Math.floor((derived.normalSoldiers ?? 0) - this.deployedSoldierCountByVariant("soldier"))),
+    };
+  }
+
+  emptySortieComposition() {
+    return { heavy: 0, shield: 0, captain: 0, acid: 0, scout: 0, medic: 0, normal: 0, total: 0 };
+  }
+
+  sortieComposition(count = this.availableSortieSoldiers()) {
     const desired = Math.max(0, Math.floor(count));
-    const nestHeavy = Math.max(0, Math.floor((d.heavySoldiers ?? 0) - this.deployedSoldierCountByVariant("heavySoldier")));
-    const nestShield = Math.max(0, Math.floor((d.shieldHeads ?? 0) - this.deployedSoldierCountByVariant("shieldHead")));
-    const nestAcid = Math.max(0, Math.floor((d.acidShooters ?? 0) - this.deployedSoldierCountByVariant("acidShooter")));
-    const nestScout = Math.max(0, Math.floor((d.scouts ?? 0) - this.deployedSoldierCountByVariant("scout")));
-    const nestMedic = Math.max(0, Math.floor((d.medics ?? 0) - this.deployedSoldierCountByVariant("medic")));
-    const nestCaptain = Math.max(0, Math.floor((d.captains ?? 0) - this.deployedSoldierCountByVariant("captain")));
-    const nestNormal = Math.max(0, Math.floor((d.normalSoldiers ?? 0) - this.deployedSoldierCountByVariant("soldier")));
+    const capacities = this.sortiePlanCapacities();
+    const nestHeavy = capacities.heavy;
+    const nestShield = capacities.shield;
+    const nestAcid = capacities.acid;
+    const nestScout = capacities.scout;
+    const nestMedic = capacities.medic;
+    const nestCaptain = capacities.captain;
+    const nestNormal = capacities.normal;
     const heavy = Math.min(nestHeavy, desired);
     const shield = Math.min(nestShield, desired - heavy);
     const captain = Math.min(nestCaptain, desired - heavy - shield);
@@ -6399,8 +6554,58 @@ class AntColony3D {
     return { heavy, shield, captain, acid, scout, medic, normal, total: heavy + shield + captain + acid + scout + medic + normal };
   }
 
+  normalizeSortiePlan(plan = this.manualSortiePlan) {
+    if (!plan) return this.emptySortieComposition();
+    const capacities = this.sortiePlanCapacities();
+    const normalized = this.emptySortieComposition();
+    let total = 0;
+    for (const key of SORTIE_PLAN_KEYS) {
+      const value = Math.max(0, Math.min(Math.floor(plan[key] ?? 0), capacities[key] ?? 0));
+      normalized[key] = value;
+      total += value;
+    }
+    const limit = this.availableSortieSoldiers();
+    let overflow = Math.max(0, total - limit);
+    for (const key of [...SORTIE_PLAN_KEYS].reverse()) {
+      if (overflow <= 0) break;
+      const removed = Math.min(normalized[key] ?? 0, overflow);
+      normalized[key] -= removed;
+      overflow -= removed;
+      total -= removed;
+    }
+    normalized.total = total;
+    return normalized;
+  }
+
+  plannedSortieComposition() {
+    if (this.manualSortiePlan) return this.normalizeSortiePlan(this.manualSortiePlan);
+    return this.sortieComposition(this.availableSortieSoldiers());
+  }
+
   plannedSortieCount() {
-    return Math.max(0, Math.floor(this.availableSortieSoldiers()));
+    return Math.max(0, Math.floor(this.plannedSortieComposition().total));
+  }
+
+  changeSortiePlan(compositionKey, delta) {
+    if (!SORTIE_PLAN_KEYS.includes(compositionKey)) return false;
+    const current = this.manualSortiePlan ? this.normalizeSortiePlan(this.manualSortiePlan) : this.plannedSortieComposition();
+    const next = {};
+    for (const key of SORTIE_PLAN_KEYS) next[key] = Math.max(0, Math.floor(current[key] ?? 0));
+    const capacities = this.sortiePlanCapacities();
+    const total = SORTIE_PLAN_KEYS.reduce((sum, key) => sum + (next[key] ?? 0), 0);
+    const limit = this.availableSortieSoldiers();
+    if (delta > 0) {
+      if (total >= limit || next[compositionKey] >= (capacities[compositionKey] ?? 0)) return false;
+      next[compositionKey] += 1;
+    } else if (delta < 0) {
+      if ((next[compositionKey] ?? 0) <= 0) return false;
+      next[compositionKey] -= 1;
+    } else {
+      return false;
+    }
+    this.manualSortiePlan = next;
+    this.updateStats();
+    return true;
   }
 
   normalizeSortieMode(mode = this.selectedSortieMode) {
@@ -6533,7 +6738,7 @@ class AntColony3D {
       this.updateStats();
       return false;
     }
-    const composition = this.sortieComposition();
+    const composition = this.plannedSortieComposition();
     const count = composition.total;
     if (count < 1) {
       this.pushLog("出撃できる兵隊がいない");
@@ -9279,6 +9484,30 @@ class AntColony3D {
     return isConstructionKind(kind) ? getConstructionDef(kind).label : "土木";
   }
 
+  constructionShortLabel(kind) {
+    if (kind === "earthWall") return "土壁";
+    if (kind === "trailReinforce") return "採餌道";
+    return this.constructionLabel(kind);
+  }
+
+  constructionIconAsset(kind) {
+    if (kind === "trailReinforce") return UI_ICON_ASSETS.forageTrail;
+    if (kind === "sentryMound") return UI_ICON_ASSETS.scoutFlag;
+    if (kind === "earthWall") return UI_ICON_ASSETS.constructionShovel;
+    return UI_ICON_ASSETS.soilMound;
+  }
+
+  constructionTaskDisplayLabel(task) {
+    const label = this.constructionLabel(task.kind);
+    const dx = Number(task.x) - Number(this.nest?.x ?? 0);
+    const dz = Number(task.z) - Number(this.nest?.z ?? 0);
+    if (!Number.isFinite(dx) || !Number.isFinite(dz) || Math.hypot(dx, dz) < 8) return label;
+    const direction = Math.abs(dx) >= Math.abs(dz)
+      ? dx >= 0 ? "東" : "西"
+      : dz >= 0 ? "南" : "北";
+    return `${label} ${direction}エリア`;
+  }
+
   constructionButtonTitle(kind, commandState) {
     if (!isConstructionKind(kind)) return commandState?.reason ?? "";
     const detail = getConstructionDef(kind);
@@ -9291,6 +9520,7 @@ class AntColony3D {
     const detail = getConstructionDef(kind);
     const isPending = this.pendingConstructionKind === kind;
     button.disabled = !commandState.ok && !isPending;
+    button.classList.toggle("active", isPending);
     const draftTargets = isPending && kind === "earthWall" ? this.wallPlacementTargetsFromDraft(false) : [];
     const draftMetrics = isPending && kind === "earthWall" ? this.wallPlacementMetrics(draftTargets, this.wallPlacementPoints(false)) : null;
     const draftCost = draftMetrics && draftMetrics.targetCount > 0 ? draftMetrics.cost : detail.buildCost;
@@ -9301,7 +9531,8 @@ class AntColony3D {
         : this.constructionButtonTitle(kind, commandState);
     const main = button.querySelector(".button-main");
     const sub = button.querySelector(".button-sub");
-    if (main) main.textContent = detail.command;
+    const cost = button.querySelector(".construction-cost");
+    if (main) main.textContent = this.constructionShortLabel(kind);
     if (sub) {
       const costLabel = kind === "earthWall" ? `基準工数${fmt(detail.buildCost, 1)} / 長さで変動` : `工数${fmt(detail.buildCost, 1)}`;
       sub.textContent = isPending && kind === "earthWall"
@@ -9309,6 +9540,11 @@ class AntColony3D {
         : isPending
           ? `場所指定中 / 工数${fmt(detail.buildCost, 1)} / クリックで発注`
           : `${costLabel} / ${detail.timeHint} / ${detail.buttonSummary}`;
+    }
+    if (cost) {
+      cost.innerHTML = kind === "earthWall"
+        ? `基準工数 ${fmt(draftCost, 1)}<br>長さで変動`
+        : `工数 ${fmt(detail.buildCost, 1)}`;
     }
   }
 
@@ -9338,12 +9574,115 @@ class AntColony3D {
     button.title = `${action}: ${reason}`;
   }
 
+  renderMilitaryPanel(d, plannedSortie, deployedSoldiers, sortiePool, cooldownLeft) {
+    const composition = this.plannedSortieComposition();
+    const waveCap = this.sortieSoldierLimit(d);
+    const capacities = this.sortiePlanCapacities(d);
+    const planLimit = this.availableSortieSoldiers();
+    if (ui.soldierTotal) ui.soldierTotal.textContent = fmt(sortiePool, 0);
+    if (ui.soldierWaveCap) ui.soldierWaveCap.textContent = fmt(waveCap, 0);
+    if (ui.soldierCooldown) ui.soldierCooldown.textContent = cooldownLeft > 0 ? `${fmt(cooldownLeft, 0)}s` : "--";
+    if (ui.sortiePlanTotal) ui.sortiePlanTotal.textContent = `${fmt(composition.total, 0)} / ${fmt(waveCap, 0)}`;
+
+    if (ui.sortiePlanList) {
+      ui.sortiePlanList.replaceChildren();
+      const totalPlanned = Math.max(1, composition.total);
+      for (const item of SORTIE_PLAN_VARIANTS) {
+        const owned = Math.max(0, Math.floor(d[item.derivedKey] ?? 0));
+        const available = capacities[item.compositionKey] ?? 0;
+        const planned = Math.max(0, Math.floor(composition[item.compositionKey] ?? 0));
+        const share = composition.total > 0 ? Math.round((planned / totalPlanned) * 100) : 0;
+        const row = document.createElement("div");
+        row.className = "sortie-plan-row";
+        row.dataset.variant = item.variant;
+
+        const kind = document.createElement("strong");
+        kind.className = "sortie-plan-kind";
+        kind.innerHTML = `${this.iconImage(item.icon)}<span>${item.label}</span>`;
+
+        const role = document.createElement("span");
+        role.className = "sortie-plan-role";
+        role.textContent = item.role;
+
+        const count = document.createElement("strong");
+        count.className = "sortie-plan-owned";
+        count.textContent = fmt(owned, 0);
+
+        const control = document.createElement("div");
+        control.className = "sortie-count-control";
+        control.title = `巣内 ${fmt(available, 0)} / 一波上限 ${fmt(planLimit, 0)}`;
+        const minus = document.createElement("button");
+        minus.type = "button";
+        minus.disabled = planned <= 0;
+        minus.textContent = "-";
+        minus.setAttribute("aria-label", `${item.label}を減らす`);
+        minus.addEventListener("click", () => this.changeSortiePlan(item.compositionKey, -1));
+        const plannedText = document.createElement("strong");
+        plannedText.textContent = fmt(planned, 0);
+        const plus = document.createElement("button");
+        plus.type = "button";
+        plus.disabled = planned >= available || composition.total >= planLimit;
+        plus.textContent = "+";
+        plus.setAttribute("aria-label", `${item.label}を増やす`);
+        plus.addEventListener("click", () => this.changeSortiePlan(item.compositionKey, 1));
+        control.append(minus, plannedText, plus);
+
+        const track = document.createElement("div");
+        track.className = "sortie-share-track";
+        const fill = document.createElement("span");
+        fill.style.width = `${share}%`;
+        track.append(fill);
+
+        row.append(kind, role, count, control, track);
+        ui.sortiePlanList.append(row);
+      }
+    }
+
+    const known = this.isRivalNestKnown();
+    const defeated = Boolean(this.rivalNest.defeated);
+    const integrity = clamp(this.rivalNest.integrity ?? 1, 0, 1);
+    const distance = this.rivalNestDistanceFromColony();
+    const riskScore = clamp(this.colony.enemyThreat * 0.08 + (known ? 0.38 : 0.22) + (1 - integrity) * 0.2 + distance / Math.max(this.worldRadius * 3.2, 1), 0, 1);
+    const riskLabel = defeated ? "制圧済み" : !known ? "不明" : riskScore > 0.62 ? "高" : riskScore > 0.36 ? "中" : "低";
+    if (ui.soldierTargetTitle) {
+      ui.soldierTargetTitle.textContent = defeated ? "敵巣陥落済み" : known ? "発見済み敵巣" : "敵巣未発見";
+    }
+    if (ui.soldierTargetDistance) ui.soldierTargetDistance.textContent = known || defeated ? `${fmt(distance, 0)} m` : "--";
+    if (ui.soldierTargetRisk) {
+      ui.soldierTargetRisk.textContent = riskLabel;
+      ui.soldierTargetRisk.closest(".target-card-row")?.classList.toggle("target-card-risk-high", riskLabel === "高");
+    }
+    if (ui.soldierTargetIntegrityText) ui.soldierTargetIntegrityText.textContent = known || defeated ? `${fmt(integrity * 3600, 0)} / 3,600` : "--";
+    if (ui.soldierTargetIntegrityFill) ui.soldierTargetIntegrityFill.style.width = `${Math.round(integrity * 100)}%`;
+    if (ui.soldierTargetHint) {
+      ui.soldierTargetHint.textContent = defeated
+        ? "襲撃拠点は制圧済みです。防衛出動を優先できます。"
+        : known
+          ? "耐久を0にすると陥落。残存兵力が多いほど守備が強化される。"
+          : "斥候または探索で敵巣を発見すると遠征出動できます。";
+    }
+  }
+
   updateWallPlacementConfirmButton() {
     const button = ui.constructionWallConfirmBtn;
     if (!button) return;
     const isPending = this.pendingConstructionKind === "earthWall";
     const targets = isPending ? this.wallPlacementTargetsFromDraft(false) : [];
     const metrics = this.wallPlacementMetrics(targets, this.wallPlacementPoints(false));
+    const placementPanel = ui.constructionPlacementPanel;
+    const pendingDef = this.pendingConstructionKind ? getConstructionDef(this.pendingConstructionKind) : null;
+    if (placementPanel) placementPanel.hidden = !this.pendingConstructionKind;
+    if (ui.constructionPlacementKind) ui.constructionPlacementKind.textContent = pendingDef ? this.constructionShortLabel(this.pendingConstructionKind) : "土木";
+    if (ui.constructionPlacementMode) {
+      ui.constructionPlacementMode.textContent = this.pendingConstructionKind === "earthWall"
+        ? metrics.targetCount > 0 ? `${fmt(metrics.vertexCount, 0)}点 / 工数 ${fmt(metrics.cost, 1)}` : "場所指定中"
+        : this.pendingConstructionKind ? "場所指定中" : "待機";
+    }
+    if (ui.constructionPlacementNote) {
+      ui.constructionPlacementNote.textContent = this.pendingConstructionKind === "earthWall"
+        ? "採土・往復・担当数で変動"
+        : pendingDef ? `${pendingDef.effect} / 採土・往復・担当数で変動` : "採土・往復・担当数で変動";
+    }
     button.hidden = !isPending;
     button.disabled = metrics.targetCount <= 0;
     button.title = metrics.targetCount > 0
@@ -9395,6 +9734,10 @@ class AntColony3D {
       ui.constructionProgressList.append(empty);
       return;
     }
+    const heading = document.createElement("div");
+    heading.className = "construction-progress-heading";
+    heading.textContent = "作業中";
+    ui.constructionProgressList.append(heading);
     for (const task of activeTasks) {
       const progress = clamp(task.progress / Math.max(task.maxProgress, 0.001), 0, 1);
       const percent = Math.round(progress * 100);
@@ -9405,10 +9748,22 @@ class AntColony3D {
       const row = document.createElement("div");
       row.className = "construction-task";
 
+      const iconWrap = document.createElement("span");
+      iconWrap.className = "construction-task-icon";
+      const icon = document.createElement("img");
+      icon.src = this.constructionIconAsset(task.kind);
+      icon.alt = "";
+      icon.loading = "lazy";
+      icon.setAttribute("aria-hidden", "true");
+      iconWrap.append(icon);
+
+      const body = document.createElement("div");
+      body.className = "construction-task-body";
+
       const header = document.createElement("div");
       header.className = "construction-task-header";
       const label = document.createElement("strong");
-      label.textContent = this.constructionLabel(task.kind);
+      label.textContent = this.constructionTaskDisplayLabel(task);
       const value = document.createElement("span");
       value.textContent = `${percent}%`;
       header.append(label, value);
@@ -9422,10 +9777,14 @@ class AntColony3D {
 
       const meta = document.createElement("div");
       meta.className = "construction-task-meta";
-      meta.textContent = `${this.constructionTaskStatus(task)} / 工数 ${fmt(task.maxProgress, 1)} / 目安 ${detail.timeHint} / 担当 ${fmt(assigneeCount, 0)}/${fmt(assigneeTarget, 0)}`;
+      meta.textContent = `${this.constructionTaskStatus(task)} / 工数 ${fmt(task.maxProgress, 1)} / 目安 ${detail.timeHint} / ${detail.timeNote}`;
+      body.append(header, track, meta);
 
       const controls = document.createElement("div");
       controls.className = "construction-crew-controls";
+      const controlsLabel = document.createElement("span");
+      controlsLabel.className = "construction-crew-label";
+      controlsLabel.textContent = `担当 ${fmt(assigneeCount, 0)}/${fmt(assigneeTarget, 0)}`;
       const decrease = document.createElement("button");
       decrease.type = "button";
       decrease.dataset.buildTask = String(task.id);
@@ -9434,7 +9793,7 @@ class AntColony3D {
       decrease.title = "担当を1匹減らす";
       decrease.textContent = "-";
       const target = document.createElement("span");
-      target.textContent = `目標 ${fmt(assigneeTarget, 0)}/${fmt(assigneeLimit, 0)}`;
+      target.textContent = `${fmt(assigneeTarget, 0)}/${fmt(assigneeLimit, 0)}`;
       const increase = document.createElement("button");
       increase.type = "button";
       increase.dataset.buildTask = String(task.id);
@@ -9442,9 +9801,10 @@ class AntColony3D {
       increase.disabled = assigneeTarget >= assigneeLimit;
       increase.title = "担当を1匹増やす";
       increase.textContent = "+";
-      controls.append(decrease, target, increase);
+      controls.append(controlsLabel, decrease, target, increase);
+      target.textContent = `目標 ${fmt(assigneeTarget, 0)}/${fmt(assigneeLimit, 0)}`;
 
-      row.append(header, track, meta, controls);
+      row.append(iconWrap, body, controls);
       ui.constructionProgressList.append(row);
     }
   }
@@ -9463,81 +9823,141 @@ class AntColony3D {
   renderBarracksPanel() {
     if (!ui.barracksTrainingList || !ui.barracksQueueList) return;
     const d = this.computeDerived();
+    ui.barracksQueueList.replaceChildren();
+    const queue = this.barracksQueue();
+    if (queue.length <= 0) {
+      const empty = document.createElement("div");
+      empty.className = "barracks-empty-queue";
+      empty.innerHTML = `
+        <strong>育成キューなし</strong>
+        <span>次に育てる候補から1匹ずつキューへ追加します。</span>
+      `;
+      ui.barracksQueueList.append(empty);
+    } else {
+      const active = queue[0];
+      const activeDef = getBarracksTrainingDef(active.variant);
+      const activeUi = this.barracksVariantUi(active.variant);
+      const progress = clamp(1 - active.remainingSeconds / Math.max(active.totalSeconds, 0.001), 0, 1);
+      const secondsLeft = active.remainingSeconds / this.barracksTrainingSpeedMultiplier(active.variant);
+
+      const shell = document.createElement("div");
+      shell.className = "barracks-queue-shell";
+
+      const activeCard = document.createElement("div");
+      activeCard.className = "barracks-active-card";
+      activeCard.innerHTML = `
+        <span class="barracks-active-state">育成中</span>
+        <span class="barracks-active-icon">${this.iconImage(activeUi.asset, "barracks-ant-icon", activeDef.label)}</span>
+        <div class="barracks-active-body">
+          <strong>${activeDef.label}</strong>
+          <div class="barracks-progress-track" aria-hidden="true">
+            <span class="barracks-progress-fill" style="width: ${Math.round(progress * 100)}%"></span>
+          </div>
+          <div class="barracks-active-meta">
+            <span>${fmt(Math.max(0, active.totalSeconds - active.remainingSeconds), 0)}s / ${fmt(active.totalSeconds, 0)}s</span>
+            <strong>残り ${fmt(Math.ceil(secondsLeft), 0)}s</strong>
+          </div>
+        </div>
+      `;
+
+      const rail = document.createElement("div");
+      rail.className = "barracks-queue-rail";
+      const railLabel = document.createElement("span");
+      railLabel.className = "barracks-queue-rail-label";
+      railLabel.textContent = "待ちキュー";
+      rail.append(railLabel);
+      for (let index = 0; index < 6; index += 1) {
+        const order = queue[index + 1];
+        const slot = document.createElement("div");
+        slot.className = order ? "barracks-queue-slot is-filled" : "barracks-queue-slot";
+        if (order) {
+          const def = getBarracksTrainingDef(order.variant);
+          const variantUi = this.barracksVariantUi(order.variant);
+          slot.innerHTML = `
+            <span class="barracks-slot-index">${index + 1}</span>
+            <span class="barracks-slot-icon">${this.iconImage(variantUi.asset, "barracks-slot-image", def.label)}</span>
+            <strong>${def.label}</strong>
+          `;
+        } else {
+          slot.innerHTML = `<span class="barracks-slot-index">${index + 1}</span><strong>空き</strong>`;
+        }
+        rail.append(slot);
+      }
+
+      shell.append(activeCard, rail);
+      ui.barracksQueueList.append(shell);
+    }
+
     ui.barracksTrainingList.replaceChildren();
-    for (const variant of BARRACKS_TRAINING_VARIANTS) {
+    const createTrainingCard = (variant, index, compact = false) => {
       const def = getBarracksTrainingDef(variant);
+      const variantUi = this.barracksVariantUi(variant);
       const state = this.canStartBarracksTraining(variant);
       const current = this.barracksCurrentCount(variant, d);
       const pending = this.barracksPendingCount(variant);
       const card = document.createElement("article");
       card.className = "barracks-card";
+      if (compact) card.classList.add("is-secondary");
 
-      const header = document.createElement("div");
-      header.className = "barracks-card-header";
-      const title = document.createElement("strong");
-      title.textContent = def.label;
-      const count = document.createElement("span");
-      count.textContent = pending > 0 ? `${fmt(current, 0)} + ${fmt(pending, 0)}` : fmt(current, 0);
-      header.append(title, count);
+      const rank = document.createElement("span");
+      rank.className = "barracks-recommend-rank";
+      rank.textContent = String(index + 1);
 
-      const summary = document.createElement("p");
-      summary.textContent = def.summary;
+      const icon = document.createElement("span");
+      icon.className = "barracks-card-icon";
+      icon.innerHTML = this.iconImage(variantUi.asset, "barracks-ant-icon", def.label);
 
-      const meta = document.createElement("div");
-      meta.className = "barracks-meta";
-      meta.textContent = `費用 食料${fmt(def.foodCost, 0)} / 基準 ${fmt(def.trainingSeconds, 0)}s / 待ち ${fmt(pending, 0)}`;
+      const body = document.createElement("div");
+      body.className = "barracks-card-body";
+      body.innerHTML = `
+        <div class="barracks-card-heading">
+          <strong>${def.label}</strong>
+          <span>${variantUi.tag}</span>
+        </div>
+        <span>所持 ${fmt(current, 0)}${pending > 0 ? ` + ${fmt(pending, 0)}` : ""}</span>
+        <div class="barracks-card-meta">
+          <span>食料 ${fmt(def.foodCost, 0)}</span>
+          <span>時間 ${fmt(def.trainingSeconds, 0)}s</span>
+        </div>
+      `;
 
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.trainVariant = def.variant;
       button.disabled = !state.ok;
       button.title = state.ok ? `${def.label}を育成キューへ追加` : state.reason;
-      button.textContent = state.ok ? "育成キューへ" : state.reason;
+      button.setAttribute("aria-label", state.ok ? `${def.label}を育成キューへ追加` : `${def.label}: ${state.reason}`);
+      button.textContent = state.ok ? "+" : "×";
 
-      card.append(header, summary, meta, button);
-      ui.barracksTrainingList.append(card);
-    }
+      const stateText = document.createElement("span");
+      stateText.className = "barracks-card-state";
+      stateText.textContent = state.ok ? "育成可能" : state.reason;
 
-    ui.barracksQueueList.replaceChildren();
-    const queue = this.barracksQueue();
-    if (queue.length <= 0) {
-      const empty = document.createElement("div");
-      empty.className = "barracks-queue-item";
-      empty.textContent = "育成キューなし";
-      ui.barracksQueueList.append(empty);
-      return;
-    }
-    queue.forEach((order, index) => {
-      const def = getBarracksTrainingDef(order.variant);
-      const progress = clamp(1 - order.remainingSeconds / Math.max(order.totalSeconds, 0.001), 0, 1);
-      const secondsLeft = order.remainingSeconds / this.barracksTrainingSpeedMultiplier(order.variant);
-      const row = document.createElement("div");
-      row.className = "barracks-queue-item";
+      card.append(rank, icon, body, button, stateText);
+      return card;
+    };
 
-      const header = document.createElement("div");
-      header.className = "barracks-queue-header";
-      const label = document.createElement("strong");
-      label.textContent = def.label;
-      const orderText = document.createElement("span");
-      orderText.textContent = index === 0 ? `${Math.round(progress * 100)}%` : `待機 ${index + 1}`;
-      header.append(label, orderText);
-
-      const track = document.createElement("div");
-      track.className = "barracks-progress-track";
-      const fill = document.createElement("span");
-      fill.className = "barracks-progress-fill";
-      fill.style.width = `${Math.round(progress * 100)}%`;
-      track.append(fill);
-
-      const meta = document.createElement("div");
-      meta.className = "barracks-meta";
-      meta.textContent = index === 0
-        ? `残り ${fmt(Math.ceil(secondsLeft), 0)}s / 支払い済み 食料${fmt(order.foodCost, 0)}`
-        : `順番待ち / 支払い済み 食料${fmt(order.foodCost, 0)}`;
-
-      row.append(header, track, meta);
-      ui.barracksQueueList.append(row);
+    BARRACKS_RECOMMENDED_VARIANTS.forEach((variant, index) => {
+      ui.barracksTrainingList.append(createTrainingCard(variant, index));
     });
+
+    const secondaryVariants = BARRACKS_TRAINING_VARIANTS.filter((variant) => !BARRACKS_RECOMMENDED_VARIANTS.includes(variant));
+    if (secondaryVariants.length > 0) {
+      const allTraining = document.createElement("details");
+      allTraining.className = "barracks-all-training";
+
+      const summary = document.createElement("summary");
+      summary.textContent = "すべての育成種を表示";
+
+      const grid = document.createElement("div");
+      grid.className = "barracks-all-grid";
+      secondaryVariants.forEach((variant, index) => {
+        grid.append(createTrainingCard(variant, BARRACKS_RECOMMENDED_VARIANTS.length + index, true));
+      });
+
+      allTraining.append(summary, grid);
+      ui.barracksTrainingList.append(allTraining);
+    }
   }
 
   updateStats() {
@@ -9548,6 +9968,9 @@ class AntColony3D {
     const sortiePool = this.sortieSoldierPool(d);
     const activeConstruction = this.buildTasks.filter((task) => task.progress < task.maxProgress).length;
     const completeConstruction = this.earthworks.filter((earthwork) => earthwork.strength > 0.95).length;
+    const reservedBuilderTargets = this.buildTasks
+      .filter((task) => task.progress < task.maxProgress)
+      .reduce((sum, task) => sum + this.normalizeBuildTaskAssigneeTarget(task), 0);
     const trailCommand = this.canStartConstruction("trailReinforce");
     const barricadeCommand = this.canStartConstruction("lowBarricade");
     const wallCommand = this.canStartConstruction("earthWall");
@@ -9588,6 +10011,7 @@ class AntColony3D {
       : this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 場所指定中` : "";
     ui.activeToolLabel.textContent = pendingConstructionLabel || (this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);
     if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);
+    if (ui.constructionIdle) ui.constructionIdle.textContent = fmt(Math.max(0, (d.builders ?? 0) - reservedBuilderTargets), 0);
     if (ui.constructionActive) ui.constructionActive.textContent = fmt(activeConstruction, 0);
     if (ui.constructionComplete) ui.constructionComplete.textContent = fmt(completeConstruction, 0);
     this.updateConstructionCommandButton(ui.constructionTrailBtn, "trailReinforce", trailCommand);
@@ -9603,6 +10027,7 @@ class AntColony3D {
         ? Math.round((activeProgress.reduce((sum, value) => sum + value, 0) / activeProgress.length) * 100)
         : 0;
       ui.constructionStatus.textContent =
+        this.pendingConstructionKind ? `${this.constructionShortLabel(this.pendingConstructionKind)} 場所指定中 / 採土・往復・担当数で変動` :
         activeConstruction > 0 ? `作業中 ${fmt(activeConstruction, 0)} / 平均 ${averageProgress}% / 完成 ${fmt(completeConstruction, 0)}` :
         this.constructionMessage || "待機";
     }
@@ -9616,13 +10041,14 @@ class AntColony3D {
     if (ui.barracksActive) ui.barracksActive.textContent = activeBarracksOrder ? getBarracksTrainingDef(activeBarracksOrder.variant).label : "なし";
     if (ui.barracksStatus) ui.barracksStatus.textContent = this.barracksStatusText();
     if (this.activeTab === "barracks") this.renderBarracksPanel();
-    ui.soldierNest.textContent = fmt(Math.max(0, sortiePool - deployedSoldiers), 0);
+    if (ui.soldierNest) ui.soldierNest.textContent = fmt(Math.max(0, sortiePool - deployedSoldiers), 0);
     ui.soldierDeployed.textContent = fmt(deployedSoldiers, 0);
     ui.soldierStatus.textContent =
       deployedSoldiers > 0 ? "出撃中" :
       cooldownLeft > 0 ? `再準備 ${cooldownLeft}s` :
       plannedSortie > 0 ? `出撃可 ${plannedSortie}` :
       availableSoldiers > 0 ? "上限待ち" : "兵隊不足";
+    this.renderMilitaryPanel(d, plannedSortie, deployedSoldiers, sortiePool, cooldownLeft);
     this.updateSortieCommandButton(ui.soldierSortieBtn, "defense", plannedSortie, cooldownLeft);
     this.updateSortieCommandButton(ui.expeditionSortieBtn, "expedition", plannedSortie, cooldownLeft);
     if (ui.raidNotice) {

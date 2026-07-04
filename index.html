@@ -174,10 +174,14 @@
         </div>
 
         <div id="constructionTab" class="tab-panel">
-          <div class="construction-grid">
+          <div class="construction-grid construction-summary-strip">
             <div>
               <span>土木アリ</span>
               <strong id="constructionBuilders">0</strong>
+            </div>
+            <div>
+              <span>空き</span>
+              <strong id="constructionIdle">0</strong>
             </div>
             <div>
               <span>作業中</span>
@@ -188,77 +192,192 @@
               <strong id="constructionComplete">0</strong>
             </div>
           </div>
-          <div class="construction-actions">
+          <div class="construction-actions construction-command-list">
             <button id="constructionTrailBtn" class="primary-button construction-command" type="button">
-              <span class="button-main">採餌道を整える</span>
-              <span class="button-sub">工数2.8 / 短め / 移動・運搬↑</span>
+              <span class="construction-command-thumb">
+                <img src="./assets/generated/ant-ui-forage-trail-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+              </span>
+              <span class="construction-command-copy">
+                <span class="button-main">採餌道</span>
+                <span class="button-sub">工数2.8 / 短め / 移動・運搬↑</span>
+              </span>
+              <span class="construction-cost">工数 2.8</span>
+              <span class="construction-arrow" aria-hidden="true">›</span>
             </button>
             <button id="constructionBarricadeBtn" class="primary-button construction-command" type="button">
-              <span class="button-main">低い土塁を築く</span>
-              <span class="button-sub">工数3.6 / 中くらい / 敵減速・踏ん張り↑</span>
+              <span class="construction-command-thumb">
+                <img src="./assets/generated/ant-ui-soil-mound-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+              </span>
+              <span class="construction-command-copy">
+                <span class="button-main">低い土塁</span>
+                <span class="button-sub">工数3.6 / 中くらい / 敵減速・踏ん張り↑</span>
+              </span>
+              <span class="construction-cost">工数 3.6</span>
+              <span class="construction-arrow" aria-hidden="true">›</span>
             </button>
             <button id="constructionWallBtn" class="primary-button construction-command" type="button">
-              <span class="button-main">大きな土壁を築く</span>
-              <span class="button-sub">基準工数7.2 / 長さで変動 / 侵入遅延・壁上攻撃↑↑</span>
+              <span class="construction-command-thumb">
+                <img src="./assets/generated/ant-ui-construction-shovel-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+              </span>
+              <span class="construction-command-copy">
+                <span class="button-main">土壁</span>
+                <span class="button-sub">基準工数7.2 / 長さで変動 / 侵入遅延・壁上攻撃↑↑</span>
+              </span>
+              <span class="construction-cost">基準工数 7.2<br />長さで変動</span>
+              <span class="construction-arrow" aria-hidden="true">›</span>
             </button>
             <button id="constructionSentryBtn" class="primary-button construction-command" type="button">
-              <span class="button-main">見張り塚を築く</span>
-              <span class="button-sub">工数4.4 / 中くらい / 敵襲方角・準備時間↑</span>
+              <span class="construction-command-thumb">
+                <img src="./assets/generated/ant-ui-scout-flag-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+              </span>
+              <span class="construction-command-copy">
+                <span class="button-main">見張り塚</span>
+                <span class="button-sub">工数4.4 / 中くらい / 敵襲方角・準備時間↑</span>
+              </span>
+              <span class="construction-cost">工数 4.4</span>
+              <span class="construction-arrow" aria-hidden="true">›</span>
             </button>
           </div>
-          <button id="constructionWallConfirmBtn" class="primary-button wall-placement-confirm" type="button" hidden>
-            <span class="button-main">土壁の一筆線を決定</span>
-            <span class="button-sub">頂点を置いてから確定</span>
-          </button>
-          <div id="constructionStatus" class="construction-status">待機</div>
-          <div id="constructionCrew" class="construction-crew">待機 0</div>
-          <div id="constructionProgressList" class="construction-progress-list"></div>
-        </div>
-
-        <div id="barracksTab" class="tab-panel">
-          <div class="barracks-grid">
-            <div>
-              <span>キュー</span>
-              <strong id="barracksQueueCount">0</strong>
+          <div id="constructionPlacementPanel" class="construction-placement-panel" hidden>
+            <div class="construction-placement-main">
+              <div>
+                <strong id="constructionPlacementKind">土木</strong>
+                <span id="constructionPlacementMode">場所指定中</span>
+              </div>
+              <div class="construction-placement-line" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+              <span id="constructionPlacementNote">採土・往復・担当数で変動</span>
             </div>
-            <div>
-              <span>育成中</span>
-              <strong id="barracksActive">なし</strong>
-            </div>
-            <div>
-              <span>状態</span>
-              <strong id="barracksStatus">キューなし</strong>
+            <div class="construction-placement-actions">
+              <button id="constructionCancelBtn" class="secondary-button" type="button">指定をやめる</button>
+              <button id="constructionWallConfirmBtn" class="primary-button wall-placement-confirm" type="button" hidden>
+                <span class="button-main">土壁の一筆線を決定</span>
+                <span class="button-sub">頂点を置いてから確定</span>
+              </button>
             </div>
           </div>
-          <div id="barracksTrainingList" class="barracks-training-list"></div>
-          <div id="barracksQueueList" class="barracks-queue-list"></div>
+          <div id="constructionProgressList" class="construction-progress-list"></div>
+          <div id="constructionStatus" class="construction-status">待機</div>
+          <div id="constructionCrew" class="construction-crew">待機 0</div>
+        </div>
+
+        <div id="barracksTab" class="tab-panel barracks-panel">
+          <section class="barracks-queue-hero" aria-label="育成キュー">
+            <div class="barracks-section-head">
+              <div>
+                <strong>育成キュー</strong>
+                <span id="barracksStatus">キューなし</span>
+              </div>
+              <div class="barracks-count">
+                <span>キュー</span>
+                <strong id="barracksQueueCount">0</strong>
+                <span>/30</span>
+              </div>
+            </div>
+            <div id="barracksQueueList" class="barracks-queue-list"></div>
+          </section>
+          <section class="barracks-recommend-section" aria-label="次に育てる候補">
+            <div class="barracks-section-head">
+              <div>
+                <strong>次に育てる</strong>
+                <span>おすすめ</span>
+              </div>
+              <span class="barracks-active-label">育成中 <strong id="barracksActive">なし</strong></span>
+            </div>
+            <div id="barracksTrainingList" class="barracks-training-list"></div>
+          </section>
+          <div class="barracks-rule-note">
+            <span>すべてのアリは巣内で卵から育てられます。</span>
+            <span>出撃は軍事タブから行います。</span>
+            <span>キュー上限 30</span>
+          </div>
         </div>
 
         <div id="soldierTab" class="tab-panel">
-          <div class="soldier-grid">
-            <div>
-              <span>巣内兵隊</span>
-              <strong id="soldierNest">0</strong>
+          <section class="military-board" aria-label="出撃計画">
+            <header class="military-board-head">
+              <div>
+                <strong>出撃計画</strong>
+                <span id="soldierStatus">待機</span>
+              </div>
+              <div class="military-plan-metrics">
+                <div>
+                  <span>総兵力</span>
+                  <strong id="soldierTotal">0</strong>
+                </div>
+                <div>
+                  <span>一波上限</span>
+                  <strong id="soldierWaveCap">0</strong>
+                </div>
+                <div>
+                  <span>出撃中</span>
+                  <strong id="soldierDeployed">0</strong>
+                </div>
+                <div>
+                  <span>クールダウン</span>
+                  <strong id="soldierCooldown">--</strong>
+                </div>
+              </div>
+            </header>
+
+            <div class="military-layout">
+              <div class="sortie-plan-panel">
+                <div class="sortie-plan-header" aria-hidden="true">
+                  <span>兵科</span>
+                  <span>役割</span>
+                  <span>所持数</span>
+                  <span>計画数</span>
+                  <span>配分</span>
+                </div>
+                <div id="sortiePlanList" class="sortie-plan-list"></div>
+                <div class="sortie-plan-total">
+                  <span>計画合計</span>
+                  <strong id="sortiePlanTotal">0 / 0</strong>
+                </div>
+              </div>
+
+              <aside class="enemy-target-card" aria-label="遠征目標">
+                <div class="target-card-title">
+                  <img src="./assets/generated/ant-ui-raid-warning-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+                  <strong id="soldierTargetTitle">敵巣未発見</strong>
+                </div>
+                <img class="target-card-image" src="./assets/generated/ant-ui-soil-mound-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+                <div class="target-card-row">
+                  <span>距離</span>
+                  <strong id="soldierTargetDistance">--</strong>
+                </div>
+                <div class="target-card-row">
+                  <span>推定リスク</span>
+                  <strong id="soldierTargetRisk">--</strong>
+                </div>
+                <div class="target-card-row target-integrity-row">
+                  <span>敵巣耐久</span>
+                  <strong id="soldierTargetIntegrityText">--</strong>
+                </div>
+                <div class="target-integrity-track" aria-hidden="true">
+                  <span id="soldierTargetIntegrityFill"></span>
+                </div>
+                <p id="soldierTargetHint">斥候または探索で敵巣を発見すると遠征出動できます。</p>
+              </aside>
             </div>
-            <div>
-              <span>出撃中</span>
-              <strong id="soldierDeployed">0</strong>
+
+            <div class="sortie-actions">
+              <button id="soldierSortieBtn" class="primary-button sortie-command" type="button">
+                <img src="./assets/generated/ant-ui-defense-shield-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+                <span class="button-main">防衛出動</span>
+                <span class="button-sub">敵襲・見えている敵へ</span>
+              </button>
+              <button id="expeditionSortieBtn" class="primary-button sortie-command" type="button">
+                <img src="./assets/generated/ant-ui-military-mandibles-20260703.png" alt="" aria-hidden="true" loading="lazy" />
+                <span class="button-main">遠征出動</span>
+                <span class="button-sub">発見済み敵巣へ</span>
+              </button>
             </div>
-            <div>
-              <span>状態</span>
-              <strong id="soldierStatus">待機</strong>
-            </div>
-          </div>
-          <div class="sortie-actions">
-            <button id="soldierSortieBtn" class="primary-button sortie-command" type="button">
-              <span class="button-main">防衛出動</span>
-              <span class="button-sub">敵襲・見えている敵へ</span>
-            </button>
-            <button id="expeditionSortieBtn" class="primary-button sortie-command" type="button">
-              <span class="button-main">遠征出動</span>
-              <span class="button-sub">発見済み敵巣へ</span>
-            </button>
-          </div>
+            <p class="sortie-rule-note">半数までを一波として出撃、控えは巣内に残る</p>
+          </section>
           <div id="battleLog" class="battle-log"></div>
         </div>
       </section>

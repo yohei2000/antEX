@@ -642,9 +642,21 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
   });
   if ((viewport?.width ?? 0) >= 600) {
     const canvas = page.locator("#world3d canvas");
-    const box = await canvas.boundingBox();
-    if (!box) throw new Error("world canvas was not visible for wheel zoom test");
-    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+    const wheelPoint = await canvas.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      const candidates = [
+        [rect.left + rect.width * 0.35, rect.top + rect.height * 0.35],
+        [rect.left + rect.width * 0.25, rect.top + rect.height * 0.5],
+        [rect.left + rect.width * 0.5, rect.top + rect.height * 0.2],
+        [rect.left + rect.width * 0.08, rect.top + rect.height * 0.5],
+      ];
+      for (const [x, y] of candidates) {
+        if (document.elementFromPoint(x, y) === node) return { x, y };
+      }
+      return null;
+    });
+    if (!wheelPoint) throw new Error("world canvas had no unobstructed wheel test point");
+    await page.mouse.move(wheelPoint.x, wheelPoint.y);
     await page.mouse.wheel(0, -360);
     wheel.zoomIn = await page.evaluate(() => (window.__ANT_SIM as any).targetCameraDistance);
     await page.mouse.wheel(0, 720);
