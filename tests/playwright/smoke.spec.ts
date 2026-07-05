@@ -666,6 +666,25 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
   const pinch = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
+    const ant = sim.ants.find((item: any) => item.variant !== "builder") ?? sim.ants[0];
+    sim.selectedAnt = null;
+    sim.pointerMap.clear();
+    sim.pointerStart = null;
+    sim.activePointerId = null;
+    sim.pinchStart = null;
+    sim.pinchLastCenter = null;
+    sim.multiPointerGesture = false;
+    sim.dragMoved = false;
+    sim.targetCameraDistance = 240;
+    sim.cameraDistance = 240;
+    sim.updateCamera();
+    const pointUnderLastTouch = sim.screenToGround(190, 180);
+    if (pointUnderLastTouch && ant) {
+      ant.x = pointUnderLastTouch.x;
+      ant.z = pointUnderLastTouch.z;
+      ant.inNest = false;
+      ant.nestStayTimer = 0;
+    }
     const dispatchPointer = (type: string, pointerId: number, clientX: number, clientY: number) => {
       canvas.dispatchEvent(new PointerEvent(type, {
         pointerId,
@@ -677,21 +696,26 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
       }));
     };
 
-    sim.pointerMap.clear();
-    sim.pinchStart = null;
-    sim.targetCameraDistance = 240;
-    sim.cameraDistance = 240;
     const pinchBefore = sim.targetCameraDistance;
-    dispatchPointer("pointerdown", 4101, 120, 180);
+    dispatchPointer("pointerdown", 4101, 160, 180);
     dispatchPointer("pointerdown", 4102, 200, 180);
-    dispatchPointer("pointermove", 4102, 280, 180);
+    dispatchPointer("pointermove", 4101, 140, 180);
+    dispatchPointer("pointermove", 4102, 220, 180);
     const pinchSpread = sim.targetCameraDistance;
-    dispatchPointer("pointermove", 4102, 132, 180);
+    dispatchPointer("pointermove", 4101, 170, 180);
+    dispatchPointer("pointermove", 4102, 190, 180);
     const pinchClose = sim.targetCameraDistance;
-    dispatchPointer("pointerup", 4101, 120, 180);
-    dispatchPointer("pointerup", 4102, 132, 180);
+    dispatchPointer("pointerup", 4101, 170, 180);
+    dispatchPointer("pointerup", 4102, 190, 180);
 
-    return { before: pinchBefore, spread: pinchSpread, close: pinchClose };
+    return {
+      before: pinchBefore,
+      spread: pinchSpread,
+      close: pinchClose,
+      selectedAfterPinch: Boolean(sim.selectedAnt),
+      pointerMapSize: sim.pointerMap.size,
+      multiPointerGesture: sim.multiPointerGesture,
+    };
   });
 
   if ((viewport?.width ?? 0) >= 600) {
@@ -702,6 +726,62 @@ test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
   }
   expect(pinch.spread).toBeLessThan(pinch.before);
   expect(pinch.close).toBeGreaterThan(pinch.before);
+  expect(pinch.selectedAfterPinch).toBe(false);
+  expect(pinch.pointerMapSize).toBe(0);
+  expect(pinch.multiPointerGesture).toBe(false);
+});
+
+test("touch tap on the world canvas tolerates small finger drift", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const canvas = document.querySelector("#world3d canvas") as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    const startX = rect.left + rect.width * 0.48;
+    const startY = rect.top + rect.height * 0.36;
+    const point = sim.screenToGround(startX, startY);
+    const ant = sim.ants.find((item: any) => item.variant !== "builder") ?? sim.ants[0];
+    if (!point || !ant) return { selected: false, pointerMapSize: sim.pointerMap.size, reason: "setup" };
+
+    ant.x = point.x;
+    ant.z = point.z;
+    ant.inNest = false;
+    ant.nestStayTimer = 0;
+    sim.selectedAnt = null;
+    sim.pointerMap.clear();
+    sim.pointerStart = null;
+    sim.activePointerId = null;
+    sim.pinchStart = null;
+    sim.pinchLastCenter = null;
+    sim.multiPointerGesture = false;
+    sim.dragMoved = false;
+
+    const dispatchPointer = (type: string, clientX: number, clientY: number) => {
+      canvas.dispatchEvent(new PointerEvent(type, {
+        pointerId: 5101,
+        pointerType: "touch",
+        clientX,
+        clientY,
+        bubbles: true,
+        cancelable: true,
+      }));
+    };
+
+    dispatchPointer("pointerdown", startX, startY);
+    dispatchPointer("pointermove", startX + 8, startY + 2);
+    dispatchPointer("pointerup", startX + 8, startY + 2);
+
+    return {
+      selected: sim.selectedAnt === ant,
+      pointerMapSize: sim.pointerMap.size,
+      multiPointerGesture: sim.multiPointerGesture,
+    };
+  });
+
+  expect(result.selected).toBe(true);
+  expect(result.pointerMapSize).toBe(0);
+  expect(result.multiPointerGesture).toBe(false);
 });
 
 test("camera target pans away from the home nest and can return home", async ({ page }) => {

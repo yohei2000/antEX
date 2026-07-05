@@ -445,6 +445,11 @@ const RIVAL_NEST_REVEAL_RADIUS = 44;
 const RIVAL_NEST_ASSAULT_RADIUS = 13.5;
 const CAMERA_TARGET_PADDING = 18;
 const CAMERA_KEY_PAN_SPEED = 92;
+const POINTER_TAP_SLOP_BY_TYPE = {
+  mouse: 3,
+  pen: 7,
+  touch: 12,
+};
 const EXPLORED_PATCH_LIMIT = 80;
 const ACTIVE_SIGHT_PATCH_LIMIT = 48;
 const EXPLORED_PATCH_UPDATE_SECONDS = 0.38;
@@ -770,7 +775,7 @@ class InputManager {
       pointerdown: (event) => sim.onPointerDown(event),
       pointermove: (event) => sim.onPointerMove(event),
       pointerup: (event) => sim.onPointerUp(event),
-      pointercancel: (event) => sim.onPointerUp(event),
+      pointercancel: (event) => sim.onPointerCancel(event),
       wheel: (event) => sim.onWheel(event),
       contextmenu: (event) => event.preventDefault(),
     };
@@ -3624,6 +3629,8 @@ class AntColony3D {
     this.groundHit = new THREE.Vector3();
     this.pointerMap = new Map();
     this.pointerStart = null;
+    this.activePointerId = null;
+    this.multiPointerGesture = false;
     this.branchDraft = null;
     this.branchPreview = null;
     this.pinchStart = null;
@@ -7493,6 +7500,38 @@ class AntColony3D {
     if (window.__ANT_SIM === this) window.__ANT_SIM = null;
   }
 
+  pointerTapSlop(pointerType) {
+    return POINTER_TAP_SLOP_BY_TYPE[pointerType] ?? POINTER_TAP_SLOP_BY_TYPE.mouse;
+  }
+
+  pointerMovedPastTapSlop(event) {
+    if (!this.pointerStart) return this.dragMoved;
+    const dx = event.clientX - this.pointerStart.screenX;
+    const dy = event.clientY - this.pointerStart.screenY;
+    return Math.hypot(dx, dy) > (this.pointerStart.tapSlop ?? this.pointerTapSlop(event.pointerType));
+  }
+
+  releasePointerCapture(pointerId) {
+    try {
+      if (this.renderer.domElement.hasPointerCapture?.(pointerId)) this.renderer.domElement.releasePointerCapture(pointerId);
+    } catch {
+      // Synthetic events in tests may not own a real pointer capture.
+    }
+  }
+
+  clearPointerGestureIfIdle() {
+    if (this.pointerMap.size < 2) {
+      this.pinchStart = null;
+      this.pinchLastCenter = null;
+    }
+    if (this.pointerMap.size === 0) {
+      this.pointerStart = null;
+      this.activePointerId = null;
+      this.multiPointerGesture = false;
+      this.dragMoved = false;
+    }
+  }
+
   onPointerDown(event) {
     event.preventDefault();
     try {
@@ -7500,10 +7539,12 @@ class AntColony3D {
     } catch {
       // Synthetic events in tests may not own a real pointer capture.
     }
-    this.pointerMap.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    this.dragMoved = false;
-    if (this.pointerMap.size === 2) {
-      const points = [...this.pointerMap.values()];
+    const pointerType = event.pointerType || "mouse";
+    this.pointerMap.set(event.pointerId, { x: event.clientX, y: event.clientY, pointerType });
+    if (this.pointerMap.size >= 2) {
+      this.multiPointerGesture = true;
+      this.dragMoved = true;
+      const points = [...this.pointerMap.values()].slice(0, 2);
       const center = {
         x: (points[0].x + points[1].x) * 0.5,
         y: (points[0].y + points[1].y) * 0.5,
@@ -7516,9 +7557,19 @@ class AntColony3D {
       return;
     }
 
+    this.activePointerId = event.pointerId;
+    this.multiPointerGesture = false;
+    this.dragMoved = false;
     const point = this.screenToGround(event.clientX, event.clientY);
     if (!point) return;
-    this.pointerStart = { screenX: event.clientX, screenY: event.clientY, mode: this.isCameraPanPointer(event) ? "pan" : "rotate", ...point };
+    this.pointerStart = {
+      screenX: event.clientX,
+      screenY: event.clientY,
+      mode: this.isCameraPanPointer(event) ? "pan" : "rotate",
+      pointerType,
+      tapSlop: this.pointerTapSlop(pointerType),
+      ...point,
+    };
     if (this.pendingConstructionKind === "earthWall" && !this.wallPlacementDraft) this.wallPlacementDraft = { points: [], hover: null };
   }
 
@@ -7526,28 +7577,33 @@ class AntColony3D {
     const previous = this.pointerMap.get(event.pointerId);
     if (!previous) return;
     event.preventDefault();
-    this.pointerMap.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    this.pointerMap.set(event.pointerId, { x: event.clientX, y: event.clientY, pointerType: previous.pointerType ?? event.pointerType ?? "mouse" });
 
-    if (this.pointerMap.size === 2 && this.pinchStart) {
-      const points = [...this.pointerMap.values()];
+    if (this.pointerMap.size >= 2 && this.pinchStart) {
+      this.multiPointerGesture = true;
+      this.dragMoved = true;
+      const points = [...this.pointerMap.values()].slice(0, 2);
       const current = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
       this.targetCameraDistance = clamp(this.pinchStart.cameraDistance * (this.pinchStart.distance / (current || 1)), CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
       const center = {
         x: (points[0].x + points[1].x) * 0.5,
         y: (points[0].y + points[1].y) * 0.5,
       };
-      if (this.pinchLastCenter && this.panCameraBetweenScreenPoints(this.pinchLastCenter.x, this.pinchLastCenter.y, center.x, center.y)) {
-        this.dragMoved = true;
-      }
+      if (this.pinchLastCenter) this.panCameraBetweenScreenPoints(this.pinchLastCenter.x, this.pinchLastCenter.y, center.x, center.y);
       this.pinchLastCenter = center;
       return;
     }
 
+    if (this.multiPointerGesture || event.pointerId !== this.activePointerId || !this.pointerStart) return;
+
+    const movedPastTapSlop = this.pointerMovedPastTapSlop(event);
+    if (!this.dragMoved && movedPastTapSlop) this.dragMoved = true;
+    if (!this.dragMoved) return;
+
     const dx = event.clientX - previous.x;
     const dy = event.clientY - previous.y;
-    if (Math.abs(dx) + Math.abs(dy) > 2) this.dragMoved = true;
 
-    if (this.pointerStart?.mode === "pan") {
+    if (this.pointerStart.mode === "pan") {
       this.panCameraBetweenScreenPoints(previous.x, previous.y, event.clientX, event.clientY);
       return;
     }
@@ -7573,20 +7629,32 @@ class AntColony3D {
 
   onPointerUp(event) {
     event.preventDefault();
-    const point = this.screenToGround(event.clientX, event.clientY);
+    const isActivePointer = event.pointerId === this.activePointerId;
+    const wasMultiPointerGesture = this.multiPointerGesture || this.pointerMap.size > 1;
+    const movedPastTapSlop = isActivePointer ? this.pointerMovedPastTapSlop(event) : true;
+    const shouldHandleTap = isActivePointer && !wasMultiPointerGesture && !this.dragMoved && !movedPastTapSlop;
+    const point = shouldHandleTap ? this.screenToGround(event.clientX, event.clientY) : null;
     if (point && this.pendingConstructionKind === "earthWall") {
-      if (!this.dragMoved) this.addWallPlacementVertex(point);
-    } else if (point && !this.dragMoved && this.pendingConstructionKind) {
+      this.addWallPlacementVertex(point);
+    } else if (point && this.pendingConstructionKind) {
       this.confirmConstructionPlacement(point, null, this.pendingConstructionKind);
-    } else if (point && !this.dragMoved) {
+    } else if (point) {
       this.selectNearestAnt(point.x, point.z);
     }
     this.pointerMap.delete(event.pointerId);
-    if (this.pointerMap.size < 2) {
-      this.pinchStart = null;
-      this.pinchLastCenter = null;
+    this.releasePointerCapture(event.pointerId);
+    this.clearPointerGestureIfIdle();
+  }
+
+  onPointerCancel(event) {
+    event.preventDefault();
+    this.pointerMap.delete(event.pointerId);
+    if (event.pointerId === this.activePointerId) {
+      this.pointerStart = null;
+      this.activePointerId = null;
     }
-    if (this.pointerMap.size === 0) this.pointerStart = null;
+    this.releasePointerCapture(event.pointerId);
+    this.clearPointerGestureIfIdle();
   }
 
   onWheel(event) {

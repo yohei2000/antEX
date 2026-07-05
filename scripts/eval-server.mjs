@@ -33,7 +33,10 @@ async function waitForServer(timeoutMs = 12000) {
   while (Date.now() - started < timeoutMs) {
     try {
       const response = await fetch(`http://127.0.0.1:${PORT}/`);
-      if (response.ok) return true;
+      if (response.ok) {
+        const html = await response.text();
+        if (html.includes('id="world3d"')) return true;
+      }
     } catch {
       await delay(200);
     }
