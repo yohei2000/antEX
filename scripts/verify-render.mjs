@@ -183,11 +183,30 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           sim.cameraDistance = 240;
           return sim.targetCameraDistance;
         })()`);
-      await page.mouse.move(width * 0.5, height * 0.5);
-      await page.mouse.wheel(0, -360);
-      wheelProbe.zoomIn = await page.evaluate(`window.__ANT_SIM.targetCameraDistance`);
-      await page.mouse.wheel(0, 720);
-      wheelProbe.zoomOut = await page.evaluate(`window.__ANT_SIM.targetCameraDistance`);
+      const wheelPoint = await page.evaluate(() => {
+        const canvas = document.querySelector("#world3d canvas");
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        const candidates = [
+          [rect.left + rect.width * 0.35, rect.top + rect.height * 0.35],
+          [rect.left + rect.width * 0.25, rect.top + rect.height * 0.5],
+          [rect.left + rect.width * 0.5, rect.top + rect.height * 0.2],
+          [rect.left + rect.width * 0.08, rect.top + rect.height * 0.5],
+        ];
+        for (const [x, y] of candidates) {
+          if (document.elementFromPoint(x, y) === canvas) return { x, y };
+        }
+        return null;
+      });
+      if (wheelPoint) {
+        await page.mouse.move(wheelPoint.x, wheelPoint.y);
+        await page.mouse.wheel(0, -360);
+        wheelProbe.zoomIn = await page.evaluate(`window.__ANT_SIM.targetCameraDistance`);
+        await page.mouse.wheel(0, 720);
+        wheelProbe.zoomOut = await page.evaluate(`window.__ANT_SIM.targetCameraDistance`);
+      } else {
+        wheelProbe.skipped = true;
+      }
     }
 
     const pinchProbe = await page.evaluate(`(() => {

@@ -439,6 +439,10 @@ const MAP_REMEMBERED_FOG_ALPHA = 0.56;
 const MAP_REMEMBERED_FOG_COLOR = 0x727a74;
 const MAP_FOG_RENDER_ORDER = 80;
 const MAP_RAID_FOOD_PRESSURE_RADIUS = 160;
+const BUILDING_SIGHT_COMPLETED_STRENGTH = 0.95;
+const SENTRY_MOUND_CURRENT_SIGHT_RADIUS = 96;
+const LOW_BARRICADE_CURRENT_SIGHT_RADIUS = 34;
+const EARTH_WALL_CURRENT_SIGHT_RADIUS = 32;
 const RAID_SORTIE_SIGNAL_SEEK_RANGE = 148;
 const LOCAL_RIVAL_THREAT_SIGHT_RANGE = 72;
 const RIVAL_NEST_REVEAL_RADIUS = 44;
@@ -5063,6 +5067,52 @@ class AntColony3D {
     return clamp(this.explorationRadiusForAnt(ant) + 8, 16, 42);
   }
 
+  buildingSightRadiusForEarthwork(earthwork) {
+    if (!earthwork || earthwork.owner !== "colony") return 0;
+    if ((earthwork.strength ?? 0) < BUILDING_SIGHT_COMPLETED_STRENGTH) return 0;
+    if (earthwork.kind === "sentryMound") return SENTRY_MOUND_CURRENT_SIGHT_RADIUS;
+    if (earthwork.kind === "lowBarricade") return LOW_BARRICADE_CURRENT_SIGHT_RADIUS;
+    if (earthwork.kind === "earthWall") return EARTH_WALL_CURRENT_SIGHT_RADIUS;
+    return 0;
+  }
+
+  sightPatchesForEarthwork(earthwork) {
+    const sightRadius = this.buildingSightRadiusForEarthwork(earthwork);
+    if (sightRadius <= 0) return [];
+    if (earthwork.kind !== "earthWall") {
+      return [{ x: earthwork.x, z: earthwork.z, radius: sightRadius, kind: earthwork.kind }];
+    }
+
+    const metrics = this.earthWallMetrics(earthwork);
+    const span = Math.max(0, metrics.halfLength * 2);
+    const patchCount = span <= sightRadius * 0.75
+      ? 1
+      : Math.min(4, Math.max(2, Math.ceil(span / (sightRadius * 1.35)) + 1));
+    const patches = [];
+    for (let index = 0; index < patchCount; index += 1) {
+      const along = patchCount === 1 ? 0 : -metrics.halfLength + (span * index) / (patchCount - 1);
+      const point = this.earthWallWorldPoint(earthwork, along, 0);
+      patches.push({ x: point.x, z: point.z, radius: sightRadius, kind: earthwork.kind });
+    }
+    return patches;
+  }
+
+  isPointInBuildingSight(x, z, padding = 0) {
+    for (const earthwork of this.earthworks ?? []) {
+      const sightRadius = this.buildingSightRadiusForEarthwork(earthwork);
+      if (sightRadius <= 0) continue;
+      if (earthwork.kind === "earthWall") {
+        const metrics = this.earthWallMetrics(earthwork);
+        const local = this.earthWallLocal(earthwork, x, z);
+        const nearest = this.earthWallWorldPoint(earthwork, clamp(local.along, -metrics.halfLength, metrics.halfLength), 0);
+        if (distance2(x, z, nearest.x, nearest.z) <= sightRadius + padding) return true;
+      } else if (distance2(x, z, earthwork.x, earthwork.z) <= sightRadius + padding) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   isPointInActiveAntSight(x, z, padding = 0) {
     for (const ant of this.ants ?? []) {
       if (!this.shouldRenderAnt(ant)) continue;
@@ -5075,6 +5125,7 @@ class AntColony3D {
     const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
     if (distance2(x, z, this.nest.x, this.nest.z) <= radius + padding) return true;
     if (this.isPointInActiveAntSight(x, z, padding)) return true;
+    if (this.isPointInBuildingSight(x, z, padding)) return true;
     return false;
   }
 
@@ -5110,7 +5161,24 @@ class AntColony3D {
 
   activeSightPatchesForShader() {
     const baseRadius = this.mapVisionRadiusValue || this.mapVisionRadius();
-    return (this.ants ?? [])
+    const buildingPatches = [];
+    for (const earthwork of this.earthworks ?? []) {
+      for (const patch of this.sightPatchesForEarthwork(earthwork)) {
+        const distanceFromNest = distance2(patch.x, patch.z, this.nest.x, this.nest.z);
+        if (distanceFromNest + patch.radius <= baseRadius + MAP_VISION_FADE_WIDTH) continue;
+        const kindPriority =
+          patch.kind === "sentryMound" ? 220 :
+          patch.kind === "earthWall" ? 120 :
+          80;
+        buildingPatches.push({
+          x: patch.x,
+          z: patch.z,
+          radius: patch.radius,
+          priority: kindPriority + Math.max(0, distanceFromNest - baseRadius) + patch.radius,
+        });
+      }
+    }
+    const antPatches = (this.ants ?? [])
       .filter((ant) => this.shouldRenderAnt(ant))
       .map((ant) => ({
         x: ant.x,
@@ -5118,7 +5186,9 @@ class AntColony3D {
         radius: this.currentSightRadiusForAnt(ant),
         priority: Math.max(0, distance2(ant.x, ant.z, this.nest.x, this.nest.z) - baseRadius),
       }))
-      .filter((patch) => patch.priority > 0 || distance2(patch.x, patch.z, this.nest.x, this.nest.z) > baseRadius * 0.68)
+      .filter((patch) => patch.priority > 0 || distance2(patch.x, patch.z, this.nest.x, this.nest.z) > baseRadius * 0.68);
+    return buildingPatches
+      .concat(antPatches)
       .sort((a, b) => b.priority - a.priority)
       .slice(0, ACTIVE_SIGHT_PATCH_LIMIT);
   }

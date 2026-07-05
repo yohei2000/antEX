@@ -13,6 +13,7 @@
   --app-viewport-height: 100dvh;
   --app-viewport-left: 0px;
   --app-viewport-top: 0px;
+  --empire-panel-desktop-height: min(calc(var(--app-viewport-height, 100dvh) * 0.72), 620px);
   font-family:
     "Inter",
     "Yu Gothic UI",
@@ -548,6 +549,7 @@ button.is-pressed-feedback {
   padding: 10px;
   overflow: auto;
   transition:
+    height 180ms ease,
     max-height 180ms ease,
     transform 180ms ease,
     opacity 180ms ease;
@@ -566,7 +568,7 @@ button.is-pressed-feedback {
 }
 
 .empire-panel.is-military-tab {
-  max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.77), 620px);
+  max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.79), 620px);
 }
 
 .empire-panel.is-military-tab .metric-grid {
@@ -1394,7 +1396,7 @@ button.is-pressed-feedback {
 .sortie-plan-header,
 .sortie-plan-row {
   display: grid;
-  grid-template-columns: minmax(76px, 1.1fr) minmax(108px, 1.55fr) 52px 70px minmax(74px, 1fr);
+  grid-template-columns: minmax(76px, 1.05fr) minmax(96px, 1.4fr) 50px 88px minmax(64px, 0.9fr);
   gap: 7px;
   align-items: center;
   min-width: 0;
@@ -1411,8 +1413,8 @@ button.is-pressed-feedback {
 }
 
 .sortie-plan-row {
-  min-height: 32px;
-  padding: 4px 8px;
+  min-height: 34px;
+  padding: 2px 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -1447,25 +1449,26 @@ button.is-pressed-feedback {
 
 .sortie-count-control {
   display: grid;
-  grid-template-columns: 22px minmax(22px, 1fr) 22px;
+  grid-template-columns: 28px minmax(28px, 1fr) 28px;
   align-items: center;
   min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 6px;
+  border-radius: 7px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.06);
 }
 
 .sortie-count-control button {
   display: grid;
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
   place-items: center;
   padding: 0;
   border: 0;
   background: rgba(255, 255, 255, 0.07);
   color: rgba(244, 241, 232, 0.78);
+  font-size: 0.88rem;
   cursor: pointer;
 }
 
@@ -1476,7 +1479,7 @@ button.is-pressed-feedback {
 
 .sortie-count-control strong {
   text-align: center;
-  font-size: 0.78rem;
+  font-size: 0.88rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2397,9 +2400,28 @@ button.is-pressed-feedback {
     max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.72), 620px);
   }
 
+  .empire-panel:not(.is-compact),
+  .empire-panel.is-barracks-tab:not(.is-compact),
+  .empire-panel.is-military-tab:not(.is-compact),
+  .empire-panel.is-construction-tab:not(.is-compact) {
+    width: 760px;
+    height: var(--empire-panel-desktop-height);
+    max-height: var(--empire-panel-desktop-height);
+  }
+
+  .panel-toggle-button,
+  .panel-toggle-button.is-construction-tab-toggle {
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--empire-panel-desktop-height) + 8px);
+  }
+
+  .is-panel-hidden .panel-toggle-button,
+  .is-panel-hidden .panel-toggle-button.is-construction-tab-toggle {
+    bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
   .empire-panel.is-barracks-tab {
-    width: 560px;
-    max-height: min(calc(var(--app-viewport-height, 100dvh) * 0.72), 470px);
+    width: 760px;
+    max-height: var(--empire-panel-desktop-height);
   }
 
   .empire-panel.is-barracks-tab .barracks-panel {
@@ -2865,7 +2887,7 @@ button.is-pressed-feedback {
   }
 
   .sortie-plan-row {
-    grid-template-columns: minmax(86px, 1fr) 56px 66px;
+    grid-template-columns: minmax(82px, 1fr) 88px 58px;
     gap: 7px;
   }
 

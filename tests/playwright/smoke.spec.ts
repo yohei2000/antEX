@@ -429,6 +429,128 @@ test("ants reveal current sight while remembered areas stay hazed", async ({ pag
   expect(result.patchRadius).toBeGreaterThan(8);
 });
 
+test("completed earthworks add live sight to the map fog", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.exploredPatches = [];
+    for (const ant of sim.ants) {
+      ant.inNest = true;
+      ant.nestStayTimer = 12;
+      ant.state = "explore";
+      ant.x = sim.nest.x;
+      ant.z = sim.nest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    sim.updateMapIntel();
+    const baseRadius = sim.mapVisionRadiusValue || sim.mapVisionRadius();
+    const activeSightBefore = sim.fogOfWarMaterial.uniforms.activeSightCount.value;
+    const nextId = () => {
+      sim.colony.nextEarthworkId = sim.colony.nextEarthworkId ?? 1;
+      return sim.colony.nextEarthworkId++;
+    };
+    const addEarthwork = (kind: string, x: number, z: number, radius: number, progress: number, maxProgress = 1, rotation = 0) => {
+      const earthwork = sim.addEarthwork({
+        id: nextId(),
+        kind,
+        x,
+        z,
+        radius,
+        progress,
+        maxProgress,
+        strength: progress / maxProgress,
+        rotation,
+        owner: "colony",
+      });
+      sim.updateEarthworks();
+      sim.updateMapIntel();
+      return earthwork;
+    };
+
+    const sentry = { x: sim.nest.x + baseRadius + 58, z: sim.nest.z };
+    const sentryProbe = { x: sentry.x + 78, z: sentry.z };
+    const sentryFood = sim.addFood(sentryProbe.x, sentryProbe.z, { amount: 6, radius: 3.2, crumbs: 3 });
+    sim.updateMapVisibility();
+    const sentryBefore = sim.isPointVisible(sentryProbe.x, sentryProbe.z, 0);
+    const sentryFoodBefore = sentryFood.group.visible;
+    const sentryEarthwork = addEarthwork("sentryMound", sentry.x, sentry.z, 8, 1);
+    const sentryAfter = sim.isPointVisible(sentryProbe.x, sentryProbe.z, 0);
+    const sentryFoodAfter = sentryFood.group.visible;
+
+    const low = { x: sim.nest.x - baseRadius - 90, z: sim.nest.z - 20 };
+    const lowProbe = { x: low.x - 28, z: low.z };
+    const incompleteLow = addEarthwork("lowBarricade", low.x, low.z, 10, 0.6);
+    const lowIncompleteVisible = sim.isPointVisible(lowProbe.x, lowProbe.z, 0);
+    incompleteLow.progress = 1;
+    incompleteLow.maxProgress = 1;
+    sim.updateEarthworks();
+    sim.updateMapIntel();
+    const lowCompleteVisible = sim.isPointVisible(lowProbe.x, lowProbe.z, 0);
+
+    const wallRadius = 14;
+    const wallHalfLength = wallRadius * 1.16;
+    const wall = { x: sim.nest.x + 20, z: sim.nest.z + baseRadius + 98 };
+    const wallProbe = { x: wall.x + wallHalfLength, z: wall.z + 27 };
+    const wallFarProbe = { x: wall.x + wallHalfLength, z: wall.z + 41 };
+    const wallBefore = sim.isPointVisible(wallProbe.x, wallProbe.z, 0);
+    const wallEarthwork = addEarthwork("earthWall", wall.x, wall.z, wallRadius, 1, 1, 0);
+    const wallAfter = sim.isPointVisible(wallProbe.x, wallProbe.z, 0);
+    const wallFarAfter = sim.isPointVisible(wallFarProbe.x, wallFarProbe.z, 0);
+
+    const activeCount = sim.fogOfWarMaterial.uniforms.activeSightCount.value;
+    const activePatches = sim.fogOfWarMaterial.uniforms.activeSightPatches.value.slice(0, activeCount).map((patch: any) => ({
+      x: patch.x,
+      z: patch.y,
+      radius: patch.z,
+    }));
+    const sentryPatchVisible = activePatches.some((patch: any) =>
+      Math.hypot(patch.x - sentry.x, patch.z - sentry.z) < 1 && patch.radius > 90,
+    );
+    const wallPatchVisible = activePatches.some((patch: any) =>
+      Math.abs(patch.z - wall.z) < 1 && Math.abs(patch.x - wall.x) <= wallHalfLength + 1 && patch.radius > 28,
+    );
+
+    return {
+      baseRadius,
+      activeSightBefore,
+      activeSightAfter: activeCount,
+      sentryRadius: sim.buildingSightRadiusForEarthwork(sentryEarthwork),
+      lowRadius: sim.buildingSightRadiusForEarthwork(incompleteLow),
+      wallRadius: sim.buildingSightRadiusForEarthwork(wallEarthwork),
+      sentryBefore,
+      sentryAfter,
+      sentryFoodBefore,
+      sentryFoodAfter,
+      lowIncompleteVisible,
+      lowCompleteVisible,
+      wallBefore,
+      wallAfter,
+      wallFarAfter,
+      sentryPatchVisible,
+      wallPatchVisible,
+    };
+  });
+
+  expect(result.baseRadius).toBeGreaterThan(60);
+  expect(result.sentryRadius).toBeGreaterThan(result.lowRadius);
+  expect(result.sentryRadius).toBeGreaterThan(result.wallRadius);
+  expect(result.sentryBefore).toBe(false);
+  expect(result.sentryAfter).toBe(true);
+  expect(result.sentryFoodBefore).toBe(false);
+  expect(result.sentryFoodAfter).toBe(true);
+  expect(result.lowIncompleteVisible).toBe(false);
+  expect(result.lowCompleteVisible).toBe(true);
+  expect(result.wallBefore).toBe(false);
+  expect(result.wallAfter).toBe(true);
+  expect(result.wallFarAfter).toBe(false);
+  expect(result.activeSightAfter).toBeGreaterThan(result.activeSightBefore);
+  expect(result.sentryPatchVisible).toBe(true);
+  expect(result.wallPatchVisible).toBe(true);
+});
+
 test("enemy nest stays hidden until scouts or vision reveal it", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -782,6 +904,43 @@ test("touch tap on the world canvas tolerates small finger drift", async ({ page
   expect(result.selected).toBe(true);
   expect(result.pointerMapSize).toBe(0);
   expect(result.multiPointerGesture).toBe(false);
+});
+
+test("empire panel keeps the same frame across management tabs on desktop", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(async () => {
+    const viewportWidth = window.innerWidth;
+    if (viewportWidth < 820) return { skipped: true, viewportWidth, sizes: [] };
+    const sim = window.__ANT_SIM as any;
+    const panel = document.querySelector("#empirePanel") as HTMLElement;
+    const settle = () => new Promise((resolve) => window.setTimeout(resolve, 220));
+    sim.setPanelHidden(false, false);
+    sim.setPanelCompact(false, false);
+    await settle();
+
+    const tabs = ["growth", "construction", "barracks", "soldiers"];
+    const sizes = [];
+    for (const tab of tabs) {
+      sim.setActiveTab(tab);
+      await settle();
+      const rect = panel.getBoundingClientRect();
+      sizes.push({ tab, width: Math.round(rect.width), height: Math.round(rect.height) });
+    }
+    const widths = sizes.map((item) => item.width);
+    const heights = sizes.map((item) => item.height);
+    return {
+      skipped: false,
+      viewportWidth,
+      sizes,
+      widthDelta: Math.max(...widths) - Math.min(...widths),
+      heightDelta: Math.max(...heights) - Math.min(...heights),
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.widthDelta, JSON.stringify(result.sizes)).toBeLessThanOrEqual(1);
+  expect(result.heightDelta, JSON.stringify(result.sizes)).toBeLessThanOrEqual(1);
 });
 
 test("camera target pans away from the home nest and can return home", async ({ page }) => {
