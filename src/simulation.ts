@@ -32,8 +32,12 @@ import {
   RAID_ACTIVE_SECONDS,
   RAID_BASE_INTERVAL_SECONDS,
   RAID_EXIT_PADDING,
+  RAID_FOOD_PRESSURE_LOSS_SCALE,
+  RAID_FOOD_THREAT_LOSS_SCALE,
   RAID_GRAPPLER_RECRUIT_RANGE,
   RAID_HARASSMENT_RANGE,
+  RAID_NEST_PRESSURE_LOSS_SCALE,
+  RAID_NEST_THREAT_LOSS_SCALE,
   RAID_NOTICE_SECONDS,
   RAID_RECOVERY_SECONDS,
   RAID_RETREAT_SECONDS,
@@ -42,6 +46,8 @@ import {
   CAPTAIN_COHESION_RADIUS,
   CAPTAIN_COMMAND_RANGE,
   CAPTAIN_SQUAD_SIZE,
+  CAPTAIN_UNSUPPORTED_DAMAGE_WEIGHT_SCALE,
+  CAPTAIN_UNSUPPORTED_POWER_SCALE,
   FOOD_INCOME_MULTIPLIER,
   NEST_HOLE_DIAMETER_SCALE,
   NEST_STAY_SECONDS,
@@ -66,6 +72,9 @@ import {
   SOLDIER_SORTIE_COOLDOWN_SECONDS,
   SOLDIER_SORTIE_SECONDS,
   SOLDIER_SORTIE_SEEK_RANGE,
+  UNSUPPORTED_SORTIE_DAMAGE_PRESSURE_SCALE,
+  UNSUPPORTED_SORTIE_LARGE_RAID_MIN_SIZE,
+  UNSUPPORTED_SORTIE_POWER_SCALE,
 } from "./config/balance";
 import { BARRACKS_QUEUE_CAP, BARRACKS_TRAINING_VARIANTS, getBarracksTrainingDef, isBarracksTrainingVariant } from "./config/barracks";
 import { getConstructionDef, isConstructionKind, normalizeConstructionKind } from "./config/construction";
@@ -683,6 +692,35 @@ function naturalPatchDistance(patch, x, z, padding = 0) {
   const baseDistance = Math.hypot(normalizedX, normalizedZ);
   const boundary = sampleIrregularProfile(patch.boundaryProfile, Math.atan2(normalizedZ, normalizedX));
   return baseDistance / Math.max(0.001, boundary);
+}
+
+function naturalPatchBoundaryPoint(patch, x, z, padding = 0) {
+  const dx = x - patch.x;
+  const dz = z - patch.z;
+  const cos = patch.cos ?? Math.cos(patch.rotation ?? 0);
+  const sin = patch.sin ?? Math.sin(patch.rotation ?? 0);
+  const localX = dx * cos + dz * sin;
+  const localZ = -dx * sin + dz * cos;
+  const rx = Math.max(0.001, (patch.rx ?? patch.radius ?? 1) + padding);
+  const rz = Math.max(0.001, (patch.rz ?? patch.radius ?? 1) + padding);
+  const normalizedX = localX / rx;
+  const normalizedZ = localZ / rz;
+  const normalizedLength = Math.hypot(normalizedX, normalizedZ);
+  const angle = normalizedLength > 0.0001 ? Math.atan2(normalizedZ, normalizedX) : 0;
+  const boundary = sampleIrregularProfile(patch.boundaryProfile, angle);
+  const boundaryLocalX = Math.cos(angle) * boundary * rx;
+  const boundaryLocalZ = Math.sin(angle) * boundary * rz;
+  const worldX = patch.x + boundaryLocalX * cos - boundaryLocalZ * sin;
+  const worldZ = patch.z + boundaryLocalX * sin + boundaryLocalZ * cos;
+  const normalX = worldX - patch.x;
+  const normalZ = worldZ - patch.z;
+  const normalLength = Math.hypot(normalX, normalZ) || 1;
+  return {
+    x: worldX,
+    z: worldZ,
+    nx: normalX / normalLength,
+    nz: normalZ / normalLength,
+  };
 }
 
 function roundedRect(context, x, y, width, height, radius) {
@@ -2039,6 +2077,7 @@ class Ant3D {
   }
 
   keepInWorld(sim) {
+    sim.resolveWaterCollision?.(this, 0.92 + this.bodyScale * this.variantConfig.bodyScale * 0.22);
     const d = Math.hypot(this.x, this.z);
     if (d > sim.worldRadius) {
       const nx = this.x / d;
@@ -2524,6 +2563,24 @@ class RivalAnt3D {
     }
   }
 
+  isUnsupportedLargeRaidSortieAnt(ant, sim = null) {
+    if (!sim || !this.isRaidRival || !ant?.isSortieSoldier || ant.variant !== "soldier") return false;
+    const raidSize = Math.floor(sim.ensureRaidState?.().activeCount ?? 0);
+    return raidSize >= UNSUPPORTED_SORTIE_LARGE_RAID_MIN_SIZE && !sim.hasSortieSupportVariants?.();
+  }
+
+  unsupportedSortieDamagePressureScale(ants, sim = null) {
+    if (!sim || !this.isRaidRival) return 1;
+    if (!ants.length || !ants.every((ant) => this.isUnsupportedLargeRaidSortieAnt(ant, sim))) return 1;
+    return UNSUPPORTED_SORTIE_DAMAGE_PRESSURE_SCALE;
+  }
+
+  isUnsupportedCaptain(ant, sim = null) {
+    if (!sim || !ant?.isSortieSoldier || ant.variant !== "captain") return false;
+    const squad = sim.squadForLeader?.(ant);
+    return !squad || (squad.memberIds?.length ?? 0) <= 0;
+  }
+
   combatPowers(ant, sim = null) {
     const threatPressure = this.isRaidRival && sim ? clamp(sim.colony.enemyThreat / 22, 0, 0.58) : 0;
     const defenseBonus = sim ? Math.max(0, (sim.computeDerived().defensePower ?? 1) - 1) : 0;
@@ -2537,7 +2594,9 @@ class RivalAnt3D {
     const wallAttackBonus = sim?.wallAttackBonusAt?.(ant.x, ant.z) ?? 0;
     const nestDefense = defenseBonus * (ant.variant === "shieldHead" ? 0.78 : ant.role === "guard" || ant.variant === "heavySoldier" ? 0.62 : 0.26);
     const squadSupportBonus = this.squadSupportPowerBonus(ant, sim);
-    const antPower =
+    const unsupportedSortieScale = this.isUnsupportedLargeRaidSortieAnt(ant, sim) ? UNSUPPORTED_SORTIE_POWER_SCALE : 1;
+    const unsupportedCaptainScale = this.isUnsupportedCaptain(ant, sim) ? CAPTAIN_UNSUPPORTED_POWER_SCALE : 1;
+    const baseAntPower =
       0.7 +
       ant.traits.persistence * 0.74 +
       ant.traits.caution * 0.52 +
@@ -2551,6 +2610,7 @@ class RivalAnt3D {
       wallAttackBonus +
       squadSupportBonus +
       carriedPenalty;
+    const antPower = baseAntPower * unsupportedSortieScale * unsupportedCaptainScale;
     return { rivalPower, antPower };
   }
 
@@ -2589,10 +2649,11 @@ class RivalAnt3D {
     return this.combatDamage;
   }
 
-  combatDamageWeight(ant) {
+  combatDamageWeight(ant, sim = null) {
     if (ant.isSortieSoldier) {
       if (ant.variant === "heavySoldier") return 1.18;
-      if (ant.variant === "soldier" || ant.variant === "captain") return 1;
+      if (ant.variant === "captain") return this.isUnsupportedCaptain(ant, sim) ? CAPTAIN_UNSUPPORTED_DAMAGE_WEIGHT_SCALE : 1;
+      if (ant.variant === "soldier") return 1;
       if (ant.variant === "acidShooter") return 0.64;
       return 0.42;
     }
@@ -2603,8 +2664,8 @@ class RivalAnt3D {
     return 0.03;
   }
 
-  combatDamagePressure(ants) {
-    return clamp(ants.reduce((sum, ant) => sum + this.combatDamageWeight(ant), 0), 0, 1.35);
+  combatDamagePressure(ants, sim = null) {
+    return clamp(ants.reduce((sum, ant) => sum + this.combatDamageWeight(ant, sim), 0), 0, 1.35);
   }
 
   combatSupportPressure(sim, grapplers = []) {
@@ -2844,7 +2905,12 @@ class RivalAnt3D {
     const groupBonus = 0.82 + Math.min(0.42, Math.max(0, ants.length - 1) * 0.14);
     const supportPressure = this.combatSupportPressure(sim, ants);
     const squadCoordination = this.squadCoordinationPressure(ants, sim);
-    const damagePressure = clamp(this.combatDamagePressure(ants) + supportPressure * 0.42 + squadCoordination * 0.12, 0, 1.55);
+    const unsupportedDamageScale = this.unsupportedSortieDamagePressureScale(ants, sim);
+    const damagePressure = clamp(
+      (this.combatDamagePressure(ants, sim) + supportPressure * 0.42 + squadCoordination * 0.12) * unsupportedDamageScale,
+      0,
+      1.55,
+    );
     const combatReadiness = ants.some((ant) => ant.isSortieSoldier) ? 1 : clamp(0.42 + damagePressure * 0.5, 0.42, 0.95);
     const colonyPower = groupPower * groupBonus * combatReadiness * (1 + supportPressure * 0.18 + squadCoordination * 0.08);
     const threatPressure = this.isRaidRival ? clamp(sim.colony.enemyThreat / 14, 0, 0.95) : 0;
@@ -3012,6 +3078,7 @@ class RivalAnt3D {
   }
 
   keepInWorld(sim) {
+    sim.resolveWaterCollision?.(this, 1.1 + this.scale * 0.28);
     const d = Math.hypot(this.x, this.z);
     const limit = this.isRaidRival && this.retreat > 0 ? sim.worldRadius + RAID_EXIT_PADDING + 2 : sim.worldRadius;
     if (d > limit) {
@@ -4252,6 +4319,40 @@ class AntColony3D {
       multiplier *= 1 + (patch.speed - 1) * influence;
     }
     return clamp(multiplier, 0.64, 1.12);
+  }
+
+  waterDistanceAt(x, z, clearance = 0) {
+    let closest = Infinity;
+    for (const patch of this.water ?? []) closest = Math.min(closest, naturalPatchDistance(patch, x, z, clearance));
+    return closest;
+  }
+
+  resolveWaterCollision(entity, clearance = 1.1) {
+    if (!entity || !this.water?.length) return false;
+    let resolved = false;
+    for (let pass = 0; pass < 3; pass += 1) {
+      let passResolved = false;
+      for (const patch of this.water) {
+        if (naturalPatchDistance(patch, entity.x, entity.z, clearance) >= 1) continue;
+        const boundary = naturalPatchBoundaryPoint(patch, entity.x, entity.z, clearance + 0.18);
+        const headingX = Math.sin(entity.angle ?? 0);
+        const headingZ = Math.cos(entity.angle ?? 0);
+        const dot = headingX * boundary.nx + headingZ * boundary.nz;
+        entity.x = boundary.x;
+        entity.z = boundary.z;
+        if (dot < 0) {
+          const nextHeadingX = headingX - dot * 2 * boundary.nx;
+          const nextHeadingZ = headingZ - dot * 2 * boundary.nz;
+          if (Number.isFinite(nextHeadingX) && Number.isFinite(nextHeadingZ)) {
+            entity.angle = Math.atan2(nextHeadingX, nextHeadingZ);
+          }
+        }
+        passResolved = true;
+        resolved = true;
+      }
+      if (!passResolved) break;
+    }
+    return resolved;
   }
 
   earthworkProductionBonus() {
@@ -6609,6 +6710,10 @@ class AntColony3D {
     return this.deployedSoldiers().filter((ant) => ant.variant === variant).length;
   }
 
+  hasSortieSupportVariants() {
+    return this.deployedSoldiers().some((ant) => ant.variant !== "soldier");
+  }
+
   clearSquadAssignment(ant) {
     if (!ant) return;
     ant.squadId = null;
@@ -8759,7 +8864,10 @@ class AntColony3D {
     raid.breachTimer = 0;
     if (nestPressure > 0) this.raidNestBreachEvents = Math.floor((this.raidNestBreachEvents ?? 0) + 1);
     const defense = this.computeDerived().defensePower;
-    const loss = Math.min(this.colony.food, (1.8 + pressure * 1.4 + this.colony.enemyThreat * 0.08) / defense);
+    const foodOnlyPressure = nestPressure <= 0 && foodPressure > 0;
+    const pressureLossScale = foodOnlyPressure ? RAID_FOOD_PRESSURE_LOSS_SCALE : RAID_NEST_PRESSURE_LOSS_SCALE;
+    const threatLossScale = foodOnlyPressure ? RAID_FOOD_THREAT_LOSS_SCALE : RAID_NEST_THREAT_LOSS_SCALE;
+    const loss = Math.min(this.colony.food, (1.8 + pressure * pressureLossScale + this.colony.enemyThreat * threatLossScale) / defense);
     this.colony.food = Math.max(0, this.colony.food - loss);
     const nestDamage = nestPressure > 0
       ? this.damagePlayerNest(
