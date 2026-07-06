@@ -97,7 +97,6 @@ const ui = {
   panelToggle: document.querySelector("#panelToggleBtn"),
   statAnts: document.querySelector("#statAnts"),
   statFoodRate: document.querySelector("#statFoodRate"),
-  statTerritory: document.querySelector("#statTerritory"),
   statFood: document.querySelector("#statFood"),
   statNestDurability: document.querySelector("#statNestDurability"),
   statNestLevel: document.querySelector("#statNestLevel"),
@@ -5707,7 +5706,7 @@ class AntColony3D {
     for (const button of ui.buttons) {
       this.attachButtonIcon(button, tabIcons[button.dataset.tab], "tab-icon");
     }
-    const statIcons = [UI_ICON_ASSETS.foodSeed, UI_ICON_ASSETS.antPopulation, UI_ICON_ASSETS.defenseShield, UI_ICON_ASSETS.growthLeaf, UI_ICON_ASSETS.territoryLeaf];
+    const statIcons = [UI_ICON_ASSETS.foodSeed, UI_ICON_ASSETS.antPopulation, UI_ICON_ASSETS.defenseShield, UI_ICON_ASSETS.growthLeaf];
     document.querySelectorAll(".stats-strip div").forEach((card, index) => {
       if (statIcons[index]) this.attachButtonIcon(card, statIcons[index], "stat-card-icon");
     });
@@ -6518,7 +6517,7 @@ class AntColony3D {
       expanded = true;
     }
     if (!expanded) return;
-    this.pushLog(`遠方採餌で領域拡大: 領土${fmt(this.colony.territory, 0)}`);
+    this.pushLog("遠方採餌で探索範囲が少し広がった");
     this.updateMapIntel();
     this.updateStats();
   }
@@ -6671,7 +6670,7 @@ class AntColony3D {
     if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}`);
     if (upgrade.requires.ants && this.colony.antPopulation < upgrade.requires.ants) missing.push(`アリ ${upgrade.requires.ants}`);
     if (upgrade.requires.lifetimeFood && this.colony.lifetimeFood < upgrade.requires.lifetimeFood) missing.push(`累計食料 ${upgrade.requires.lifetimeFood}`);
-    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`領土 ${upgrade.requires.territory}`);
+    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`遠方採餌到達 ${upgrade.requires.territory}`);
     if (upgrade.requires.nestLevel && this.colony.nestLevel < upgrade.requires.nestLevel) missing.push(`巣Lv ${upgrade.requires.nestLevel}`);
     for (const [id, requiredLevel] of Object.entries(upgrade.requires.upgrades ?? {})) {
       if (upgradeLevel(this.colony.upgrades, id) < requiredLevel) missing.push(`${upgradeName(id)} Lv${requiredLevel}`);
@@ -7412,7 +7411,7 @@ class AntColony3D {
     if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}不足`);
     if (upgrade.requires.ants && this.colony.antPopulation < upgrade.requires.ants) missing.push(`アリ ${fmt(upgrade.requires.ants, 0)}匹`);
     if (upgrade.requires.lifetimeFood && this.colony.lifetimeFood < upgrade.requires.lifetimeFood) missing.push(`累計食料 ${fmt(upgrade.requires.lifetimeFood, 0)}`);
-    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`領土 ${fmt(upgrade.requires.territory, 0)}`);
+    if (upgrade.requires.territory && this.colony.territory < upgrade.requires.territory) missing.push(`遠方採餌到達 ${fmt(upgrade.requires.territory, 0)}`);
     if (upgrade.requires.nestLevel && this.colony.nestLevel < upgrade.requires.nestLevel) missing.push(`巣Lv ${fmt(upgrade.requires.nestLevel, 0)}`);
     for (const [id, requiredLevel] of Object.entries(upgrade.requires.upgrades ?? {})) {
       const required = UPGRADE_UI[id]?.name ?? upgradeName(id);
@@ -10689,7 +10688,6 @@ class AntColony3D {
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;
     if (ui.statNestDurability) ui.statNestDurability.textContent = `${fmt(this.colony.nestDurability, 0)}/${fmt(PLAYER_NEST_MAX_DURABILITY, 0)}`;
     ui.statFoodRate.textContent = fmt(this.recentForagingPerMinute(), 1);
-    ui.statTerritory.textContent = fmt(this.colony.territory, 0);
     ui.statNestLevel.textContent = fmt(this.colony.nestLevel, 0);
     ui.statCapacity.textContent = fmt(d.capacity, 0);
     ui.statSoldiers.textContent = fmt(this.colony.soldierAnts, 0);

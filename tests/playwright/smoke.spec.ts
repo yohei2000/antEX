@@ -445,6 +445,27 @@ test("near food supports early colonies while distant food unlocks wider growth"
   expect(result.nestLevelAfterTerritory).toBe(3);
 });
 
+test("top stats omit territory display", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const statCards = [...document.querySelectorAll(".stats-strip div")].map((card) => ({
+      label: card.querySelector("span")?.textContent?.trim() ?? "",
+      valueId: card.querySelector("strong")?.id ?? "",
+    }));
+    return {
+      statCards,
+      statText: document.querySelector(".stats-strip")?.textContent ?? "",
+      hasTerritoryStat: Boolean(document.querySelector("#statTerritory")),
+    };
+  });
+
+  expect(result.statCards.map((card) => card.label)).toEqual(["食料", "アリ", "巣耐久", "直近採餌/分"]);
+  expect(result.statCards.map((card) => card.valueId)).not.toContain("statTerritory");
+  expect(result.statText).not.toContain("領土");
+  expect(result.hasTerritoryStat).toBe(false);
+});
+
 test("ants reveal current sight while remembered areas stay hazed", async ({ page }) => {
   await waitForSimulation(page);
 
