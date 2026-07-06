@@ -1,12 +1,13 @@
-import { RAID_INITIAL_DELAY_SECONDS, RAID_RIVAL_CAP, RAID_WARNING_SECONDS } from "../config/balance";
+import { PLAYER_NEST_MAX_DURABILITY, RAID_INITIAL_DELAY_SECONDS, RAID_RIVAL_CAP, RAID_WARNING_SECONDS } from "../config/balance";
 import { BARRACKS_QUEUE_CAP, getBarracksTrainingDef, normalizeBarracksTrainingVariant } from "../config/barracks";
 import { normalizeConstructionKind } from "../config/construction";
 import { UPGRADE_DEFS } from "../config/upgrades";
 import { clamp } from "../shared/math";
 import { COLONY_SAVE_VERSION, createDefaultColony, createDefaultRaidState } from "./colony";
-import type { BarracksTrainingItem, ColonyState, RaidPhase, RaidState } from "./schema";
+import type { BarracksTrainingItem, ColonyGameStatus, ColonyState, RaidPhase, RaidState } from "./schema";
 
 const RAID_PHASES: RaidPhase[] = ["calm", "warning", "active", "retreating", "recovering"];
+const GAME_STATUSES: ColonyGameStatus[] = ["playing", "victory", "defeat"];
 
 export function normalizeRaidState(raw: unknown, options: { resetActiveOnLoad?: boolean } = {}): RaidState {
   const base = createDefaultRaidState();
@@ -68,6 +69,21 @@ export function migrateColony(raw: unknown): ColonyState {
   next.builderAnts = Math.floor(clamp(Number(next.builderAnts) || 0, 0, Math.max(0, next.antPopulation - next.soldierAnts)));
   next.woundedAnts = Math.floor(clamp(Number(next.woundedAnts) || 0, 0, next.antPopulation));
   next.nestLevel = Math.floor(clamp(Number(next.nestLevel) || 1, 1, 999));
+  {
+    const rawNestDurability = Number(source.nestDurability);
+    next.nestDurability = clamp(
+      Number.isFinite(rawNestDurability) ? rawNestDurability : base.nestDurability,
+      0,
+      PLAYER_NEST_MAX_DURABILITY,
+    );
+  }
+  next.gameStatus = GAME_STATUSES.includes(source.gameStatus as ColonyGameStatus)
+    ? source.gameStatus as ColonyGameStatus
+    : next.nestDurability <= 0
+      ? "defeat"
+      : base.gameStatus;
+  if (next.nestDurability <= 0 && next.gameStatus !== "victory") next.gameStatus = "defeat";
+  if (next.gameStatus === "defeat") next.nestDurability = 0;
   next.territory = Math.floor(clamp(Number(next.territory) || 0, 0, 999999));
   next.enemyThreat = clamp(Number(next.enemyThreat) || base.enemyThreat, 0, 999999);
   next.fallenAnts = Math.floor(clamp(Number(next.fallenAnts) || 0, 0, 999999));

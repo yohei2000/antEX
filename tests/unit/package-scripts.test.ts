@@ -6,7 +6,7 @@ describe("package scripts", () => {
     expect(packageJson.scripts.dev).toBe("vite");
     expect(packageJson.scripts.build).toBe("vite build");
     expect(packageJson.scripts.test).toBe("vitest run");
-    expect(packageJson.scripts["eval:smoke"]).toBe("playwright test tests/playwright/smoke.spec.ts");
+    expect(packageJson.scripts["eval:smoke"]).toBe("playwright test tests/playwright/smoke.spec.ts tests/playwright/vision-resize.spec.ts");
     expect(packageJson.scripts["eval:save"]).toBe("playwright test tests/playwright/save-load.spec.ts");
   });
 });

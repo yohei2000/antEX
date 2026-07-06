@@ -14,7 +14,7 @@
     "verify:balance": "node ./scripts/verify-balance.mjs",
     "test": "vitest run",
     "preeval:smoke": "node ./scripts/eval-server.mjs start",
-    "eval:smoke": "playwright test tests/playwright/smoke.spec.ts",
+    "eval:smoke": "playwright test tests/playwright/smoke.spec.ts tests/playwright/vision-resize.spec.ts",
     "posteval:smoke": "node ./scripts/eval-server.mjs stop",
     "preeval:save": "node ./scripts/eval-server.mjs start",
     "eval:save": "playwright test tests/playwright/save-load.spec.ts",

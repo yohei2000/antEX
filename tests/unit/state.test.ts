@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { PLAYER_NEST_MAX_DURABILITY } from "../../src/config/balance";
 import { UPGRADE_DEFS, upgradeCost, upgradeName } from "../../src/config/upgrades";
-import { createDefaultColony } from "../../src/state/colony";
+import { COLONY_SAVE_VERSION, createDefaultColony } from "../../src/state/colony";
 import { computeDerivedColony } from "../../src/state/derived";
 import { migrateColony } from "../../src/state/migrations";
 
@@ -8,7 +9,7 @@ describe("colony state modules", () => {
   it("creates the same default colony shape used by the browser game", () => {
     const colony = createDefaultColony();
 
-    expect(colony.version).toBe(13);
+    expect(colony.version).toBe(COLONY_SAVE_VERSION);
     expect(colony.food).toBe(36);
     expect(colony.lifetimeFood).toBe(36);
     expect(colony.antPopulation).toBe(12);
@@ -20,6 +21,8 @@ describe("colony state modules", () => {
     expect(colony.medicAnts).toBe(0);
     expect(colony.captainAnts).toBe(0);
     expect(colony.builderAnts).toBe(0);
+    expect(colony.nestDurability).toBe(PLAYER_NEST_MAX_DURABILITY);
+    expect(colony.gameStatus).toBe("playing");
     expect(colony.raidState.phase).toBe("calm");
     expect(colony.raidState.timer).toBe(78);
     expect(colony.nextEarthworkId).toBe(1);
@@ -29,7 +32,7 @@ describe("colony state modules", () => {
     expect(Object.keys(colony.upgrades).sort()).toEqual(UPGRADE_DEFS.map((upgrade) => upgrade.id).sort());
   });
 
-  it("normalizes old save fragments without changing the save version", () => {
+  it("normalizes old save fragments to the current save version", () => {
     const colony = migrateColony({
       version: 1,
       food: 321,
@@ -86,7 +89,7 @@ describe("colony state modules", () => {
       battleLog: ["a", "b", "c", "d", "e", "f"],
     });
 
-    expect(colony.version).toBe(13);
+    expect(colony.version).toBe(COLONY_SAVE_VERSION);
     expect(colony.food).toBe(321);
     expect(colony.lifetimeFood).toBe(654);
     expect(colony.antPopulation).toBe(18);
@@ -98,6 +101,8 @@ describe("colony state modules", () => {
     expect(colony.medicAnts).toBe(0);
     expect(colony.captainAnts).toBe(0);
     expect(colony.builderAnts).toBe(0);
+    expect(colony.nestDurability).toBe(PLAYER_NEST_MAX_DURABILITY);
+    expect(colony.gameStatus).toBe("playing");
     expect(colony.upgrades.storageChambers).toBe(2);
     expect(colony.upgrades.chamberExcavation).toBe(0);
     expect(colony.raidState.phase).toBe("warning");
@@ -136,6 +141,20 @@ describe("colony state modules", () => {
       },
     ]);
     expect(colony.battleLog).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("normalizes nest durability and game end status", () => {
+    const damaged = migrateColony({ nestDurability: 42, gameStatus: "playing" });
+    expect(damaged.nestDurability).toBe(42);
+    expect(damaged.gameStatus).toBe("playing");
+
+    const defeated = migrateColony({ nestDurability: 0, gameStatus: "playing" });
+    expect(defeated.nestDurability).toBe(0);
+    expect(defeated.gameStatus).toBe("defeat");
+
+    const victory = migrateColony({ nestDurability: 75, gameStatus: "victory" });
+    expect(victory.nestDurability).toBe(75);
+    expect(victory.gameStatus).toBe("victory");
   });
 
   it("keeps derived growth and upgrade calculations stable", () => {

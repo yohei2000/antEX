@@ -26,6 +26,9 @@ import {
   MEDIC_STANDOFF,
   MIN_COLONY_SURVIVORS,
   OFFLINE_CAP_SECONDS,
+  PLAYER_NEST_BREACH_BASE_DAMAGE,
+  PLAYER_NEST_BREACH_PRESSURE_DAMAGE,
+  PLAYER_NEST_MAX_DURABILITY,
   RAID_ACTIVE_SECONDS,
   RAID_BASE_INTERVAL_SECONDS,
   RAID_EXIT_PADDING,
@@ -87,6 +90,7 @@ const ui = {
   statFoodRate: document.querySelector("#statFoodRate"),
   statTerritory: document.querySelector("#statTerritory"),
   statFood: document.querySelector("#statFood"),
+  statNestDurability: document.querySelector("#statNestDurability"),
   statNestLevel: document.querySelector("#statNestLevel"),
   statCapacity: document.querySelector("#statCapacity"),
   statSoldiers: document.querySelector("#statSoldiers"),
@@ -157,6 +161,10 @@ const ui = {
   loadingBar: document.querySelector("#loadingBar"),
   loadingLabel: document.querySelector("#loadingLabel"),
   raidNotice: document.querySelector("#raidNotice"),
+  gameEndBanner: document.querySelector("#gameEndBanner"),
+  gameEndTitle: document.querySelector("#gameEndTitle"),
+  gameEndDetail: document.querySelector("#gameEndDetail"),
+  gameEndReset: document.querySelector("#gameEndResetBtn"),
   errorPanel: document.querySelector("#errorPanel"),
   errorMessage: document.querySelector("#errorMessage"),
   debugPanel: document.querySelector("#debugPanel"),
@@ -262,6 +270,11 @@ const SORTIE_PLAN_VARIANTS = [
 ];
 
 const SORTIE_PLAN_KEYS = SORTIE_PLAN_VARIANTS.map((item) => item.compositionKey);
+const SORTIE_BALANCED_PLAN_KEYS = ["captain", "shield", "heavy", "acid", "scout", "medic", "normal"];
+const SORTIE_VARIANT_BY_PLAN_KEY = SORTIE_PLAN_VARIANTS.reduce((memo, item) => {
+  memo[item.compositionKey] = item.variant;
+  return memo;
+}, {});
 
 const BRANCH_ICON_ASSETS = {
   foraging: UI_ICON_ASSETS.forageTrail,
@@ -438,6 +451,10 @@ const MAP_UNEXPLORED_COLOR = 0x030403;
 const MAP_REMEMBERED_FOG_ALPHA = 0.56;
 const MAP_REMEMBERED_FOG_COLOR = 0x727a74;
 const MAP_FOG_RENDER_ORDER = 80;
+const MAP_MANUAL_VISION_STORAGE_KEY = "ant3d.manualMapVisionRadius";
+const MAP_MANUAL_VISION_MIN_RADIUS = 36;
+const MAP_VISION_EDGE_MOUSE_SLOP = 8;
+const MAP_VISION_EDGE_TOUCH_SLOP = 18;
 const MAP_RAID_FOOD_PRESSURE_RADIUS = 160;
 const BUILDING_SIGHT_COMPLETED_STRENGTH = 0.95;
 const SENTRY_MOUND_CURRENT_SIGHT_RADIUS = 96;
@@ -3666,6 +3683,7 @@ class AntColony3D {
       group: null,
     };
     this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.manualMapVisionRadius = this.readManualMapVisionRadius();
     this.fogOfWar = null;
     this.fogOfWarMaterial = null;
     this.visionEdge = null;
@@ -4403,6 +4421,7 @@ class AntColony3D {
   }
 
   canStartConstruction(kind) {
+    if (this.isGameEnded()) return { ok: false, reason: "ゲーム終了" };
     if (!isConstructionKind(kind)) return { ok: false, reason: "不明な土木工事" };
     const def = getConstructionDef(kind);
     const d = this.computeDerived();
@@ -5049,6 +5068,66 @@ class AntColony3D {
     return clamp(radius, MAP_BASE_VISION_RADIUS, this.worldRadius + 24);
   }
 
+  manualMapVisionRadiusMin() {
+    return Math.max(MAP_MANUAL_VISION_MIN_RADIUS, this.nest.radius + 18);
+  }
+
+  manualMapVisionRadiusMax() {
+    return this.worldRadius + 7;
+  }
+
+  normalizeManualMapVisionRadius(radius) {
+    const value = Number(radius);
+    return clamp(Number.isFinite(value) ? value : MAP_BASE_VISION_RADIUS, this.manualMapVisionRadiusMin(), this.manualMapVisionRadiusMax());
+  }
+
+  currentMapVisionRadius(derived = this.derived) {
+    const automaticRadius = this.mapVisionRadius(derived);
+    if (this.manualMapVisionRadius == null) return automaticRadius;
+    this.manualMapVisionRadius = this.normalizeManualMapVisionRadius(this.manualMapVisionRadius);
+    return this.manualMapVisionRadius;
+  }
+
+  readManualMapVisionRadius() {
+    const raw = readStorage(MAP_MANUAL_VISION_STORAGE_KEY);
+    if (raw == null || raw === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? this.normalizeManualMapVisionRadius(value) : null;
+  }
+
+  persistManualMapVisionRadius() {
+    if (this.manualMapVisionRadius == null) return;
+    writeStorage(MAP_MANUAL_VISION_STORAGE_KEY, String(Math.round(this.manualMapVisionRadius * 10) / 10));
+  }
+
+  clearManualMapVisionRadiusStorage() {
+    try {
+      localStorage.removeItem(MAP_MANUAL_VISION_STORAGE_KEY);
+    } catch {
+      // Non-critical UI persistence can fail in private or locked-down contexts.
+    }
+  }
+
+  setManualMapVisionRadius(radius, { persist = false, refresh = true } = {}) {
+    this.manualMapVisionRadius = this.normalizeManualMapVisionRadius(radius);
+    this.mapVisionRadiusValue = this.manualMapVisionRadius;
+    if (persist) this.persistManualMapVisionRadius();
+    if (refresh) {
+      this.updateMapIntel();
+      this.updateStats();
+    }
+    return this.manualMapVisionRadius;
+  }
+
+  clearManualMapVisionRadius({ persist = true, refresh = true } = {}) {
+    this.manualMapVisionRadius = null;
+    if (persist) this.clearManualMapVisionRadiusStorage();
+    if (refresh) {
+      this.updateMapIntel();
+      this.updateStats();
+    }
+  }
+
   hasScoutIntel(derived = this.derived) {
     const d = derived && Number.isFinite(Number(derived.activeAnts)) ? derived : this.computeDerived();
     return Math.max(0, Math.floor(d.scouts ?? 0)) > 0;
@@ -5144,7 +5223,7 @@ class AntColony3D {
 
   updateMapIntel() {
     const derived = this.computeDerived();
-    this.mapVisionRadiusValue = this.mapVisionRadius(derived);
+    this.mapVisionRadiusValue = this.currentMapVisionRadius(derived);
     const discoveredByVision = this.isPointVisible(this.rivalNest.x, this.rivalNest.z, 0);
     const discoveredByScout = this.hasScoutIntel(derived);
     if (!this.rivalNest.discovered && (discoveredByVision || discoveredByScout)) {
@@ -5217,6 +5296,10 @@ class AntColony3D {
       this.visionEdge.position.set(this.nest.x, 0.46, this.nest.z);
       this.visionEdge.scale.setScalar(radius);
       this.visionEdge.visible = radius < this.worldRadius + 12;
+      if (this.visionEdge.material) {
+        const isDraggingVisionEdge = this.pointerStart?.mode === "vision-resize";
+        this.visionEdge.material.opacity = isDraggingVisionEdge ? 0.36 : this.manualMapVisionRadius == null ? 0.18 : 0.26;
+      }
     }
     this.updateObservedObjectVisibility();
     this.updateRivalNestVisual();
@@ -5382,7 +5465,7 @@ class AntColony3D {
     for (const button of ui.buttons) {
       this.attachButtonIcon(button, tabIcons[button.dataset.tab], "tab-icon");
     }
-    const statIcons = [UI_ICON_ASSETS.foodSeed, UI_ICON_ASSETS.antPopulation, UI_ICON_ASSETS.growthLeaf, UI_ICON_ASSETS.territoryLeaf];
+    const statIcons = [UI_ICON_ASSETS.foodSeed, UI_ICON_ASSETS.antPopulation, UI_ICON_ASSETS.defenseShield, UI_ICON_ASSETS.growthLeaf, UI_ICON_ASSETS.territoryLeaf];
     document.querySelectorAll(".stats-strip div").forEach((card, index) => {
       if (statIcons[index]) this.attachButtonIcon(card, statIcons[index], "stat-card-icon");
     });
@@ -5400,6 +5483,7 @@ class AntColony3D {
     if (button.dataset.nextAction === "primary") {
       const kind = button.dataset.actionKind ?? "";
       const value = button.dataset.actionValue ?? "";
+      if (kind === "reset") return "新しい巣で再開";
       if (kind === "train") return `${getBarracksTrainingDef(value).label}を育成キューへ`;
       if (kind === "upgrade") return `${UPGRADE_UI[value]?.name ?? upgradeName(value)}を強化`;
       if (kind === "sortie") return value === "expedition" ? "遠征出動" : "防衛出動";
@@ -5508,6 +5592,7 @@ class AntColony3D {
     });
 
     ui.reset.addEventListener("click", () => this.reset(true));
+    ui.gameEndReset?.addEventListener("click", () => this.reset(true));
     ui.upgradeList.addEventListener("click", (event) => {
       const actionButton = event.target.closest("[data-next-action]");
       if (actionButton) {
@@ -5563,6 +5648,10 @@ class AntColony3D {
     const kind = button?.dataset?.actionKind ?? "";
     const value = button?.dataset?.actionValue ?? "";
     if (action === "primary") {
+      if (kind === "reset") {
+        this.reset(true);
+        return true;
+      }
       if (kind === "train" && this.startBarracksTraining(value)) return true;
       if (kind === "upgrade" && this.buyUpgrade(value)) return true;
       if (kind === "sortie" && this.startSoldierSortie(value || "defense")) return true;
@@ -5685,6 +5774,10 @@ class AntColony3D {
     this.rivalNest.integrity = 1;
     this.rivalNest.underAttackTimer = 0;
     this.rivalNest.attackPulseTimer = 0;
+    if (newGame) {
+      this.manualMapVisionRadius = null;
+      this.clearManualMapVisionRadiusStorage();
+    }
     this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
     this.exploredPatches = [];
     this.exploredPatchClock = 0;
@@ -5714,6 +5807,7 @@ class AntColony3D {
       this.saveColony();
     }
     this.ensureRaidState();
+    this.applyGameStatusRuntimeState();
     this.seedNaturalEnvironment();
     this.restoreEarthworksFromState();
     this.syncAntPopulation();
@@ -5751,6 +5845,7 @@ class AntColony3D {
   }
 
   updateColony(dt) {
+    if (this.isGameEnded()) return;
     this.computeDerived();
     this.colony.hatchProgress = 0;
     this.updateBarracksTraining(dt);
@@ -6044,6 +6139,7 @@ class AntColony3D {
   }
 
   canStartBarracksTraining(variant) {
+    if (this.isGameEnded()) return { ok: false, reason: "ゲーム終了" };
     if (!isBarracksTrainingVariant(variant)) return { ok: false, reason: "不明な種別" };
     const def = getBarracksTrainingDef(variant);
     const queue = this.barracksQueue();
@@ -6225,6 +6321,7 @@ class AntColony3D {
   }
 
   applyOfflineProgress(now) {
+    if (this.isGameEnded()) return;
     const elapsed = Math.min(Math.max(0, (now - this.colony.lastSavedAt) / 1000), OFFLINE_CAP_SECONDS);
     if (elapsed < 2) return;
     let remaining = elapsed;
@@ -6251,6 +6348,77 @@ class AntColony3D {
     this.raidNotice.timer = duration;
   }
 
+  isGameEnded() {
+    return this.colony?.gameStatus === "victory" || this.colony?.gameStatus === "defeat";
+  }
+
+  gameEndCopy(status = this.colony?.gameStatus) {
+    if (status === "victory") {
+      return {
+        title: "勝利",
+        detail: "敵巣を陥落させ、襲撃拠点を制圧しました。",
+      };
+    }
+    if (status === "defeat") {
+      return {
+        title: "敗北",
+        detail: "巣の耐久が尽き、女王が倒されました。",
+      };
+    }
+    return { title: "", detail: "" };
+  }
+
+  applyGameStatusRuntimeState() {
+    if (this.colony.gameStatus === "victory") {
+      this.rivalNest.discovered = true;
+      this.rivalNest.defeated = true;
+      this.rivalNest.integrity = 0;
+      this.mapIntelLogState.rivalNestDefeated = true;
+      this.clearRaidRivals();
+    } else if (this.colony.gameStatus === "defeat") {
+      this.colony.nestDurability = 0;
+    }
+  }
+
+  endGame(status) {
+    if (status !== "victory" && status !== "defeat") return false;
+    if (this.colony.gameStatus === status) return false;
+    if (this.isGameEnded()) return false;
+    this.colony.gameStatus = status;
+    this.pendingConstructionKind = null;
+    this.wallPlacementDraft = null;
+    this.clearWallPlacementPreview();
+    if (status === "victory") {
+      this.rivalNest.discovered = true;
+      this.rivalNest.defeated = true;
+      this.rivalNest.integrity = 0;
+      this.clearRaidRivals();
+      this.recallSortieSoldiers("game-victory");
+      this.pushLog("勝利: 敵巣を陥落させた");
+      this.showRaidNotice("勝利: 敵巣を制圧しました", "repelled", 999999);
+    } else {
+      this.colony.nestDurability = 0;
+      this.pushLog("敗北: 女王が倒された");
+      this.showRaidNotice("敗北: 巣の耐久が尽き、女王が倒されました", "warning", 999999);
+    }
+    this.updateStats();
+    this.saveColony();
+    return true;
+  }
+
+  damagePlayerNest(amount) {
+    if (this.isGameEnded()) return 0;
+    const rawDurability = Number(this.colony.nestDurability);
+    const before = clamp(Number.isFinite(rawDurability) ? rawDurability : PLAYER_NEST_MAX_DURABILITY, 0, PLAYER_NEST_MAX_DURABILITY);
+    const damage = clamp(Number(amount) || 0, 0, before);
+    this.colony.nestDurability = clamp(before - damage, 0, PLAYER_NEST_MAX_DURABILITY);
+    return damage;
+  }
+
+  playerNestDurabilityRatio() {
+    return clamp((Number(this.colony.nestDurability) || 0) / PLAYER_NEST_MAX_DURABILITY, 0, 1);
+  }
+
   missingRequirements(upgrade, cost) {
     const missing = [];
     if (this.colony.food < cost) missing.push(`食料 ${fmt(cost - this.colony.food, 0)}`);
@@ -6265,6 +6433,7 @@ class AntColony3D {
   }
 
   buyUpgrade(id) {
+    if (this.isGameEnded()) return false;
     const upgrade = UPGRADE_DEFS.find((item) => item.id === id);
     if (!upgrade) return false;
     const level = upgradeLevel(this.colony.upgrades, id);
@@ -6588,6 +6757,7 @@ class AntColony3D {
   }
 
   availableSortieSoldiers() {
+    if (this.isGameEnded()) return 0;
     const d = this.computeDerived();
     const deployed = this.deployedSoldierCount();
     const healthyCombatSoldiers = Math.floor(Math.min(this.sortieSoldierPool(d), Math.max(0, d.activeAnts - 1)));
@@ -6614,21 +6784,40 @@ class AntColony3D {
   sortieComposition(count = this.availableSortieSoldiers()) {
     const desired = Math.max(0, Math.floor(count));
     const capacities = this.sortiePlanCapacities();
-    const nestHeavy = capacities.heavy;
-    const nestShield = capacities.shield;
-    const nestAcid = capacities.acid;
-    const nestScout = capacities.scout;
-    const nestMedic = capacities.medic;
-    const nestCaptain = capacities.captain;
-    const nestNormal = capacities.normal;
-    const heavy = Math.min(nestHeavy, desired);
-    const shield = Math.min(nestShield, desired - heavy);
-    const captain = Math.min(nestCaptain, desired - heavy - shield);
-    const acid = Math.min(nestAcid, desired - heavy - shield - captain);
-    const scout = Math.min(nestScout, desired - heavy - shield - captain - acid);
-    const medic = Math.min(nestMedic, desired - heavy - shield - captain - acid - scout);
-    const normal = Math.min(nestNormal, desired - heavy - shield - captain - acid - scout - medic);
-    return { heavy, shield, captain, acid, scout, medic, normal, total: heavy + shield + captain + acid + scout + medic + normal };
+    const composition = this.emptySortieComposition();
+    let remaining = desired;
+    while (remaining > 0) {
+      let assignedThisRound = false;
+      for (const key of SORTIE_BALANCED_PLAN_KEYS) {
+        if (remaining <= 0) break;
+        if ((composition[key] ?? 0) >= (capacities[key] ?? 0)) continue;
+        composition[key] += 1;
+        composition.total += 1;
+        remaining -= 1;
+        assignedThisRound = true;
+      }
+      if (!assignedThisRound) break;
+    }
+    return composition;
+  }
+
+  sortieVariantSequence(composition) {
+    const remaining = {};
+    for (const key of SORTIE_PLAN_KEYS) remaining[key] = Math.max(0, Math.floor(composition[key] ?? 0));
+    const variants = [];
+    const targetCount = Math.max(0, Math.floor(composition.total ?? 0));
+    while (variants.length < targetCount) {
+      let assignedThisRound = false;
+      for (const key of SORTIE_BALANCED_PLAN_KEYS) {
+        if (variants.length >= targetCount) break;
+        if ((remaining[key] ?? 0) <= 0) continue;
+        variants.push(SORTIE_VARIANT_BY_PLAN_KEY[key] ?? "soldier");
+        remaining[key] -= 1;
+        assignedThisRound = true;
+      }
+      if (!assignedThisRound) break;
+    }
+    return variants;
   }
 
   normalizeSortiePlan(plan = this.manualSortiePlan) {
@@ -6664,6 +6853,7 @@ class AntColony3D {
   }
 
   changeSortiePlan(compositionKey, delta) {
+    if (this.isGameEnded()) return false;
     if (!SORTIE_PLAN_KEYS.includes(compositionKey)) return false;
     const current = this.manualSortiePlan ? this.normalizeSortiePlan(this.manualSortiePlan) : this.plannedSortieComposition();
     const next = {};
@@ -6690,10 +6880,11 @@ class AntColony3D {
   }
 
   canStartExpeditionSortie() {
-    return this.isRivalNestKnown() && !this.rivalNest.defeated;
+    return !this.isGameEnded() && this.isRivalNestKnown() && !this.rivalNest.defeated;
   }
 
   currentSortieTarget(x = this.nest.x, z = this.nest.z, mode = "auto") {
+    if (this.isGameEnded()) return null;
     const sortieMode = this.normalizeSortieMode(mode);
     const threat = this.findRivalThreat(x, z, SOLDIER_SORTIE_SEEK_RANGE, null, { localSightRange: 0 });
     if (threat) return { x: threat.x, z: threat.z, kind: "rival" };
@@ -6714,6 +6905,7 @@ class AntColony3D {
 
   updateRivalNestAssault(dt) {
     const nest = this.rivalNest;
+    if (this.isGameEnded()) return;
     if (!nest || !this.isRivalNestKnown() || nest.defeated || dt <= 0) return;
     const attackers = this.deployedSoldiers().filter((ant) =>
       this.shouldRenderAnt(ant) &&
@@ -6765,6 +6957,7 @@ class AntColony3D {
       this.showRaidNotice("敵巣陥落: 襲撃拠点を制圧", "repelled");
       this.mapIntelLogState.rivalNestDefeated = true;
     }
+    this.endGame("victory");
     this.updateStats();
   }
 
@@ -6807,6 +7000,7 @@ class AntColony3D {
   }
 
   startSoldierSortie(mode = this.selectedSortieMode) {
+    if (this.isGameEnded()) return false;
     const sortieMode = this.normalizeSortieMode(mode) === "expedition" ? "expedition" : "defense";
     this.selectedSortieMode = sortieMode;
     if (this.soldierSortieCooldown > 0) return false;
@@ -6826,15 +7020,7 @@ class AntColony3D {
     this.makeRoomForSortie(count);
     const sortieTarget = this.currentSortieTarget(this.nest.x, this.nest.z, sortieMode);
     const targetAngle = sortieTarget ? Math.atan2(sortieTarget.z - this.nest.z, sortieTarget.x - this.nest.x) : null;
-    const variants = [
-      ...Array.from({ length: composition.heavy }, () => "heavySoldier"),
-      ...Array.from({ length: composition.shield }, () => "shieldHead"),
-      ...Array.from({ length: composition.captain }, () => "captain"),
-      ...Array.from({ length: composition.acid }, () => "acidShooter"),
-      ...Array.from({ length: composition.scout }, () => "scout"),
-      ...Array.from({ length: composition.medic }, () => "medic"),
-      ...Array.from({ length: composition.normal }, () => "soldier"),
-    ];
+    const variants = this.sortieVariantSequence(composition);
     const sortieAnts = [];
     for (let i = 0; i < count; i += 1) {
       const ant = new Ant3D(this.nextAntId++, this);
@@ -7031,6 +7217,17 @@ class AntColony3D {
   }
 
   nextActionPlan(d = this.computeDerived()) {
+    if (this.isGameEnded()) {
+      const copy = this.gameEndCopy();
+      return {
+        reason: copy.detail,
+        text: "新しい巣で再開",
+        kind: "reset",
+        value: this.colony.gameStatus,
+        iconAsset: this.colony.gameStatus === "victory" ? UI_ICON_ASSETS.militaryMandibles : UI_ICON_ASSETS.queenCare,
+        disabled: false,
+      };
+    }
     const queue = this.barracksQueue();
     const raid = this.ensureRaidState();
     const cooldownLeft = Math.ceil(this.soldierSortieCooldown);
@@ -7121,6 +7318,7 @@ class AntColony3D {
   }
 
   renderGrowthFocus() {
+    const gameEnded = this.isGameEnded();
     const recommendations = this.growthRecommendations(3);
     const branchStats = this.growthBranchStats();
     const activeBranch = recommendations[0]?.upgrade.branch ?? branchStats[0]?.id;
@@ -7137,7 +7335,7 @@ class AntColony3D {
     }).join("");
     const cards = recommendations.map((item) => {
       const buttonText = item.available ? "強化" : "条件";
-      const disabled = item.available ? "" : "disabled";
+      const disabled = item.available && !gameEnded ? "" : "disabled";
       const meta = item.available ? `食料 ${fmt(item.cost, 0)}` : item.missing.slice(0, 2).join(" / ");
       return `
         <article class="growth-recommend-card">
@@ -7179,6 +7377,7 @@ class AntColony3D {
   }
 
   renderUpgrades() {
+    const gameEnded = this.isGameEnded();
     const focus = this.renderGrowthFocus();
     const tree = UPGRADE_BRANCHES.map((branch) => {
       const branchUi = UPGRADE_BRANCH_UI[branch.id] ?? { label: branch.name, summary: "" };
@@ -7188,7 +7387,7 @@ class AntColony3D {
         const complete = level >= upgrade.max;
         const cost = complete ? 0 : upgradeCost(upgrade, level);
         const missing = complete ? [] : this.readableMissingRequirements(upgrade, cost);
-        const disabled = complete || missing.length > 0 ? "disabled" : "";
+        const disabled = complete || missing.length > 0 || gameEnded ? "disabled" : "";
         const locked = missing.length > 0 ? "is-locked" : "";
         const meta = complete ? "最大Lv" : missing.length ? `不足: ${missing.slice(0, 2).join(" / ")}` : `食料 ${fmt(cost, 0)}`;
         const buttonText = complete ? "最大" : missing.length ? "条件" : "強化";
@@ -7430,6 +7629,15 @@ class AntColony3D {
   }
 
   updateGame(dt) {
+    if (this.isGameEnded()) {
+      this.raidNotice.timer = Math.max(this.raidNotice.timer, 1);
+      this.lastUiUpdate += dt;
+      if (this.lastUiUpdate > 0.15) {
+        this.updateStats();
+        this.lastUiUpdate = 0;
+      }
+      return;
+    }
     this.simTime += dt;
     this.trimRecentForaging();
     this.updateColony(dt);
@@ -7602,6 +7810,23 @@ class AntColony3D {
     }
   }
 
+  visionEdgeHitSlop(pointerType = "mouse") {
+    return pointerType === "touch" ? MAP_VISION_EDGE_TOUCH_SLOP : MAP_VISION_EDGE_MOUSE_SLOP;
+  }
+
+  isVisionEdgeDragHit(point, pointerType = "mouse") {
+    if (!point || this.pendingConstructionKind || this.isGameEnded()) return false;
+    const radius = this.mapVisionRadiusValue || this.currentMapVisionRadius();
+    const d = distance2(point.x, point.z, this.nest.x, this.nest.z);
+    return Math.abs(d - radius) <= this.visionEdgeHitSlop(pointerType);
+  }
+
+  setManualMapVisionRadiusFromPoint(point, options = {}) {
+    if (!point) return this.mapVisionRadiusValue;
+    const radius = distance2(point.x, point.z, this.nest.x, this.nest.z);
+    return this.setManualMapVisionRadius(radius, options);
+  }
+
   onPointerDown(event) {
     event.preventDefault();
     try {
@@ -7632,10 +7857,11 @@ class AntColony3D {
     this.dragMoved = false;
     const point = this.screenToGround(event.clientX, event.clientY);
     if (!point) return;
+    const isVisionResize = !this.isCameraPanPointer(event) && this.isVisionEdgeDragHit(point, pointerType);
     this.pointerStart = {
       screenX: event.clientX,
       screenY: event.clientY,
-      mode: this.isCameraPanPointer(event) ? "pan" : "rotate",
+      mode: isVisionResize ? "vision-resize" : this.isCameraPanPointer(event) ? "pan" : "rotate",
       pointerType,
       tapSlop: this.pointerTapSlop(pointerType),
       ...point,
@@ -7678,6 +7904,12 @@ class AntColony3D {
       return;
     }
 
+    if (this.pointerStart.mode === "vision-resize") {
+      const point = this.screenToGround(event.clientX, event.clientY);
+      if (point) this.setManualMapVisionRadiusFromPoint(point, { persist: false, refresh: true });
+      return;
+    }
+
     if (this.pendingConstructionKind === "earthWall") {
       const point = this.screenToGround(event.clientX, event.clientY);
       if (point) {
@@ -7702,7 +7934,13 @@ class AntColony3D {
     const isActivePointer = event.pointerId === this.activePointerId;
     const wasMultiPointerGesture = this.multiPointerGesture || this.pointerMap.size > 1;
     const movedPastTapSlop = isActivePointer ? this.pointerMovedPastTapSlop(event) : true;
-    const shouldHandleTap = isActivePointer && !wasMultiPointerGesture && !this.dragMoved && !movedPastTapSlop;
+    const wasVisionResize = isActivePointer && this.pointerStart?.mode === "vision-resize";
+    if (wasVisionResize && (this.dragMoved || movedPastTapSlop)) {
+      const resizePoint = this.screenToGround(event.clientX, event.clientY);
+      if (resizePoint) this.setManualMapVisionRadiusFromPoint(resizePoint, { persist: true, refresh: true });
+      else this.persistManualMapVisionRadius();
+    }
+    const shouldHandleTap = isActivePointer && !wasVisionResize && !wasMultiPointerGesture && !this.dragMoved && !movedPastTapSlop;
     const point = shouldHandleTap ? this.screenToGround(event.clientX, event.clientY) : null;
     if (point && this.pendingConstructionKind === "earthWall") {
       this.addWallPlacementVertex(point);
@@ -7720,6 +7958,7 @@ class AntColony3D {
     event.preventDefault();
     this.pointerMap.delete(event.pointerId);
     if (event.pointerId === this.activePointerId) {
+      if (this.pointerStart?.mode === "vision-resize") this.persistManualMapVisionRadius();
       this.pointerStart = null;
       this.activePointerId = null;
     }
@@ -8028,6 +8267,7 @@ class AntColony3D {
   }
 
   enterRaidWarning() {
+    if (this.isGameEnded()) return;
     const raid = this.ensureRaidState();
     raid.phase = "warning";
     raid.timer = this.raidWarningSeconds();
@@ -8054,6 +8294,7 @@ class AntColony3D {
   }
 
   beginRaid() {
+    if (this.isGameEnded()) return;
     const raid = this.ensureRaidState();
     this.clearRaidRivals();
     this.raidNestBreachEvents = 0;
@@ -8201,6 +8442,7 @@ class AntColony3D {
   }
 
   resolveRaid(outcome = "repelled") {
+    if (this.isGameEnded()) return;
     const raid = this.ensureRaidState();
     const count = Math.max(1, raid.activeCount || this.raidEnemyCount());
     if (outcome === "repelled") {
@@ -8307,6 +8549,7 @@ class AntColony3D {
 
   updateRaidBreachDamage(dt) {
     const raid = this.ensureRaidState();
+    if (this.isGameEnded()) return;
     if (raid.phase !== "active") return;
     let nestPressure = 0;
     let foodPressure = 0;
@@ -8332,17 +8575,26 @@ class AntColony3D {
     const defense = this.computeDerived().defensePower;
     const loss = Math.min(this.colony.food, (1.8 + pressure * 1.4 + this.colony.enemyThreat * 0.08) / defense);
     this.colony.food = Math.max(0, this.colony.food - loss);
+    const nestDamage = nestPressure > 0
+      ? this.damagePlayerNest(
+          (PLAYER_NEST_BREACH_BASE_DAMAGE + nestPressure * PLAYER_NEST_BREACH_PRESSURE_DAMAGE + this.colony.enemyThreat * 0.12) /
+            Math.max(0.72, Math.sqrt(defense)),
+        )
+      : 0;
     const casualtyChance = nestPressure > 0
       ? clamp((nestPressure - 1) * 0.18 + this.colony.enemyThreat * 0.012 - (defense - 1) * 0.18, 0, 0.62)
       : 0;
     let casualties = 0;
     if (Math.random() < casualtyChance) casualties = this.applyRaidCasualties(1, "breach");
     const pressureArea = nestPressure > 0 ? "巣周辺" : "餌場";
-    this.pushLog(`敵が${pressureArea}を荒らした: 食料-${fmt(loss, 0)}${casualties ? ` / 死亡${casualties}` : ""}`);
+    const nestDamageText = nestDamage > 0 ? `巣耐久-${fmt(nestDamage, 0)} / ` : "";
+    this.pushLog(`敵が${pressureArea}を荒らした: ${nestDamageText}食料-${fmt(loss, 0)}${casualties ? ` / 死亡${casualties}` : ""}`);
+    if (nestPressure > 0 && this.colony.nestDurability <= 0) this.endGame("defeat");
   }
 
   updateRaid(dt) {
     const raid = this.ensureRaidState();
+    if (this.isGameEnded()) return;
 
     if (raid.phase === "calm") {
       raid.timer -= dt;
@@ -8364,6 +8616,7 @@ class AntColony3D {
     if (raid.phase === "active") {
       raid.timer -= dt;
       this.updateRaidBreachDamage(dt);
+      if (this.isGameEnded()) return;
       this.cleanupRaidRivals();
       const remainingRivals = this.raidRivals();
       if (remainingRivals.length === 0 && raid.activeCount > 0) {
@@ -9689,14 +9942,17 @@ class AntColony3D {
   updateSortieCommandButton(button, mode, plannedSortie, cooldownLeft) {
     if (!button) return;
     const normalized = mode === "expedition" ? "expedition" : "defense";
+    const gameEnded = this.isGameEnded();
     const hasSoldiers = plannedSortie > 0;
     const expeditionReady = normalized !== "expedition" || this.canStartExpeditionSortie();
-    button.disabled = cooldownLeft > 0 || !hasSoldiers || !expeditionReady;
+    button.disabled = gameEnded || cooldownLeft > 0 || !hasSoldiers || !expeditionReady;
     button.classList.toggle("active", this.selectedSortieMode === normalized);
     const main = button.querySelector(".button-main");
     const sub = button.querySelector(".button-sub");
     const action = normalized === "expedition" ? "遠征出動" : "防衛出動";
-    const reason = cooldownLeft > 0
+    const reason = gameEnded
+      ? "ゲーム終了"
+      : cooldownLeft > 0
       ? `再出撃まで ${cooldownLeft}s`
       : !hasSoldiers
         ? "兵隊不足"
@@ -9713,6 +9969,7 @@ class AntColony3D {
   }
 
   renderMilitaryPanel(d, plannedSortie, deployedSoldiers, sortiePool, cooldownLeft) {
+    const gameEnded = this.isGameEnded();
     const composition = this.plannedSortieComposition();
     const waveCap = this.sortieSoldierLimit(d);
     const capacities = this.sortiePlanCapacities(d);
@@ -9751,7 +10008,7 @@ class AntColony3D {
         control.title = `巣内 ${fmt(available, 0)} / 一波上限 ${fmt(planLimit, 0)}`;
         const minus = document.createElement("button");
         minus.type = "button";
-        minus.disabled = planned <= 0;
+        minus.disabled = gameEnded || planned <= 0;
         minus.textContent = "-";
         minus.setAttribute("aria-label", `${item.label}を減らす`);
         minus.addEventListener("click", () => this.changeSortiePlan(item.compositionKey, -1));
@@ -9759,7 +10016,7 @@ class AntColony3D {
         plannedText.textContent = fmt(planned, 0);
         const plus = document.createElement("button");
         plus.type = "button";
-        plus.disabled = planned >= available || composition.total >= planLimit;
+        plus.disabled = gameEnded || planned >= available || composition.total >= planLimit;
         plus.textContent = "+";
         plus.setAttribute("aria-label", `${item.label}を増やす`);
         plus.addEventListener("click", () => this.changeSortiePlan(item.compositionKey, 1));
@@ -9927,7 +10184,7 @@ class AntColony3D {
       decrease.type = "button";
       decrease.dataset.buildTask = String(task.id);
       decrease.dataset.crewDelta = "-1";
-      decrease.disabled = assigneeTarget <= 1;
+      decrease.disabled = this.isGameEnded() || assigneeTarget <= 1;
       decrease.title = "担当を1匹減らす";
       decrease.textContent = "-";
       const target = document.createElement("span");
@@ -9936,7 +10193,7 @@ class AntColony3D {
       increase.type = "button";
       increase.dataset.buildTask = String(task.id);
       increase.dataset.crewDelta = "1";
-      increase.disabled = assigneeTarget >= assigneeLimit;
+      increase.disabled = this.isGameEnded() || assigneeTarget >= assigneeLimit;
       increase.title = "担当を1匹増やす";
       increase.textContent = "+";
       controls.append(controlsLabel, decrease, target, increase);
@@ -10117,7 +10374,10 @@ class AntColony3D {
     const raid = this.ensureRaidState();
     const raidTime = Math.max(0, Math.ceil(raid.timer));
     const enemyNestLabel = this.rivalNest.defeated ? "敵巣陥落" : this.isRivalNestKnown() ? `敵巣発見 ${fmt((this.rivalNest.integrity ?? 1) * 100, 0)}%` : `探索範囲 ${fmt(this.mapVisionRadiusValue || this.mapVisionRadius(d), 0)}`;
+    const gameEnded = this.isGameEnded();
+    const gameEndCopy = this.gameEndCopy();
     const raidLabel =
+      gameEnded ? `${gameEndCopy.title}: ${gameEndCopy.detail}` :
       raid.phase === "warning" ? `敵襲予兆 ${raidTime}s / 防衛準備` :
       raid.phase === "active" ? `敵襲防衛中 / 侵入 ${this.raidRivals().length}` :
       raid.phase === "retreating" ? "敵アリ退却中" :
@@ -10133,6 +10393,7 @@ class AntColony3D {
     this.renderNextActionDock(d);
     ui.statFood.textContent = fmt(this.colony.food, 0);
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;
+    if (ui.statNestDurability) ui.statNestDurability.textContent = `${fmt(this.colony.nestDurability, 0)}/${fmt(PLAYER_NEST_MAX_DURABILITY, 0)}`;
     ui.statFoodRate.textContent = fmt(this.recentForagingPerMinute(), 1);
     ui.statTerritory.textContent = fmt(this.colony.territory, 0);
     ui.statNestLevel.textContent = fmt(this.colony.nestLevel, 0);
@@ -10142,12 +10403,20 @@ class AntColony3D {
     ui.statGrowthRate.textContent = fmt(activeBarracksRate, 2);
     ui.statThreat.textContent = fmt(this.colony.enemyThreat, 1);
     ui.colonySummary.textContent =
-      `巣Lv${this.colony.nestLevel} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 盾頭 ${fmt(d.shieldHeads, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 斥候 ${fmt(d.scouts, 0)} / 救護 ${fmt(d.medics, 0)} / 小隊長 ${fmt(d.captains, 0)} / 土木 ${fmt(d.builders, 0)}`;
+      `巣Lv${this.colony.nestLevel} / 巣耐久 ${fmt(this.colony.nestDurability, 0)}/${fmt(PLAYER_NEST_MAX_DURABILITY, 0)} / 働き蟻 ${fmt(d.workers, 0)} / 兵隊 ${fmt(d.normalSoldiers, 0)} / 重兵装 ${fmt(d.heavySoldiers, 0)} / 盾頭 ${fmt(d.shieldHeads, 0)} / 酸射 ${fmt(d.acidShooters, 0)} / 斥候 ${fmt(d.scouts, 0)} / 救護 ${fmt(d.medics, 0)} / 小隊長 ${fmt(d.captains, 0)} / 土木 ${fmt(d.builders, 0)}`;
     ui.growthFill.style.width = `${Math.round(activeBarracksProgress * 100)}%`;
     const pendingConstructionLabel = this.pendingConstructionKind === "earthWall"
       ? `${this.constructionLabel(this.pendingConstructionKind)} 一筆線指定中`
       : this.pendingConstructionKind ? `${this.constructionLabel(this.pendingConstructionKind)} 場所指定中` : "";
-    ui.activeToolLabel.textContent = pendingConstructionLabel || (this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);
+    ui.activeToolLabel.textContent = pendingConstructionLabel || (gameEnded ? raidLabel : this.raidSoonMode ? "通常モード / 敵襲を短縮確認中" : raidLabel);
+    document.body.classList.toggle("is-game-ended", gameEnded);
+    if (ui.gameEndBanner) {
+      ui.gameEndBanner.hidden = !gameEnded;
+      ui.gameEndBanner.classList.toggle("is-victory", this.colony.gameStatus === "victory");
+      ui.gameEndBanner.classList.toggle("is-defeat", this.colony.gameStatus === "defeat");
+      if (ui.gameEndTitle) ui.gameEndTitle.textContent = gameEnded ? gameEndCopy.title : "";
+      if (ui.gameEndDetail) ui.gameEndDetail.textContent = gameEnded ? gameEndCopy.detail : "";
+    }
     if (ui.constructionBuilders) ui.constructionBuilders.textContent = fmt(d.builders, 0);
     if (ui.constructionIdle) ui.constructionIdle.textContent = fmt(Math.max(0, (d.builders ?? 0) - reservedBuilderTargets), 0);
     if (ui.constructionActive) ui.constructionActive.textContent = fmt(activeConstruction, 0);

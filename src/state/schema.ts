@@ -2,6 +2,7 @@ import type { ConstructionKind } from "../config/construction";
 import type { BarracksTrainingVariant } from "../config/barracks";
 
 export type RaidPhase = "calm" | "warning" | "active" | "retreating" | "recovering";
+export type ColonyGameStatus = "playing" | "victory" | "defeat";
 
 export interface RaidState {
   phase: RaidPhase;
@@ -56,6 +57,8 @@ export interface ColonyState {
   attackPower: number;
   defensePower: number;
   nestLevel: number;
+  nestDurability: number;
+  gameStatus: ColonyGameStatus;
   territory: number;
   enemyThreat: number;
   fallenAnts: number;

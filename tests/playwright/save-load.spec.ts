@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { PLAYER_NEST_MAX_DURABILITY } from "../../src/config/balance";
+import { COLONY_SAVE_VERSION } from "../../src/state/colony";
 
 async function waitForSimulation(page) {
   await page.goto("/");
@@ -80,6 +82,8 @@ test("persists colony state through localStorage", async ({ page }) => {
       captainAnts: sim.colony.captainAnts,
       builderAnts: sim.colony.builderAnts,
       nestLevel: sim.colony.nestLevel,
+      nestDurability: sim.colony.nestDurability,
+      gameStatus: sim.colony.gameStatus,
       storageChambers: sim.colony.upgrades.storageChambers,
       chamberExcavation: sim.colony.upgrades.chamberExcavation,
       heavySoldierBrood: sim.colony.upgrades.heavySoldierBrood,
@@ -116,6 +120,8 @@ test("persists colony state through localStorage", async ({ page }) => {
   expect(restored.captainAnts).toBe(1);
   expect(restored.builderAnts).toBe(2);
   expect(restored.nestLevel).toBe(2);
+  expect(restored.nestDurability).toBe(PLAYER_NEST_MAX_DURABILITY);
+  expect(restored.gameStatus).toBe("playing");
   expect(restored.storageChambers).toBe(2);
   expect(restored.chamberExcavation).toBe(1);
   expect(restored.heavySoldierBrood).toBe(1);
@@ -187,6 +193,8 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
       medicAnts: sim.colony.medicAnts,
       captainAnts: sim.colony.captainAnts,
       builderAnts: sim.colony.builderAnts,
+      nestDurability: sim.colony.nestDurability,
+      gameStatus: sim.colony.gameStatus,
       nextEarthworkId: sim.colony.nextEarthworkId,
       nextBarracksOrderId: sim.colony.nextBarracksOrderId,
       barracksQueue: sim.colony.barracksQueue,
@@ -205,7 +213,7 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
     };
   });
 
-  expect(migrated.version).toBe(13);
+  expect(migrated.version).toBe(COLONY_SAVE_VERSION);
   expect(migrated.heavySoldierAnts).toBe(0);
   expect(migrated.shieldHeadAnts).toBe(0);
   expect(migrated.acidShooterAnts).toBe(0);
@@ -213,6 +221,8 @@ test("migrates old colony saves without variant fields", async ({ page }) => {
   expect(migrated.medicAnts).toBe(0);
   expect(migrated.captainAnts).toBe(0);
   expect(migrated.builderAnts).toBe(0);
+  expect(migrated.nestDurability).toBe(PLAYER_NEST_MAX_DURABILITY);
+  expect(migrated.gameStatus).toBe("playing");
   expect(migrated.nextEarthworkId).toBe(1);
   expect(migrated.nextBarracksOrderId).toBe(1);
   expect(migrated.barracksQueue).toEqual([]);

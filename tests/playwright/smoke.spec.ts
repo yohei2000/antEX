@@ -1260,6 +1260,75 @@ test("military tab deploys nest soldiers on player command", async ({ page }) =>
   expect(result.logText).toContain("兵隊出撃");
 });
 
+test("military default sortie composition balances current soldier variants", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.food = 100000;
+    sim.colony.lifetimeFood = 100000;
+    sim.colony.antPopulation = 50;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 14;
+    sim.colony.heavySoldierAnts = 2;
+    sim.colony.shieldHeadAnts = 2;
+    sim.colony.acidShooterAnts = 2;
+    sim.colony.scoutAnts = 2;
+    sim.colony.medicAnts = 2;
+    sim.colony.captainAnts = 2;
+    sim.colony.upgrades.soldierTraining = 2;
+    sim.colony.upgrades.heavySoldierBrood = 1;
+    sim.colony.upgrades.shieldHeadBrood = 1;
+    sim.colony.upgrades.acidShooterBrood = 1;
+    sim.colony.upgrades.scoutBrood = 1;
+    sim.colony.upgrades.medicBrood = 1;
+    sim.colony.upgrades.captainBrood = 1;
+    sim.manualSortiePlan = null;
+    sim.soldierSortieCooldown = 0;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    sim.setActiveTab("soldiers");
+    sim.updateStats();
+
+    const planned = sim.plannedSortieComposition();
+    const started = sim.startSoldierSortie("defense");
+    const deployedCounts = sim.deployedSoldiers().reduce((memo: Record<string, number>, ant: any) => {
+      memo[ant.variant] = (memo[ant.variant] ?? 0) + 1;
+      return memo;
+    }, {});
+
+    return {
+      planned,
+      started,
+      deployedCounts,
+      plannedText: document.querySelector("#sortiePlanTotal")?.textContent ?? "",
+    };
+  });
+
+  expect(result.planned).toMatchObject({
+    heavy: 1,
+    shield: 1,
+    captain: 1,
+    acid: 1,
+    scout: 1,
+    medic: 1,
+    normal: 1,
+    total: 7,
+  });
+  expect(result.plannedText).toContain("7 / 7");
+  expect(result.started).toBe(true);
+  expect(result.deployedCounts).toMatchObject({
+    heavySoldier: 1,
+    shieldHead: 1,
+    captain: 1,
+    acidShooter: 1,
+    scout: 1,
+    medic: 1,
+    soldier: 1,
+  });
+});
+
 test("expedition sortie targets a discovered enemy nest instead of defense patrol", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -1321,6 +1390,125 @@ test("expedition sortie targets a discovered enemy nest instead of defense patro
   expect(result.modes.every((mode: string) => mode === "expedition")).toBe(true);
   expect(Math.max(...result.targetKinds)).toBeLessThan(0.001);
   expect(result.log).toContain("敵巣へ遠征");
+});
+
+test("enemy nest collapse ends the game in victory", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.gameStatus = "playing";
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 36;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 6;
+    sim.rivalNest.discovered = true;
+    sim.rivalNest.defeated = false;
+    sim.rivalNest.integrity = 0.001;
+    sim.soldierSortieCooldown = 0;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    const started = sim.startSoldierSortie("expedition");
+    for (const ant of sim.deployedSoldiers()) {
+      ant.x = sim.rivalNest.x;
+      ant.z = sim.rivalNest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.state = "guard";
+      ant.stun = 0;
+      ant.sortieTimer = 30;
+    }
+    sim.updateRivalNestAssault(0.5);
+    return {
+      started,
+      gameStatus: sim.colony.gameStatus,
+      rivalNestDefeated: sim.rivalNest.defeated,
+      rivalNestIntegrity: sim.rivalNest.integrity,
+      notice: document.querySelector("#raidNotice")?.textContent ?? "",
+      bannerHidden: (document.querySelector("#gameEndBanner") as HTMLElement).hidden,
+      bannerText: (document.querySelector("#gameEndBanner") as HTMLElement).textContent ?? "",
+      nextAction: (document.querySelector("#nextActionPrimaryBtn") as HTMLButtonElement).textContent ?? "",
+      log: sim.colony.battleLog.join("\n"),
+    };
+  });
+
+  expect(result.started).toBe(true);
+  expect(result.gameStatus).toBe("victory");
+  expect(result.rivalNestDefeated).toBe(true);
+  expect(result.rivalNestIntegrity).toBe(0);
+  expect(result.notice).toContain("勝利");
+  expect(result.bannerHidden).toBe(false);
+  expect(result.bannerText).toContain("勝利");
+  expect(result.nextAction).toContain("新しい巣で再開");
+  expect(result.log).toContain("勝利");
+});
+
+test("nest durability reaching zero ends the game in defeat", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.gameStatus = "playing";
+    sim.colony.nestDurability = 5;
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.enemyThreat = 6;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: sim.colony.fallenAnts,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    rival.x = sim.nest.x;
+    rival.z = sim.nest.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.defeated = false;
+    rival.leftRaid = false;
+    sim.colony.raidState.breachTimer = 7.19;
+    const oldRandom = Math.random;
+    Math.random = () => 1;
+    try {
+      sim.updateRaidBreachDamage(0.2);
+    } finally {
+      Math.random = oldRandom;
+    }
+    const trainStarted = sim.startBarracksTraining("worker");
+    return {
+      gameStatus: sim.colony.gameStatus,
+      nestDurability: sim.colony.nestDurability,
+      trainStarted,
+      notice: document.querySelector("#raidNotice")?.textContent ?? "",
+      bannerHidden: (document.querySelector("#gameEndBanner") as HTMLElement).hidden,
+      bannerText: (document.querySelector("#gameEndBanner") as HTMLElement).textContent ?? "",
+      activeTool: document.querySelector("#activeToolLabel")?.textContent ?? "",
+      log: sim.colony.battleLog.join("\n"),
+    };
+  });
+
+  expect(result.gameStatus).toBe("defeat");
+  expect(result.nestDurability).toBe(0);
+  expect(result.trainStarted).toBe(false);
+  expect(result.notice).toContain("敗北");
+  expect(result.bannerHidden).toBe(false);
+  expect(result.bannerText).toContain("敗北");
+  expect(result.activeTool).toContain("敗北");
+  expect(result.log).toContain("巣耐久");
+  expect(result.log).toContain("敗北");
 });
 
 test("barracks tab queues every ant type and completes one ant at a time", async ({ page }) => {

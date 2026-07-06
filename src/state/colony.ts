@@ -1,8 +1,8 @@
-import { RAID_INITIAL_DELAY_SECONDS } from "../config/balance";
+import { PLAYER_NEST_MAX_DURABILITY, RAID_INITIAL_DELAY_SECONDS } from "../config/balance";
 import { UPGRADE_DEFS } from "../config/upgrades";
 import type { ColonyState, RaidState } from "./schema";
 
-export const COLONY_SAVE_VERSION = 13;
+export const COLONY_SAVE_VERSION = 14;
 
 export function createDefaultRaidState(): RaidState {
   return {
@@ -38,6 +38,8 @@ export function createDefaultColony(): ColonyState {
     attackPower: 1,
     defensePower: 1,
     nestLevel: 1,
+    nestDurability: PLAYER_NEST_MAX_DURABILITY,
+    gameStatus: "playing",
     territory: 0,
     enemyThreat: 6,
     fallenAnts: 0,

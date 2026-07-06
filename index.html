@@ -64,6 +64,11 @@
 
       <div id="raidNotice" class="raid-notice" role="status" aria-live="polite" hidden></div>
       <div id="actionFeedback" class="action-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+      <section id="gameEndBanner" class="game-end-banner" role="alertdialog" aria-labelledby="gameEndTitle" aria-describedby="gameEndDetail" hidden>
+        <strong id="gameEndTitle">勝利</strong>
+        <span id="gameEndDetail">敵巣を陥落させました。</span>
+        <button id="gameEndResetBtn" class="primary-button" type="button">新しい巣で再開</button>
+      </section>
 
       <section class="stats-strip" aria-label="コロニー資源">
         <div>
@@ -73,6 +78,10 @@
         <div>
           <span>アリ</span>
           <strong id="statAnts">0/0</strong>
+        </div>
+        <div>
+          <span>巣耐久</span>
+          <strong id="statNestDurability">100/100</strong>
         </div>
         <div>
           <span>直近採餌/分</span>
