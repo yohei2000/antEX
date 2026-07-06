@@ -30,6 +30,66 @@ test("renders the initial ant empire scene", async ({ page }) => {
     const waterProfileSpreads = sim.water.map((water: any) => profileSpread(water.boundaryProfile));
     const stoneSurfaces = sim.stones.flatMap((stone: any) => stone.group?.children?.filter((child: any) => child.name === "natural-stone-surface") ?? []);
     const stoneSurfaceProfileSpreads = stoneSurfaces.map((surface: any) => profileSpread(surface.geometry?.userData?.irregularProfile));
+    const rivalWorkers = typeof sim.rivalNestWorkers === "function"
+      ? sim.rivalNestWorkers()
+      : sim.rivalAnts.filter((rival: any) => rival.isRivalWorker);
+    const rivalWorkerDistances = rivalWorkers.map((rival: any) => Math.hypot(rival.x - sim.rivalNest.x, rival.z - sim.rivalNest.z));
+    const rivalAntsInitial = sim.rivalAnts.length;
+    const raidRivalsInitial = sim.raidRivals().length;
+    const rivalNestDiscoveredInitial = sim.rivalNest.discovered;
+    const rivalNestVisibleInitial = sim.rivalNest.group?.visible ?? false;
+    const visibleRivalWorkersInitial = rivalWorkers.filter((rival: any) => sim.shouldRenderRival(rival)).length;
+    const rivalWorkerProbe = (() => {
+      const probe = sim.ants.find((ant: any) => ant.variant !== "builder") ?? sim.ants[0];
+      if (!probe) return { visibleWorkers: 0, visibleNest: false };
+      const saved = {
+        x: probe.x,
+        z: probe.z,
+        prevX: probe.prevX,
+        prevZ: probe.prevZ,
+        angle: probe.angle,
+        prevAngle: probe.prevAngle,
+        variant: probe.variant,
+        variantConfig: probe.variantConfig,
+        role: probe.role,
+        inNest: probe.inNest,
+        nestStayTimer: probe.nestStayTimer,
+      };
+      probe.inNest = false;
+      probe.nestStayTimer = 0;
+      probe.setVariant?.("scout");
+      probe.role = "worker";
+      probe.x = sim.rivalNest.x;
+      probe.z = sim.rivalNest.z;
+      probe.prevX = probe.x;
+      probe.prevZ = probe.z;
+      sim.updateMapIntel();
+      sim.updateMapVisibility();
+      const visibleWorkers = rivalWorkers.filter((rival: any) => sim.shouldRenderRival(rival)).length;
+      const visibleNest = sim.rivalNest.group?.visible ?? false;
+      Object.assign(probe, saved);
+      return { visibleWorkers, visibleNest };
+    })();
+    const rivalWorkerScaleProbe = (() => {
+      const saved = {
+        enemyThreat: sim.colony.enemyThreat,
+        nestLevel: sim.colony.nestLevel,
+        territory: sim.colony.territory,
+        antPopulation: sim.colony.antPopulation,
+      };
+      const baseTarget = sim.rivalNestWorkerTargetCount?.() ?? rivalWorkers.length;
+      sim.colony.enemyThreat = 42;
+      sim.colony.nestLevel = 7;
+      sim.colony.territory = 16;
+      sim.colony.antPopulation = 180;
+      sim.computeDerived();
+      const scaledTarget = sim.rivalNestWorkerTargetCount?.() ?? rivalWorkers.length;
+      sim.spawnRivalNestWorkers?.();
+      const scaledWorkers = sim.rivalNestWorkers?.().length ?? sim.rivalAnts.filter((rival: any) => rival.isRivalWorker).length;
+      Object.assign(sim.colony, saved);
+      sim.computeDerived();
+      return { baseTarget, scaledTarget, scaledWorkers };
+    })();
     return {
       hasCanvas: Boolean(canvas),
       cssWidth: rect?.width ?? 0,
@@ -44,7 +104,18 @@ test("renders the initial ant empire scene", async ({ page }) => {
         counts[ant.variant] = (counts[ant.variant] ?? 0) + 1;
         return counts;
       }, {}),
-      rivalAnts: sim.rivalAnts.length,
+      rivalAnts: rivalAntsInitial,
+      raidRivals: raidRivalsInitial,
+      rivalWorkers: rivalWorkers.length,
+      visibleRivalWorkersInitial,
+      visibleRivalWorkersAfterProbe: rivalWorkerProbe.visibleWorkers,
+      rivalNestVisibleAfterProbe: rivalWorkerProbe.visibleNest,
+      rivalWorkerMinNestDistance: Math.min(...rivalWorkerDistances),
+      rivalWorkerMaxNestDistance: Math.max(...rivalWorkerDistances),
+      rivalWorkerVariants: rivalWorkers.map((rival: any) => rival.variant),
+      rivalWorkerBaseTarget: rivalWorkerScaleProbe.baseTarget,
+      rivalWorkerScaledTarget: rivalWorkerScaleProbe.scaledTarget,
+      rivalWorkerScaledCount: rivalWorkerScaleProbe.scaledWorkers,
       raidPhase: sim.colony.raidState.phase,
       raidTimer: sim.colony.raidState.timer,
       rivalColor: sim.materials.antRival.color.getHexString(),
@@ -58,8 +129,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
       mapVisionRadius: sim.mapVisionRadiusValue,
       rivalNestExists: Boolean(sim.rivalNest),
       rivalNestDistance: Math.hypot(sim.rivalNest.x - sim.nest.x, sim.rivalNest.z - sim.nest.z),
-      rivalNestDiscovered: sim.rivalNest.discovered,
-      rivalNestVisible: sim.rivalNest.group?.visible ?? false,
+      rivalNestDiscovered: rivalNestDiscoveredInitial,
+      rivalNestVisible: rivalNestVisibleInitial,
       fogOfWarVisible: Boolean(sim.fogOfWar?.visible),
       fogCanvasCount: document.querySelectorAll("#world3d canvas").length,
       fogRenderOrder: sim.fogOfWar?.renderOrder ?? 0,
@@ -136,7 +207,18 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.deployedSoldiers).toBe(0);
   expect(metrics.variantConfigCount).toBe(9);
   expect(metrics.variantCounts.worker).toBe(11);
-  expect(metrics.rivalAnts).toBe(0);
+  expect(metrics.rivalAnts).toBe(9);
+  expect(metrics.raidRivals).toBe(0);
+  expect(metrics.rivalWorkers).toBe(9);
+  expect(metrics.visibleRivalWorkersInitial).toBe(0);
+  expect(metrics.visibleRivalWorkersAfterProbe).toBeGreaterThan(0);
+  expect(metrics.rivalNestVisibleAfterProbe).toBe(true);
+  expect(metrics.rivalWorkerVariants.every((variant) => variant === "worker")).toBe(true);
+  expect(metrics.rivalWorkerMinNestDistance).toBeGreaterThanOrEqual(4);
+  expect(metrics.rivalWorkerMaxNestDistance).toBeLessThanOrEqual(36);
+  expect(metrics.rivalWorkerBaseTarget).toBe(9);
+  expect(metrics.rivalWorkerScaledTarget).toBeGreaterThan(metrics.rivalWorkerBaseTarget);
+  expect(metrics.rivalWorkerScaledCount).toBe(metrics.rivalWorkerScaledTarget);
   expect(metrics.raidPhase).toBe("calm");
   expect(metrics.raidTimer).toBeGreaterThan(0);
   expect(metrics.rivalColor).toBe("8a4a2f");
@@ -3874,7 +3956,7 @@ test("rival raids warn first and enter from the hidden enemy nest", async ({ pag
     const warning = {
       phase: sim.colony.raidState.phase,
       timer: sim.colony.raidState.timer,
-      rivals: sim.rivalAnts.length,
+      rivals: sim.raidRivals().length,
       activeCount: sim.colony.raidState.activeCount,
       log: sim.colony.battleLog.join("\n"),
     };
@@ -4063,6 +4145,106 @@ test("sentry mounds reveal raid direction and set warning formation", async ({ p
   expect(result.sentry.notice).toContain("見張り塚");
   expect(result.sentry.log).toContain("見張り塚");
   expect(result.sentry.log).toContain("布陣");
+});
+
+test("rival nest workers scale up and start contact fights", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const baseTarget = sim.rivalNestWorkerTargetCount();
+    const baseWorkers = sim.rivalNestWorkers().length;
+
+    sim.colony.enemyThreat = 42;
+    sim.colony.nestLevel = 7;
+    sim.colony.territory = 16;
+    sim.colony.antPopulation = 180;
+    sim.computeDerived();
+    const scaledTarget = sim.rivalNestWorkerTargetCount();
+    sim.spawnRivalNestWorkers();
+    const enemyWorkers = sim.rivalNestWorkers();
+
+    const setupAnt = (ant: any, variant: string, x: number, z: number, sortie = false) => {
+      ant.setVariant?.(variant);
+      ant.role = sortie ? "guard" : "worker";
+      ant.isSortieSoldier = sortie;
+      ant.sortieTimer = sortie ? 30 : 0;
+      ant.currentTask = sortie ? "sortie" : "explore";
+      ant.state = "explore";
+      ant.inNest = false;
+      ant.nestStayTimer = 0;
+      ant.fleeTimer = 0;
+      ant.stun = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.carrying = 0;
+      ant.x = x;
+      ant.z = z;
+      ant.prevX = x;
+      ant.prevZ = z;
+      ant.angle = 0;
+      ant.prevAngle = 0;
+    };
+    const setupEnemy = (rival: any, x: number, z: number) => {
+      rival.x = x;
+      rival.z = z;
+      rival.prevX = x;
+      rival.prevZ = z;
+      rival.retreat = 0;
+      rival.leftRaid = false;
+      rival.defeated = false;
+      rival.clash = null;
+      rival.fightCooldown = 0;
+      rival.state = "rival";
+      rival.aggression = 0.14;
+      rival.stubbornness = 0.24;
+      rival.scale = 0.9;
+    };
+
+    const workerEnemy = enemyWorkers[0];
+    const workerAnt = sim.ants[0];
+    const workerX = sim.rivalNest.x - 12;
+    const workerZ = sim.rivalNest.z;
+    setupEnemy(workerEnemy, workerX, workerZ);
+    setupAnt(workerAnt, "worker", workerX + 0.45, workerZ, false);
+    const workerContactStarted = workerEnemy.resolveAntContacts(sim);
+    const workerContactState = workerAnt.state;
+    const workerEnemyGrapplers = workerEnemy.clash?.ants?.length ?? 0;
+
+    const attackerEnemy = enemyWorkers.find((rival: any) => rival !== workerEnemy);
+    const attackerAnt = sim.ants.find((ant: any) => ant !== workerAnt);
+    const attackerX = sim.rivalNest.x + 12;
+    const attackerZ = sim.rivalNest.z;
+    setupEnemy(attackerEnemy, attackerX, attackerZ);
+    setupAnt(attackerAnt, "soldier", attackerX + 0.45, attackerZ, true);
+    const attackerContactStarted = attackerEnemy.resolveAntContacts(sim);
+    const attackerContactState = attackerAnt.state;
+    const attackerEnemyGrapplers = attackerEnemy.clash?.ants?.length ?? 0;
+
+    return {
+      baseTarget,
+      baseWorkers,
+      scaledTarget,
+      scaledWorkers: enemyWorkers.length,
+      workerContactStarted,
+      workerContactState,
+      workerEnemyGrapplers,
+      attackerContactStarted,
+      attackerContactState,
+      attackerEnemyGrapplers,
+    };
+  });
+
+  expect(result.baseTarget).toBe(9);
+  expect(result.baseWorkers).toBe(9);
+  expect(result.scaledTarget).toBeGreaterThan(result.baseTarget);
+  expect(result.scaledWorkers).toBe(result.scaledTarget);
+  expect(result.workerContactStarted).toBe(true);
+  expect(result.workerContactState).toBe("clash");
+  expect(result.workerEnemyGrapplers).toBeGreaterThanOrEqual(1);
+  expect(result.attackerContactStarted).toBe(true);
+  expect(result.attackerContactState).toBe("clash");
+  expect(result.attackerEnemyGrapplers).toBeGreaterThanOrEqual(1);
 });
 
 test("rival ant combat grapples before the loser exits or remains", async ({ page }) => {
