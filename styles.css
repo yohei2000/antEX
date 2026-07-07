@@ -50,6 +50,7 @@ input {
 
 button {
   color: inherit;
+  touch-action: none;
 }
 
 .app-shell,

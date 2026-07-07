@@ -5,7 +5,7 @@ async function waitForSimulation(page, path = "/") {
   await page.waitForFunction(() => window.__ANT_SIM_READY === true);
 }
 
-test("vision edge drag resizes the exploration range", async ({ page }) => {
+test("exploration edge drag resizes worker activity range without revealing fog", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -38,15 +38,17 @@ test("vision edge drag resizes the exploration range", async ({ page }) => {
     sim.exploredPatches = [];
     sim.manualMapVisionRadius = null;
     sim.updateMapIntel();
-    const before = sim.mapVisionRadiusValue;
+    const before = sim.workerActivityRadius();
+    const beforeFogRevealRadius = sim.fogOfWarMaterial.uniforms.revealRadius.value;
     const growTarget = Math.min(sim.worldRadius - 18, before + 52);
     const growStart = toScreen(sim.nest.x + before, sim.nest.z);
     const growEnd = toScreen(sim.nest.x + growTarget, sim.nest.z);
     dispatch("pointerdown", growStart, 1);
     dispatch("pointermove", growEnd, 1);
     dispatch("pointerup", growEnd, 0);
-    const afterGrow = sim.mapVisionRadiusValue;
+    const afterGrow = sim.workerActivityRadius();
     const grownVisible = sim.isPointVisible(sim.nest.x + before + 35, sim.nest.z, 0);
+    const grownInsideActivity = before + 35 <= afterGrow;
 
     const shrinkTarget = Math.max(sim.manualMapVisionRadiusMin() + 4, before - 22);
     const shrinkStart = toScreen(sim.nest.x + afterGrow, sim.nest.z);
@@ -54,18 +56,22 @@ test("vision edge drag resizes the exploration range", async ({ page }) => {
     dispatch("pointerdown", shrinkStart, 1);
     dispatch("pointermove", shrinkEnd, 1);
     dispatch("pointerup", shrinkEnd, 0);
-    const afterShrink = sim.mapVisionRadiusValue;
-    const outsideAfterShrink = sim.isPointVisible(sim.nest.x + afterGrow - 4, sim.nest.z, 0);
+    const afterShrink = sim.workerActivityRadius();
+    const outsideActivityAfterShrink = afterGrow - 4 > afterShrink;
+    const outsideVisibleAfterShrink = sim.isPointVisible(sim.nest.x + afterGrow - 4, sim.nest.z, 0);
     const stored = Number(localStorage.getItem("ant3d.manualMapVisionRadius") ?? "0");
 
     return {
       before,
+      beforeFogRevealRadius,
       growTarget,
       afterGrow,
       grownVisible,
+      grownInsideActivity,
       shrinkTarget,
       afterShrink,
-      outsideAfterShrink,
+      outsideActivityAfterShrink,
+      outsideVisibleAfterShrink,
       stored,
       fogRevealRadius: sim.fogOfWarMaterial.uniforms.revealRadius.value,
       edgeScale: sim.visionEdge.scale.x,
@@ -74,11 +80,13 @@ test("vision edge drag resizes the exploration range", async ({ page }) => {
 
   expect(result.afterGrow).toBeGreaterThan(result.before + 35);
   expect(result.afterGrow).toBeCloseTo(result.growTarget, 0);
-  expect(result.grownVisible).toBe(true);
+  expect(result.grownInsideActivity).toBe(true);
+  expect(result.grownVisible).toBe(false);
   expect(result.afterShrink).toBeLessThan(result.before - 10);
   expect(result.afterShrink).toBeCloseTo(result.shrinkTarget, 0);
-  expect(result.outsideAfterShrink).toBe(false);
+  expect(result.outsideActivityAfterShrink).toBe(true);
+  expect(result.outsideVisibleAfterShrink).toBe(false);
   expect(result.stored).toBeCloseTo(result.afterShrink, 1);
-  expect(result.fogRevealRadius).toBeCloseTo(result.afterShrink, 1);
+  expect(result.fogRevealRadius).toBeCloseTo(result.beforeFogRevealRadius, 1);
   expect(result.edgeScale).toBeCloseTo(result.afterShrink, 1);
 });

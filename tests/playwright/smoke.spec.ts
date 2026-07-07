@@ -127,6 +127,8 @@ test("renders the initial ant empire scene", async ({ page }) => {
       foodSpawnSites: sim.foodSpawnSites.length,
       worldRadius: sim.worldRadius,
       mapVisionRadius: sim.mapVisionRadiusValue,
+      mapActivityRadius: sim.workerActivityRadius?.() ?? sim.mapVisionRadiusValue,
+      nestVisionRadius: sim.currentNestVisionRadius?.() ?? sim.mapVisionRadius(),
       rivalNestExists: Boolean(sim.rivalNest),
       rivalNestDistance: Math.hypot(sim.rivalNest.x - sim.nest.x, sim.rivalNest.z - sim.nest.z),
       rivalNestDiscovered: rivalNestDiscoveredInitial,
@@ -229,6 +231,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.worldRadius).toBeGreaterThanOrEqual(260);
   expect(metrics.mapVisionRadius).toBeGreaterThanOrEqual(70);
   expect(metrics.mapVisionRadius).toBeLessThanOrEqual(90);
+  expect(metrics.mapActivityRadius).toBeCloseTo(metrics.mapVisionRadius, 1);
   expect(metrics.rivalNestExists).toBe(true);
   expect(metrics.rivalNestDistance).toBeGreaterThan(metrics.mapVisionRadius);
   expect(metrics.rivalNestDistance).toBeGreaterThan(420);
@@ -242,7 +245,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.fogDepthWrite).toBe(false);
   expect(metrics.fogMaterialTransparent).toBe(true);
   expect(metrics.fogMaterialToneMapped).toBe(false);
-  expect(metrics.fogUniformRevealRadius).toBeCloseTo(metrics.mapVisionRadius, 1);
+  expect(metrics.fogUniformRevealRadius).toBeCloseTo(metrics.nestVisionRadius, 1);
   expect(metrics.fogUniformExploredCount).toBe(0);
   expect(metrics.fogUniformActiveSightCount).toBeGreaterThanOrEqual(0);
   expect(metrics.fogUniformRememberedAlpha).toBeGreaterThan(0.3);
@@ -381,6 +384,9 @@ test("near food supports early colonies while distant food unlocks wider growth"
     sim.colony.nestLevel = 2;
     sim.colony.territory = 0;
     sim.foragingTerritoryProgress = 0;
+    sim.updateMapIntel();
+    const activityBeforeTerritory = sim.workerActivityRadius();
+    const visionBeforeTerritory = sim.fogOfWarMaterial.uniforms.revealRadius.value;
     sim.autoLevelNest();
     const blockedNestLevel = sim.colony.nestLevel;
 
@@ -389,6 +395,10 @@ test("near food supports early colonies while distant food unlocks wider growth"
     const territoryAfterFarFood = sim.colony.territory;
     sim.autoLevelNest();
     const nestLevelAfterTerritory = sim.colony.nestLevel;
+    sim.updateMapIntel();
+    const activityAfterTerritory = sim.workerActivityRadius();
+    const visionAfterTerritory = sim.fogOfWarMaterial.uniforms.revealRadius.value;
+    const activityEdgeVisibleAfterTerritory = sim.isPointVisible(sim.nest.x + activityAfterTerritory - 2, sim.nest.z, 0);
 
     sim.recentForagingSamples = [];
     sim.recentForagingTotal = 0;
@@ -428,6 +438,11 @@ test("near food supports early colonies while distant food unlocks wider growth"
       blockedNestLevel,
       territoryAfterFarFood,
       nestLevelAfterTerritory,
+      activityBeforeTerritory,
+      activityAfterTerritory,
+      visionBeforeTerritory,
+      visionAfterTerritory,
+      activityEdgeVisibleAfterTerritory,
     };
   });
 
@@ -443,6 +458,9 @@ test("near food supports early colonies while distant food unlocks wider growth"
   expect(result.blockedNestLevel).toBe(2);
   expect(result.territoryAfterFarFood).toBeGreaterThanOrEqual(1);
   expect(result.nestLevelAfterTerritory).toBe(3);
+  expect(result.activityAfterTerritory).toBeGreaterThan(result.activityBeforeTerritory);
+  expect(result.visionAfterTerritory).toBeCloseTo(result.visionBeforeTerritory, 1);
+  expect(result.activityEdgeVisibleAfterTerritory).toBe(false);
 });
 
 test("top stats omit territory display", async ({ page }) => {
@@ -555,6 +573,84 @@ test("ants reveal current sight while remembered areas stay hazed", async ({ pag
   expect(result.uniformPatchX).toBeCloseTo(result.x, 5);
   expect(result.uniformPatchZ).toBeCloseTo(result.z, 5);
   expect(result.patchRadius).toBeGreaterThan(8);
+});
+
+test("worker activity range tugs ordinary foragers back without granting sight", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.exploredPatches = [];
+    sim.manualMapVisionRadius = null;
+    sim.colony.territory = 3;
+    sim.colony.nestLevel = 1;
+    sim.updateMapIntel();
+
+    const activity = sim.workerActivityRadius();
+    const vision = sim.currentNestVisionRadius();
+    const x = sim.nest.x + activity + 26;
+    const z = sim.nest.z;
+    const beforeVisible = sim.isPointVisible(x, z, 0);
+    const ant = sim.ants.find((candidate: any) => candidate.variant === "worker" && !candidate.isSortieSoldier);
+    const saved = {
+      x: ant.x,
+      z: ant.z,
+      prevX: ant.prevX,
+      prevZ: ant.prevZ,
+      role: ant.role,
+      state: ant.state,
+      energy: ant.energy,
+      homeTimer: ant.homeTimer,
+      carrying: ant.carrying,
+      foodSourceId: ant.foodSourceId,
+      inNest: ant.inNest,
+      nestStayTimer: ant.nestStayTimer,
+      wander: ant.wander,
+      traits: { ...ant.traits },
+    };
+    ant.inNest = false;
+    ant.nestStayTimer = 0;
+    ant.role = "worker";
+    ant.state = "explore";
+    ant.energy = 1;
+    ant.homeTimer = 0;
+    ant.carrying = 0;
+    ant.foodSourceId = null;
+    ant.traits.curiosity = 0.2;
+    ant.traits.persistence = 1;
+    ant.wander = Math.PI * 0.5;
+    ant.x = x;
+    ant.z = z;
+    ant.prevX = x;
+    ant.prevZ = z;
+
+    const steering = { x: 0, z: 0 };
+    ant.updateExplore(1, sim, steering, ant.sense(sim));
+    const homeDistance = Math.hypot(sim.nest.x - ant.x, sim.nest.z - ant.z) || 1;
+    const homePull = steering.x * ((sim.nest.x - ant.x) / homeDistance) + steering.z * ((sim.nest.z - ant.z) / homeDistance);
+    const homeTimerAfter = ant.homeTimer;
+    ant.inNest = true;
+    ant.nestStayTimer = 12;
+    const afterVisible = sim.isPointVisible(x, z, 0);
+    Object.assign(ant, saved);
+    ant.traits = saved.traits;
+
+    return {
+      activity,
+      vision,
+      beforeVisible,
+      afterVisible,
+      homePull,
+      homeTimerAfter,
+    };
+  });
+
+  expect(result.activity).toBeGreaterThan(result.vision);
+  expect(result.beforeVisible).toBe(false);
+  expect(result.afterVisible).toBe(false);
+  expect(result.homePull).toBeGreaterThan(0.25);
+  expect(result.homeTimerAfter).toBeGreaterThan(0);
 });
 
 test("completed earthworks add live sight to the map fog", async ({ page }) => {
@@ -735,6 +831,7 @@ test("enemy nest stays hidden until reconnaissance or vision reveal it", async (
     sim.colony.woundedAnts = 0;
     sim.colony.soldierAnts = 3;
     sim.colony.scoutAnts = 1;
+    sim.colony.territory = 4;
     sim.colony.upgrades.scoutBrood = 1;
     sim.computeDerived();
     sim.syncAntPopulation();
@@ -745,6 +842,8 @@ test("enemy nest stays hidden until reconnaissance or vision reveal it", async (
       known: sim.isRivalNestKnown(),
       visible: sim.rivalNest.group?.visible ?? false,
       raidIntel: sim.hasRaidDirectionIntel(),
+      activity: sim.workerActivityRadius(),
+      vision: sim.currentNestVisionRadius(),
       target: sim.currentSortieTarget(),
       reconReady: sim.canStartReconSortie(),
       reconButtonDisabled: (document.querySelector("#reconSortieBtn") as HTMLButtonElement).disabled,
@@ -800,6 +899,7 @@ test("enemy nest stays hidden until reconnaissance or vision reveal it", async (
   expect(result.afterScoutOwnership.known).toBe(false);
   expect(result.afterScoutOwnership.visible).toBe(false);
   expect(result.afterScoutOwnership.raidIntel).toBe(true);
+  expect(result.afterScoutOwnership.activity).toBeGreaterThan(result.afterScoutOwnership.vision);
   expect(result.afterScoutOwnership.target).toBeNull();
   expect(result.afterScoutOwnership.reconReady).toBe(true);
   expect(result.afterScoutOwnership.reconButtonDisabled).toBe(false);
@@ -809,6 +909,7 @@ test("enemy nest stays hidden until reconnaissance or vision reveal it", async (
   expect(result.afterRecon.reconVariants).toEqual(["scout"]);
   expect(result.afterRecon.firstTarget?.kind).toBe("recon-search");
   expect(result.afterRecon.firstTargetDistance).toBeGreaterThan(result.initial.vision);
+  expect(result.afterRecon.firstTargetDistance).toBeGreaterThan(result.afterScoutOwnership.activity);
   expect(result.afterRecon.knownAfterLaunch).toBe(false);
   expect(result.afterRecon.known).toBe(true);
   expect(result.afterRecon.visible).toBe(true);
@@ -1102,11 +1203,7 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
     });
   });
   const client = await page.context().newCDPSession(page);
-  const touchButton = async (selector: string, dy: number) => {
-    const box = await page.locator(selector).boundingBox();
-    if (!box) throw new Error(`${selector} is not visible`);
-    const x = box.x + box.width / 2;
-    const y = box.y + box.height / 2;
+  const dispatchTouchAt = async (x: number, y: number, dy: number, endType: "touchEnd" | "touchCancel" = "touchEnd") => {
     await client.send("Input.dispatchTouchEvent", {
       type: "touchStart",
       touchPoints: [{ x, y, radiusX: 5, radiusY: 5, id: 1 }],
@@ -1115,7 +1212,12 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
       type: "touchMove",
       touchPoints: [{ x, y: y + dy, radiusX: 5, radiusY: 5, id: 1 }],
     });
-    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await client.send("Input.dispatchTouchEvent", { type: endType, touchPoints: [] });
+  };
+  const touchButton = async (selector: string, dy: number, endType: "touchEnd" | "touchCancel" = "touchEnd") => {
+    const box = await page.locator(selector).boundingBox();
+    if (!box) throw new Error(`${selector} is not visible`);
+    await dispatchTouchAt(box.x + box.width / 2, box.y + box.height / 2, dy, endType);
   };
 
   await touchButton("#pauseBtn", 0);
@@ -1141,10 +1243,33 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
     button.classList.remove("is-paused");
     (window as any).__pauseButtonClicks = 0;
   });
-  await touchButton("#pauseBtn", 36);
+  await touchButton("#pauseBtn", 56);
   await page.waitForTimeout(260);
   expect(await page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(0);
   expect(await page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(false);
+
+  await touchButton("#pauseBtn", 16, "touchCancel");
+  await expect.poll(() => page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(true);
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = false;
+    (window as any).__pauseButtonClicks = 0;
+    sim.colony.food = 1000;
+    sim.colony.lifetimeFood = 1000;
+    sim.colony.antPopulation = 20;
+    sim.colony.barracksQueue = [];
+    sim.setPanelHidden(false, false);
+    sim.setPanelCompact(true, false);
+    sim.setActiveTab("growth");
+    sim.updateStats();
+  });
+  await touchButton("#nextActionPrimaryBtn", 32);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue[0]?.variant)).toBe("worker");
+  await page.waitForTimeout(320);
+  expect(await page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
 
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
@@ -1730,6 +1855,7 @@ test("nest durability reaching zero ends the game in defeat", async ({ page }) =
     rival.defeated = false;
     rival.leftRaid = false;
     sim.colony.raidState.breachTimer = 7.19;
+    const beforeFood = sim.colony.food;
     const oldRandom = Math.random;
     Math.random = () => 1;
     try {
@@ -1741,6 +1867,8 @@ test("nest durability reaching zero ends the game in defeat", async ({ page }) =
     return {
       gameStatus: sim.colony.gameStatus,
       nestDurability: sim.colony.nestDurability,
+      beforeFood,
+      food: sim.colony.food,
       trainStarted,
       notice: document.querySelector("#raidNotice")?.textContent ?? "",
       bannerHidden: (document.querySelector("#gameEndBanner") as HTMLElement).hidden,
@@ -1752,6 +1880,7 @@ test("nest durability reaching zero ends the game in defeat", async ({ page }) =
 
   expect(result.gameStatus).toBe("defeat");
   expect(result.nestDurability).toBe(0);
+  expect(result.food).toBeLessThan(result.beforeFood);
   expect(result.trainStarted).toBe(false);
   expect(result.notice).toContain("敗北");
   expect(result.bannerHidden).toBe(false);
@@ -4905,7 +5034,7 @@ test("rival ants actively harass ants near food instead of only camping", async 
   expect(result.casualties).toBeGreaterThanOrEqual(1);
 });
 
-test("raid food pressure damages food without killing ants inside the nest", async ({ page }) => {
+test("raid food pressure does not damage stored food or kill ants inside the nest", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -4984,12 +5113,13 @@ test("raid food pressure damages food without killing ants inside the nest", asy
     };
   });
 
-  expect(result.after.food).toBeLessThan(result.before.food);
+  expect(result.after.food).toBe(result.before.food);
   expect(result.after.population).toBe(result.before.population);
   expect(result.after.fallen).toBe(result.before.fallen);
   expect(result.after.ants).toBe(result.before.ants);
   expect(result.after.casualties).toBe(0);
   expect(result.after.log).toContain("餌場");
+  expect(result.after.log).toContain("貯蔵食料への被害なし");
   expect(result.after.log).not.toContain("死亡1");
 });
 
@@ -5064,13 +5194,14 @@ test("raid held at food resolves without hidden nest casualties", async ({ page 
     };
   });
 
-  expect(result.after.food).toBeLessThan(result.before.food);
+  expect(result.after.food).toBe(result.before.food);
   expect(result.after.population).toBe(result.before.population);
   expect(result.after.wounded).toBe(result.before.wounded);
   expect(result.after.fallen).toBe(result.before.fallen);
   expect(result.after.ants).toBe(result.before.ants);
   expect(result.after.casualties).toBe(0);
   expect(result.after.log).toContain("餌場被害");
+  expect(result.after.log).toContain("貯蔵食料への被害なし");
   expect(result.after.log).not.toContain("死亡1");
 });
 

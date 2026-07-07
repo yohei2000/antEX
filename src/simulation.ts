@@ -32,8 +32,6 @@ import {
   RAID_ACTIVE_SECONDS,
   RAID_BASE_INTERVAL_SECONDS,
   RAID_EXIT_PADDING,
-  RAID_FOOD_PRESSURE_LOSS_SCALE,
-  RAID_FOOD_THREAT_LOSS_SCALE,
   RAID_GRAPPLER_RECRUIT_RANGE,
   RAID_HARASSMENT_RANGE,
   RAID_NEST_PRESSURE_LOSS_SCALE,
@@ -449,11 +447,8 @@ const SQUAD_RALLY_SPACING = 16;
 const SQUAD_THREAT_SPACING = 8.5;
 const WORLD_RADIUS = 276;
 const MAP_BASE_VISION_RADIUS = 78;
-const MAP_TERRITORY_VISION_BONUS = 11.5;
-const MAP_NEST_LEVEL_VISION_BONUS = 4.2;
-const MAP_SENTRY_VISION_BONUS = 22;
-const MAP_SCOUT_VISION_BONUS = 34;
-const MAP_SCOUT_UPGRADE_VISION_BONUS = 10;
+const MAP_TERRITORY_ACTIVITY_BONUS = 11.5;
+const MAP_NEST_LEVEL_ACTIVITY_BONUS = 4.2;
 const MAP_VISION_FADE_WIDTH = 9;
 const MAP_UNEXPLORED_MAX_ALPHA = 0.995;
 const MAP_UNEXPLORED_COLOR = 0x030403;
@@ -493,7 +488,8 @@ const POINTER_TAP_SLOP_BY_TYPE = {
   pen: 7,
   touch: 12,
 };
-const DOM_BUTTON_TOUCH_TAP_SLOP = 26;
+const DOM_BUTTON_TOUCH_TAP_SLOP = 42;
+const DOM_BUTTON_TOUCH_TARGET_PADDING = DOM_BUTTON_TOUCH_TAP_SLOP;
 const DOM_BUTTON_TOUCH_TAP_MAX_MS = 700;
 const DOM_BUTTON_SUPPRESS_CLICK_MS = 700;
 const EXPLORED_PATCH_LIMIT = 80;
@@ -1436,6 +1432,16 @@ class Ant3D {
     steering.z += Math.cos(this.wander) * (0.58 + this.traits.curiosity * 0.5);
 
     const homeDistance = distance2(this.x, this.z, sim.nest.x, sim.nest.z);
+    if (!this.isSortieSoldier && this.role !== "guard" && this.variantConfig.forageEfficiency > 0) {
+      const activityRadius = sim.workerActivityRadius?.() ?? sim.mapVisionRadiusValue ?? sim.worldRadius;
+      const buffer = 10 + this.traits.persistence * 7;
+      if (homeDistance > activityRadius - buffer) {
+        const pull = clamp((homeDistance - (activityRadius - buffer)) / 34, 0.38, 2.25);
+        steering.x += ((sim.nest.x - this.x) / (homeDistance || 1)) * pull;
+        steering.z += ((sim.nest.z - this.z) / (homeDistance || 1)) * pull;
+        if (homeDistance > activityRadius + 18) this.homeTimer += dt * 0.8;
+      }
+    }
     if (homeDistance > sim.worldRadius * 0.72) {
       steering.x += ((sim.nest.x - this.x) / homeDistance) * 0.9;
       steering.z += ((sim.nest.z - this.z) / homeDistance) * 0.9;
@@ -3915,6 +3921,8 @@ class AntColony3D {
       group: null,
     };
     this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.mapActivityRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.nestVisionRadiusValue = MAP_BASE_VISION_RADIUS;
     this.manualMapVisionRadius = this.readManualMapVisionRadius();
     this.fogOfWar = null;
     this.fogOfWarMaterial = null;
@@ -5234,7 +5242,7 @@ class AntColony3D {
   createFogOfWar() {
     const uniforms = {
       visionCenter: { value: new THREE.Vector2(this.nest.x, this.nest.z) },
-      revealRadius: { value: this.mapVisionRadiusValue },
+      revealRadius: { value: this.nestVisionRadiusValue || this.mapVisionRadius() },
       fadeWidth: { value: MAP_VISION_FADE_WIDTH },
       maxAlpha: { value: MAP_UNEXPLORED_MAX_ALPHA },
       rememberedAlpha: { value: MAP_REMEMBERED_FOG_ALPHA },
@@ -5322,18 +5330,16 @@ class AntColony3D {
     this.visionEdge = edge;
   }
 
-  mapVisionRadius(derived = this.derived) {
-    const d = derived && Number.isFinite(Number(derived.activeAnts)) ? derived : this.computeDerived();
-    const scoutCount = Math.max(0, Math.floor(d.scouts ?? 0));
-    const scoutBrood = upgradeLevel(this.colony.upgrades, "scoutBrood");
+  mapActivityRadius() {
     const radius =
       MAP_BASE_VISION_RADIUS +
-      Math.max(0, this.colony.territory) * MAP_TERRITORY_VISION_BONUS +
-      Math.max(0, this.colony.nestLevel - 1) * MAP_NEST_LEVEL_VISION_BONUS +
-      this.sentryMoundCount() * MAP_SENTRY_VISION_BONUS +
-      scoutCount * MAP_SCOUT_VISION_BONUS +
-      scoutBrood * MAP_SCOUT_UPGRADE_VISION_BONUS;
+      Math.max(0, this.colony.territory) * MAP_TERRITORY_ACTIVITY_BONUS +
+      Math.max(0, this.colony.nestLevel - 1) * MAP_NEST_LEVEL_ACTIVITY_BONUS;
     return clamp(radius, MAP_BASE_VISION_RADIUS, this.worldRadius + 24);
+  }
+
+  mapVisionRadius() {
+    return clamp(MAP_BASE_VISION_RADIUS, MAP_BASE_VISION_RADIUS, this.worldRadius + 24);
   }
 
   manualMapVisionRadiusMin() {
@@ -5350,10 +5356,19 @@ class AntColony3D {
   }
 
   currentMapVisionRadius(derived = this.derived) {
-    const automaticRadius = this.mapVisionRadius(derived);
+    const automaticRadius = this.mapActivityRadius(derived);
     if (this.manualMapVisionRadius == null) return automaticRadius;
     this.manualMapVisionRadius = this.normalizeManualMapVisionRadius(this.manualMapVisionRadius);
     return this.manualMapVisionRadius;
+  }
+
+  currentNestVisionRadius(derived = this.derived) {
+    const radius = this.nestVisionRadiusValue || this.mapVisionRadius(derived);
+    return clamp(radius, MAP_BASE_VISION_RADIUS, this.worldRadius + 24);
+  }
+
+  workerActivityRadius(derived = this.derived) {
+    return this.mapVisionRadiusValue || this.currentMapVisionRadius(derived);
   }
 
   readManualMapVisionRadius() {
@@ -5379,6 +5394,7 @@ class AntColony3D {
   setManualMapVisionRadius(radius, { persist = false, refresh = true } = {}) {
     this.manualMapVisionRadius = this.normalizeManualMapVisionRadius(radius);
     this.mapVisionRadiusValue = this.manualMapVisionRadius;
+    this.mapActivityRadiusValue = this.manualMapVisionRadius;
     if (persist) this.persistManualMapVisionRadius();
     if (refresh) {
       this.updateMapIntel();
@@ -5469,7 +5485,7 @@ class AntColony3D {
   }
 
   isPointVisible(x, z, padding = 0) {
-    const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    const radius = this.currentNestVisionRadius();
     if (distance2(x, z, this.nest.x, this.nest.z) <= radius + padding) return true;
     if (this.isPointInActiveAntSight(x, z, padding)) return true;
     if (this.isPointInBuildingSight(x, z, padding)) return true;
@@ -5504,6 +5520,8 @@ class AntColony3D {
   updateMapIntel() {
     const derived = this.computeDerived();
     this.mapVisionRadiusValue = this.currentMapVisionRadius(derived);
+    this.mapActivityRadiusValue = this.mapVisionRadiusValue;
+    this.nestVisionRadiusValue = this.mapVisionRadius(derived);
     const discoveredByVision = this.isPointVisible(this.rivalNest.x, this.rivalNest.z, 0);
     const discoveredByRecon = Boolean(this.rivalNestSpottingReconScout());
     if (!this.rivalNest.discovered && (discoveredByVision || discoveredByRecon)) {
@@ -5519,7 +5537,7 @@ class AntColony3D {
   }
 
   activeSightPatchesForShader() {
-    const baseRadius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    const baseRadius = this.currentNestVisionRadius();
     const buildingPatches = [];
     for (const earthwork of this.earthworks ?? []) {
       for (const patch of this.sightPatchesForEarthwork(earthwork)) {
@@ -5554,7 +5572,7 @@ class AntColony3D {
 
   updateMapVisibility() {
     if (this.fogOfWarMaterial) {
-      this.fogOfWarMaterial.uniforms.revealRadius.value = this.mapVisionRadiusValue || this.mapVisionRadius();
+      this.fogOfWarMaterial.uniforms.revealRadius.value = this.currentNestVisionRadius();
       this.fogOfWarMaterial.uniforms.visionCenter.value.set(this.nest.x, this.nest.z);
       const patches = this.fogOfWarMaterial.uniforms.exploredPatches.value;
       const count = Math.min(EXPLORED_PATCH_LIMIT, this.exploredPatches.length);
@@ -5607,7 +5625,7 @@ class AntColony3D {
     x = clamped.x;
     z = clamped.z;
     radius = clamp(radius, 8, 34);
-    const baseVisibleRadius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    const baseVisibleRadius = this.currentNestVisionRadius();
     if (distance2(x, z, this.nest.x, this.nest.z) <= Math.max(0, baseVisibleRadius - radius * 0.5)) return false;
     this.exploredPatchSequence += 1;
     for (const patch of this.exploredPatches) {
@@ -5828,6 +5846,18 @@ class AntColony3D {
     this.showActionFeedback(this.buttonFeedbackText(button), button);
   }
 
+  touchButtonActionKey(button) {
+    if (!button) return "";
+    if (button.id) return `id:${button.id}`;
+    const data = button.dataset ?? {};
+    if (data.tab) return `tab:${data.tab}`;
+    if (data.nextAction) return `next:${data.nextAction}`;
+    if (data.upgrade) return `upgrade:${data.upgrade}`;
+    if (data.trainVariant) return `train:${data.trainVariant}`;
+    if (data.buildTask && data.crewDelta) return `build:${data.buildTask}:${data.crewDelta}`;
+    return "";
+  }
+
   shouldSuppressTouchClick(event) {
     const suppressed = this.suppressedTouchClick;
     if (!suppressed) return false;
@@ -5836,7 +5866,15 @@ class AntColony3D {
       return false;
     }
     const button = event.target?.closest?.("button");
-    return button === suppressed.button;
+    if (button === suppressed.button) return true;
+    const actionKey = this.touchButtonActionKey(button);
+    if (actionKey && actionKey === suppressed.actionKey) return true;
+    if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+      const dx = event.clientX - suppressed.x;
+      const dy = event.clientY - suppressed.y;
+      return Math.hypot(dx, dy) <= DOM_BUTTON_TOUCH_TAP_SLOP;
+    }
+    return false;
   }
 
   handleButtonClickSuppression(event) {
@@ -5851,6 +5889,20 @@ class AntColony3D {
     const button = element?.closest?.("button");
     if (!button || button.disabled || button.id === "panelGrip") return null;
     return button;
+  }
+
+  pointInsideExpandedRect(x, y, rect, padding = 0) {
+    if (!rect) return false;
+    return x >= rect.left - padding && x <= rect.right + padding && y >= rect.top - padding && y <= rect.bottom + padding;
+  }
+
+  touchEndedOnButton(tap) {
+    const top = document.elementFromPoint(tap.lastX, tap.lastY);
+    if (top === tap.button || tap.button.contains(top)) return true;
+    return (
+      this.pointInsideExpandedRect(tap.lastX, tap.lastY, tap.button.getBoundingClientRect(), DOM_BUTTON_TOUCH_TARGET_PADDING) ||
+      this.pointInsideExpandedRect(tap.lastX, tap.lastY, tap.startRect, DOM_BUTTON_TOUCH_TARGET_PADDING)
+    );
   }
 
   touchFromList(list, identifier) {
@@ -5888,6 +5940,7 @@ class AntColony3D {
       startY: touch.clientY,
       lastX: touch.clientX,
       lastY: touch.clientY,
+      startRect: button.getBoundingClientRect(),
       maxDistance: 0,
       pointerCanceled: false,
       startedAt: performance.now(),
@@ -5910,33 +5963,37 @@ class AntColony3D {
     tap.pointerCanceled = true;
   }
 
-  handleButtonTouchEnd(event) {
+  finishButtonTouchTap(event) {
     const tap = this.touchButtonTap;
     if (!tap) return;
-    const touch = this.touchFromList(event.changedTouches, tap.identifier);
-    if (!touch) return;
-    this.updateTouchButtonTap(touch);
+    const touch = this.touchFromList(event.changedTouches, tap.identifier)
+      ?? this.touchFromList(event.touches ?? [], tap.identifier);
+    if (touch) this.updateTouchButtonTap(touch);
     this.touchButtonTap = null;
-    if (tap.button.disabled) return;
+    if (tap.button.disabled || !tap.button.isConnected) return;
     const elapsed = performance.now() - tap.startedAt;
-    const top = document.elementFromPoint(tap.lastX, tap.lastY);
-    const endedOnButton = top === tap.button || tap.button.contains(top);
+    const endedOnButton = this.touchEndedOnButton(tap);
     if (!endedOnButton || tap.maxDistance > DOM_BUTTON_TOUCH_TAP_SLOP || elapsed > DOM_BUTTON_TOUCH_TAP_MAX_MS) return;
-    event.preventDefault();
+    if (event.cancelable) event.preventDefault();
     this.suppressedTouchClick = null;
     tap.button.click();
     this.suppressedTouchClick = {
       button: tap.button,
+      actionKey: this.touchButtonActionKey(tap.button),
+      x: tap.lastX,
+      y: tap.lastY,
       expiresAt: performance.now() + DOM_BUTTON_SUPPRESS_CLICK_MS,
     };
+  }
+
+  handleButtonTouchEnd(event) {
+    this.finishButtonTouchTap(event);
   }
 
   handleButtonTouchCancel(event) {
     const tap = this.touchButtonTap;
     if (!tap) return;
-    const touch = this.touchFromList(event.changedTouches, tap.identifier);
-    if (touch) this.updateTouchButtonTap(touch);
-    this.touchButtonTap = null;
+    this.finishButtonTouchTap(event);
   }
 
   bindButtonTouchFallback() {
@@ -6192,6 +6249,8 @@ class AntColony3D {
       this.clearManualMapVisionRadiusStorage();
     }
     this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.mapActivityRadiusValue = MAP_BASE_VISION_RADIUS;
+    this.nestVisionRadiusValue = MAP_BASE_VISION_RADIUS;
     this.exploredPatches = [];
     this.exploredPatchClock = 0;
     this.exploredPatchSequence = 0;
@@ -7330,15 +7389,17 @@ class AntColony3D {
   reconSearchTargetForAnt(ant) {
     if (!ant) return null;
     if (this.isRivalNestKnown() || this.rivalNest?.defeated) return null;
+    const activityRadius = this.workerActivityRadius();
     const currentTargetValid =
       ant.reconTargetX != null &&
       ant.reconTargetZ != null &&
       distance2(ant.x, ant.z, ant.reconTargetX, ant.reconTargetZ) > RECON_SEARCH_REACHED_RADIUS &&
+      distance2(ant.reconTargetX, ant.reconTargetZ, this.nest.x, this.nest.z) > activityRadius + RECON_SEARCH_REACHED_RADIUS &&
       !this.isPointExplored(ant.reconTargetX, ant.reconTargetZ, 4);
     if (currentTargetValid) return { x: ant.reconTargetX, z: ant.reconTargetZ, kind: "recon-search" };
 
     const nestDistance = this.rivalNestDistanceFromColony();
-    const baseRadius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    const baseRadius = Math.max(activityRadius, this.currentNestVisionRadius());
     const scoutSlot = ((ant.sortieIndex ?? 0) - (this.reconScouts().length - 1) / 2) * 0.26;
     let best = null;
     let bestScore = -Infinity;
@@ -7358,7 +7419,9 @@ class AntColony3D {
       }, 8);
       const explored = this.isPointExplored(point.x, point.z, 6);
       const distanceFromNest = distance2(point.x, point.z, this.nest.x, this.nest.z);
+      const beyondActivity = distanceFromNest > activityRadius + 8;
       const score =
+        (beyondActivity ? 90 : -120) +
         (explored ? -80 : 40) +
         Math.max(0, distanceFromNest - baseRadius) * 0.12 -
         Math.abs(distanceFromNest - Math.min(nestDistance, radius)) * 0.04 -
@@ -9068,19 +9131,22 @@ class AntColony3D {
     } else {
       const defense = this.computeDerived().defensePower;
       const nestWasBreached = (this.raidNestBreachEvents ?? 0) > 0;
-      const loss = Math.min(this.colony.food, Math.max(2, count * 4.8 + this.colony.enemyThreat * 0.32) / defense);
+      const loss = nestWasBreached
+        ? Math.min(this.colony.food, Math.max(2, count * 4.8 + this.colony.enemyThreat * 0.32) / defense)
+        : 0;
       const wounded = nestWasBreached
         ? defense >= 1.65 ? Math.min(1, count) : Math.min(this.colony.antPopulation - 1, Math.ceil(count * 0.45))
         : 0;
-      this.colony.food = Math.max(0, this.colony.food - loss);
+      if (loss > 0) this.colony.food = Math.max(0, this.colony.food - loss);
       this.colony.woundedAnts = Math.min(this.colony.antPopulation - 1, this.colony.woundedAnts + wounded);
       if (nestWasBreached) this.applyRaidCasualties(Math.max(0, Math.ceil(count * 0.16) - raid.casualties), "breach");
       const deaths = this.raidDeathCount(raid);
       raid.casualties = deaths;
       this.colony.enemyThreat += 0.65 + count * 0.12;
       const damageLabel = nestWasBreached ? "襲撃被害" : "餌場被害";
-      this.pushLog(`${damageLabel}: 食料-${fmt(loss, 0)} / 負傷${wounded} / 死亡${deaths}`);
-      this.showRaidNotice(`${damageLabel}: 食料-${fmt(loss, 0)} / 死亡${deaths}`, "warning");
+      const foodDamageText = loss > 0 ? `食料-${fmt(loss, 0)}` : "貯蔵食料への被害なし";
+      this.pushLog(`${damageLabel}: ${foodDamageText} / 負傷${wounded} / 死亡${deaths}`);
+      this.showRaidNotice(`${damageLabel}: ${foodDamageText} / 死亡${deaths}`, "warning");
     }
     this.clearRaidRivals();
     this.recallSortieSoldiers("raid-clear");
@@ -9186,11 +9252,10 @@ class AntColony3D {
     raid.breachTimer = 0;
     if (nestPressure > 0) this.raidNestBreachEvents = Math.floor((this.raidNestBreachEvents ?? 0) + 1);
     const defense = this.computeDerived().defensePower;
-    const foodOnlyPressure = nestPressure <= 0 && foodPressure > 0;
-    const pressureLossScale = foodOnlyPressure ? RAID_FOOD_PRESSURE_LOSS_SCALE : RAID_NEST_PRESSURE_LOSS_SCALE;
-    const threatLossScale = foodOnlyPressure ? RAID_FOOD_THREAT_LOSS_SCALE : RAID_NEST_THREAT_LOSS_SCALE;
-    const loss = Math.min(this.colony.food, (1.8 + pressure * pressureLossScale + this.colony.enemyThreat * threatLossScale) / defense);
-    this.colony.food = Math.max(0, this.colony.food - loss);
+    const loss = nestPressure > 0
+      ? Math.min(this.colony.food, (1.8 + pressure * RAID_NEST_PRESSURE_LOSS_SCALE + this.colony.enemyThreat * RAID_NEST_THREAT_LOSS_SCALE) / defense)
+      : 0;
+    if (loss > 0) this.colony.food = Math.max(0, this.colony.food - loss);
     const nestDamage = nestPressure > 0
       ? this.damagePlayerNest(
           (PLAYER_NEST_BREACH_BASE_DAMAGE + nestPressure * PLAYER_NEST_BREACH_PRESSURE_DAMAGE + this.colony.enemyThreat * 0.12) /
@@ -9204,7 +9269,8 @@ class AntColony3D {
     if (Math.random() < casualtyChance) casualties = this.applyRaidCasualties(1, "breach");
     const pressureArea = nestPressure > 0 ? "巣周辺" : "餌場";
     const nestDamageText = nestDamage > 0 ? `巣耐久-${fmt(nestDamage, 0)} / ` : "";
-    this.pushLog(`敵が${pressureArea}を荒らした: ${nestDamageText}食料-${fmt(loss, 0)}${casualties ? ` / 死亡${casualties}` : ""}`);
+    const foodDamageText = loss > 0 ? `食料-${fmt(loss, 0)}` : "貯蔵食料への被害なし";
+    this.pushLog(`敵が${pressureArea}を荒らした: ${nestDamageText}${foodDamageText}${casualties ? ` / 死亡${casualties}` : ""}`);
     if (nestPressure > 0 && this.colony.nestDurability <= 0) this.endGame("defeat");
   }
 
