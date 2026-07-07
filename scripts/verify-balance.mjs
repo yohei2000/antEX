@@ -179,7 +179,7 @@ function aggregate(runs) {
   const count = runs.length || 1;
   const sum = (key) => runs.reduce((total, run) => total + (Number(run[key]) || 0), 0);
   const successCount = runs.filter((run) => run.success).length;
-  const perfectCount = runs.filter((run) => run.harmScore <= 0.001).length;
+  const perfectCount = runs.filter((run) => run.raidOutcome === "repelled" && run.harmScore <= 0.001).length;
   return {
     runs: runs.length,
     successCount,
