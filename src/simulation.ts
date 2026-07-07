@@ -487,6 +487,8 @@ const POINTER_TAP_SLOP_BY_TYPE = {
   pen: 7,
   touch: 12,
 };
+const DOM_BUTTON_TOUCH_TAP_SLOP = 22;
+const DOM_BUTTON_TOUCH_TAP_MAX_MS = 700;
 const EXPLORED_PATCH_LIMIT = 80;
 const ACTIVE_SIGHT_PATCH_LIMIT = 48;
 const EXPLORED_PATCH_UPDATE_SECONDS = 0.38;
@@ -3858,6 +3860,7 @@ class AntColony3D {
     this.pointerStart = null;
     this.activePointerId = null;
     this.multiPointerGesture = false;
+    this.touchButtonTap = null;
     this.branchDraft = null;
     this.branchPreview = null;
     this.pinchStart = null;
@@ -5787,6 +5790,106 @@ class AntColony3D {
     this.showActionFeedback(this.buttonFeedbackText(button), button);
   }
 
+  touchFallbackButtonFromTarget(target) {
+    const element = target?.nodeType === Node.ELEMENT_NODE ? target : target?.parentElement;
+    const button = element?.closest?.("button");
+    if (!button || button.disabled || button.id === "panelGrip") return null;
+    return button;
+  }
+
+  touchFromList(list, identifier) {
+    for (let i = 0; i < list.length; i += 1) {
+      if (list[i].identifier === identifier) return list[i];
+    }
+    return null;
+  }
+
+  updateTouchButtonTap(touch) {
+    if (!this.touchButtonTap || !touch) return;
+    const dx = touch.clientX - this.touchButtonTap.startX;
+    const dy = touch.clientY - this.touchButtonTap.startY;
+    this.touchButtonTap.lastX = touch.clientX;
+    this.touchButtonTap.lastY = touch.clientY;
+    this.touchButtonTap.maxDistance = Math.max(this.touchButtonTap.maxDistance, Math.hypot(dx, dy));
+  }
+
+  handleButtonTouchStart(event) {
+    if (event.touches.length !== 1 || event.changedTouches.length !== 1) {
+      this.touchButtonTap = null;
+      return;
+    }
+    const button = this.touchFallbackButtonFromTarget(event.target);
+    if (!button) {
+      this.touchButtonTap = null;
+      return;
+    }
+    const touch = event.changedTouches[0];
+    this.touchButtonTap = {
+      identifier: touch.identifier,
+      button,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+      maxDistance: 0,
+      pointerCanceled: false,
+      startedAt: performance.now(),
+    };
+  }
+
+  handleButtonTouchMove(event) {
+    const tap = this.touchButtonTap;
+    if (!tap) return;
+    const touch = this.touchFromList(event.changedTouches, tap.identifier)
+      ?? this.touchFromList(event.touches, tap.identifier);
+    this.updateTouchButtonTap(touch);
+  }
+
+  handleButtonPointerCancel(event) {
+    const tap = this.touchButtonTap;
+    if (!tap || event.pointerType !== "touch") return;
+    const button = this.touchFallbackButtonFromTarget(event.target);
+    if (button && button !== tap.button) return;
+    tap.pointerCanceled = true;
+  }
+
+  handleButtonTouchEnd(event) {
+    const tap = this.touchButtonTap;
+    if (!tap) return;
+    const touch = this.touchFromList(event.changedTouches, tap.identifier);
+    if (!touch) return;
+    this.updateTouchButtonTap(touch);
+    this.touchButtonTap = null;
+    if (!tap.pointerCanceled || tap.button.disabled) return;
+    const elapsed = performance.now() - tap.startedAt;
+    const top = document.elementFromPoint(tap.lastX, tap.lastY);
+    const endedOnButton = top === tap.button || tap.button.contains(top);
+    if (!endedOnButton || tap.maxDistance > DOM_BUTTON_TOUCH_TAP_SLOP || elapsed > DOM_BUTTON_TOUCH_TAP_MAX_MS) return;
+    event.preventDefault();
+    tap.button.click();
+  }
+
+  handleButtonTouchCancel(event) {
+    const tap = this.touchButtonTap;
+    if (!tap) return;
+    const touch = this.touchFromList(event.changedTouches, tap.identifier);
+    if (touch) this.updateTouchButtonTap(touch);
+    this.touchButtonTap = null;
+  }
+
+  bindButtonTouchFallback() {
+    this.boundButtonTouchStart = (event) => this.handleButtonTouchStart(event);
+    this.boundButtonTouchMove = (event) => this.handleButtonTouchMove(event);
+    this.boundButtonTouchEnd = (event) => this.handleButtonTouchEnd(event);
+    this.boundButtonTouchCancel = (event) => this.handleButtonTouchCancel(event);
+    this.boundButtonPointerCancel = (event) => this.handleButtonPointerCancel(event);
+    document.addEventListener("touchstart", this.boundButtonTouchStart, true);
+    document.addEventListener("touchmove", this.boundButtonTouchMove, true);
+    document.addEventListener("touchend", this.boundButtonTouchEnd, { capture: true, passive: false });
+    document.addEventListener("touchcancel", this.boundButtonTouchCancel, true);
+    document.addEventListener("pointercancel", this.boundButtonPointerCancel, true);
+  }
+
   bindEvents() {
     this.boundResize = () => this.resize();
     this.boundPageHide = () => {
@@ -5805,6 +5908,7 @@ class AntColony3D {
     this.setPanelHidden(this.panelHidden, false);
     this.decorateGeneratedUiAssets();
     this.bindPanelGestures();
+    this.bindButtonTouchFallback();
     this.boundButtonFeedback = (event) => this.handleButtonFeedback(event);
     document.addEventListener("click", this.boundButtonFeedback, true);
     this.boundPanelToggle = () => this.setPanelHidden(!this.panelHidden);
@@ -8012,6 +8116,11 @@ class AntColony3D {
     window.removeEventListener("keyup", this.boundKeyUp);
     if (this.boundPanelToggle) ui.panelToggle?.removeEventListener("click", this.boundPanelToggle);
     if (this.boundButtonFeedback) document.removeEventListener("click", this.boundButtonFeedback, true);
+    if (this.boundButtonTouchStart) document.removeEventListener("touchstart", this.boundButtonTouchStart, true);
+    if (this.boundButtonTouchMove) document.removeEventListener("touchmove", this.boundButtonTouchMove, true);
+    if (this.boundButtonTouchEnd) document.removeEventListener("touchend", this.boundButtonTouchEnd, true);
+    if (this.boundButtonTouchCancel) document.removeEventListener("touchcancel", this.boundButtonTouchCancel, true);
+    if (this.boundButtonPointerCancel) document.removeEventListener("pointercancel", this.boundButtonPointerCancel, true);
     this.clearBranchPreview();
     this.clearWallPlacementPreview();
     this.antRenderer?.destroy();

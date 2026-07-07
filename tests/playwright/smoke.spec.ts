@@ -1009,6 +1009,51 @@ test("touch tap on the world canvas tolerates small finger drift", async ({ page
   expect(result.multiPointerGesture).toBe(false);
 });
 
+test("mobile DOM buttons tolerate small canceled touch drift", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chrome", "mobile touch cancellation path");
+  await waitForSimulation(page);
+
+  await page.evaluate(() => {
+    (window as any).__pauseButtonClicks = 0;
+    const button = document.querySelector("#pauseBtn") as HTMLButtonElement;
+    button.addEventListener("click", () => {
+      (window as any).__pauseButtonClicks += 1;
+    });
+  });
+  const client = await page.context().newCDPSession(page);
+  const touchButton = async (dy: number) => {
+    const box = await page.locator("#pauseBtn").boundingBox();
+    if (!box) throw new Error("pause button is not visible");
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y, radiusX: 5, radiusY: 5, id: 1 }],
+    });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x, y: y + dy, radiusX: 5, radiusY: 5, id: 1 }],
+    });
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  };
+
+  await touchButton(16);
+  await expect.poll(() => page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(true);
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const button = document.querySelector("#pauseBtn") as HTMLButtonElement;
+    sim.paused = false;
+    button.classList.remove("is-paused");
+    (window as any).__pauseButtonClicks = 0;
+  });
+  await touchButton(36);
+  await page.waitForTimeout(260);
+  expect(await page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(0);
+  expect(await page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(false);
+});
+
 test("empire panel keeps the same frame across management tabs on desktop", async ({ page }) => {
   await waitForSimulation(page);
 
