@@ -449,14 +449,34 @@ test("top stats omit territory display", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
-    const statCards = [...document.querySelectorAll(".stats-strip div")].map((card) => ({
+    const statCardElements = [...document.querySelectorAll(".stats-strip div")] as HTMLElement[];
+    const statCards = statCardElements.map((card) => ({
       label: card.querySelector("span")?.textContent?.trim() ?? "",
       valueId: card.querySelector("strong")?.id ?? "",
     }));
+    const stripRect = (document.querySelector(".stats-strip") as HTMLElement).getBoundingClientRect();
+    const lastCardRect = statCardElements[statCardElements.length - 1]?.getBoundingClientRect();
+    const statTextOverflowCount = statCardElements.reduce((count, card) => {
+      const cardRect = card.getBoundingClientRect();
+      const overflows = [...card.querySelectorAll("span, strong")].some((node) => {
+        const rect = (node as HTMLElement).getBoundingClientRect();
+        return rect.left < cardRect.left - 1 || rect.right > cardRect.right + 1;
+      });
+      return count + (overflows ? 1 : 0);
+    }, 0);
+    const titleRect = (document.querySelector(".title-block") as HTMLElement).getBoundingClientRect();
+    const actionsRect = (document.querySelector(".quick-actions") as HTMLElement).getBoundingClientRect();
     return {
       statCards,
       statText: document.querySelector(".stats-strip")?.textContent ?? "",
       hasTerritoryStat: Boolean(document.querySelector("#statTerritory")),
+      statTrailingGap: stripRect.right - (lastCardRect?.right ?? stripRect.right),
+      statTextOverflowCount,
+      titleLeft: titleRect.left,
+      titleRight: titleRect.right,
+      actionsLeft: actionsRect.left,
+      actionsRight: actionsRect.right,
+      viewportWidth: window.innerWidth,
     };
   });
 
@@ -464,6 +484,11 @@ test("top stats omit territory display", async ({ page }) => {
   expect(result.statCards.map((card) => card.valueId)).not.toContain("statTerritory");
   expect(result.statText).not.toContain("領土");
   expect(result.hasTerritoryStat).toBe(false);
+  expect(result.statTrailingGap).toBeLessThanOrEqual(8);
+  expect(result.statTextOverflowCount).toBe(0);
+  expect(result.titleLeft).toBeGreaterThanOrEqual(0);
+  expect(result.titleRight).toBeLessThanOrEqual(result.actionsLeft - 4);
+  expect(result.actionsRight).toBeLessThanOrEqual(result.viewportWidth);
 });
 
 test("ants reveal current sight while remembered areas stay hazed", async ({ page }) => {

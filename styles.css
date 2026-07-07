@@ -264,6 +264,10 @@ button {
   font-size: 0.72rem;
 }
 
+.title-block > div {
+  min-width: 0;
+}
+
 .raid-notice {
   position: absolute;
   z-index: 6;
@@ -368,6 +372,7 @@ button {
 
 .quick-actions {
   display: flex;
+  flex: 0 0 auto;
   gap: 8px;
 }
 
@@ -535,7 +540,7 @@ button.is-pressed-feedback {
   left: max(12px, env(safe-area-inset-left));
   right: max(12px, env(safe-area-inset-right));
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 7px;
   max-width: 780px;
 }
@@ -2623,16 +2628,44 @@ button.is-pressed-feedback {
 }
 
 @media (max-width: 520px) {
+  .topbar {
+    gap: 8px;
+  }
+
+  .quick-actions {
+    gap: 6px;
+  }
+
+  .icon-button {
+    width: 40px;
+    height: 40px;
+  }
+
   .title-block {
-    max-width: calc(100vw - 118px);
+    flex: 1 1 auto;
+    gap: 7px;
+    max-width: calc(100vw - 164px);
+    padding: 7px 8px;
+  }
+
+  .title-mark {
+    width: 26px;
+    height: 26px;
   }
 
   .title-block strong {
-    font-size: 0.82rem;
+    font-size: 0.78rem;
+  }
+
+  .title-block small {
+    margin-top: 2px;
+    font-size: 0.62rem;
   }
 
   .stats-strip {
-    top: max(66px, calc(env(safe-area-inset-top) + 66px));
+    top: max(58px, calc(env(safe-area-inset-top) + 58px));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px;
   }
 
   .stats-strip span,
@@ -2640,23 +2673,29 @@ button.is-pressed-feedback {
   .soldier-grid span,
   .construction-grid span,
   .barracks-grid span {
-    font-size: 0.62rem;
+    font-size: 0.6rem;
   }
 
   .stats-strip div {
-    grid-template-columns: 28px minmax(0, 1fr);
-    gap: 5px;
-    padding: 7px 6px;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 4px;
+    min-height: 52px;
+    padding: 6px 5px;
   }
 
   .stat-card-icon {
-    width: 27px;
-    height: 27px;
+    width: 24px;
+    height: 24px;
   }
 
   .stats-strip span {
     white-space: normal;
     line-height: 1.06;
+  }
+
+  .stats-strip strong {
+    font-size: 0.88rem;
+    white-space: nowrap;
   }
 
   .empire-panel {
