@@ -1782,9 +1782,16 @@ test("barracks tab queues every ant type and completes one ant at a time", async
     sim.colony.upgrades.medicBrood = 1;
     sim.computeDerived();
     sim.syncAntPopulation();
+    sim.setPanelCompact(false, false);
     sim.setActiveTab("barracks");
     sim.updateStats();
 
+    const directTrainingCardElements = [...document.querySelectorAll("#barracksTrainingList > .barracks-card")] as HTMLElement[];
+    const visibleTrainingCards = directTrainingCardElements.filter((card) => {
+      const rect = card.getBoundingClientRect();
+      const style = getComputedStyle(card);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    }).length;
     const before = {
       food: sim.colony.food,
       ants: sim.colony.antPopulation,
@@ -1795,6 +1802,12 @@ test("barracks tab queues every ant type and completes one ant at a time", async
       medic: sim.colony.medicAnts,
       tabText: document.querySelector(".panel-tabs")?.textContent ?? "",
       trainingCards: document.querySelectorAll("#barracksTrainingList .barracks-card").length,
+      directTrainingCards: directTrainingCardElements.length,
+      visibleTrainingCards,
+      hiddenTrainingGroups: document.querySelectorAll("#barracksTrainingList details").length,
+      trainingCardVariants: directTrainingCardElements.map(
+        (card) => (card.querySelector("button[data-train-variant]") as HTMLButtonElement | null)?.dataset.trainVariant ?? "",
+      ),
       trainingText: document.querySelector("#barracksTrainingList")?.textContent ?? "",
     };
 
@@ -1857,7 +1870,21 @@ test("barracks tab queues every ant type and completes one ant at a time", async
   });
 
   expect(result.before.tabText).toContain("育房");
-  expect(result.before.trainingCards).toBeGreaterThanOrEqual(9);
+  expect(result.before.trainingCards).toBe(9);
+  expect(result.before.directTrainingCards).toBe(9);
+  expect(result.before.visibleTrainingCards).toBe(9);
+  expect(result.before.hiddenTrainingGroups).toBe(0);
+  expect(result.before.trainingCardVariants).toEqual([
+    "worker",
+    "builder",
+    "soldier",
+    "heavySoldier",
+    "shieldHead",
+    "acidShooter",
+    "scout",
+    "medic",
+    "captain",
+  ]);
   expect(result.before.trainingText).toContain("働きアリ");
   expect(result.before.trainingText).toContain("土木アリ");
   expect(result.before.trainingText).toContain("兵隊アリ");

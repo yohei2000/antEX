@@ -3283,7 +3283,7 @@ const BARRACKS_VARIANT_UI = {
     tag: "集中指揮",
   },
 };
-const BARRACKS_RECOMMENDED_VARIANTS = ["worker", "builder", "soldier"];
+const BARRACKS_ALWAYS_VISIBLE_VARIANTS = BARRACKS_TRAINING_VARIANTS;
 
 class AntRoleLabelSystem {
   constructor(sim, capacity) {
@@ -10927,7 +10927,7 @@ class AntColony3D {
     }
 
     ui.barracksTrainingList.replaceChildren();
-    const createTrainingCard = (variant, index, compact = false) => {
+    const createTrainingCard = (variant, index) => {
       const def = getBarracksTrainingDef(variant);
       const variantUi = this.barracksVariantUi(variant);
       const state = this.canStartBarracksTraining(variant);
@@ -10935,7 +10935,6 @@ class AntColony3D {
       const pending = this.barracksPendingCount(variant);
       const card = document.createElement("article");
       card.className = "barracks-card";
-      if (compact) card.classList.add("is-secondary");
 
       const rank = document.createElement("span");
       rank.className = "barracks-recommend-rank";
@@ -10975,27 +10974,9 @@ class AntColony3D {
       return card;
     };
 
-    BARRACKS_RECOMMENDED_VARIANTS.forEach((variant, index) => {
+    BARRACKS_ALWAYS_VISIBLE_VARIANTS.forEach((variant, index) => {
       ui.barracksTrainingList.append(createTrainingCard(variant, index));
     });
-
-    const secondaryVariants = BARRACKS_TRAINING_VARIANTS.filter((variant) => !BARRACKS_RECOMMENDED_VARIANTS.includes(variant));
-    if (secondaryVariants.length > 0) {
-      const allTraining = document.createElement("details");
-      allTraining.className = "barracks-all-training";
-
-      const summary = document.createElement("summary");
-      summary.textContent = "すべての育成種を表示";
-
-      const grid = document.createElement("div");
-      grid.className = "barracks-all-grid";
-      secondaryVariants.forEach((variant, index) => {
-        grid.append(createTrainingCard(variant, BARRACKS_RECOMMENDED_VARIANTS.length + index, true));
-      });
-
-      allTraining.append(summary, grid);
-      ui.barracksTrainingList.append(allTraining);
-    }
   }
 
   updateStats() {
