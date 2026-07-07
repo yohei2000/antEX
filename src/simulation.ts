@@ -161,6 +161,7 @@ const ui = {
   soldierTargetIntegrityFill: document.querySelector("#soldierTargetIntegrityFill"),
   soldierTargetHint: document.querySelector("#soldierTargetHint"),
   soldierSortieBtn: document.querySelector("#soldierSortieBtn"),
+  reconSortieBtn: document.querySelector("#reconSortieBtn"),
   expeditionSortieBtn: document.querySelector("#expeditionSortieBtn"),
   battleLog: document.querySelector("#battleLog"),
   empirePanel: document.querySelector("#empirePanel"),
@@ -480,6 +481,11 @@ const RIVAL_NEST_WORKER_RETURN_RADIUS = 38;
 const RIVAL_NEST_WORKER_THREAT_RADIUS = 24;
 const RIVAL_NEST_WORKER_ATTACKER_RADIUS = 34;
 const RIVAL_NEST_WORKER_WORKER_CONTACT_RADIUS = 12;
+const RECON_SORTIE_SECONDS = 116;
+const RECON_SORTIE_MAX_SCOUTS = 3;
+const RECON_SEARCH_MIN_STEP = 34;
+const RECON_SEARCH_STEP = 42;
+const RECON_SEARCH_REACHED_RADIUS = 10;
 const CAMERA_TARGET_PADDING = 18;
 const CAMERA_KEY_PAN_SPEED = 92;
 const POINTER_TAP_SLOP_BY_TYPE = {
@@ -487,8 +493,9 @@ const POINTER_TAP_SLOP_BY_TYPE = {
   pen: 7,
   touch: 12,
 };
-const DOM_BUTTON_TOUCH_TAP_SLOP = 22;
+const DOM_BUTTON_TOUCH_TAP_SLOP = 26;
 const DOM_BUTTON_TOUCH_TAP_MAX_MS = 700;
+const DOM_BUTTON_SUPPRESS_CLICK_MS = 700;
 const EXPLORED_PATCH_LIMIT = 80;
 const ACTIVE_SIGHT_PATCH_LIMIT = 48;
 const EXPLORED_PATCH_UPDATE_SECONDS = 0.38;
@@ -955,6 +962,9 @@ class Ant3D {
     this.sortieIndex = 0;
     this.sortieTargetX = null;
     this.sortieTargetZ = null;
+    this.reconTargetX = null;
+    this.reconTargetZ = null;
+    this.reconWaypointIndex = 0;
     this.inNest = false;
     this.nestStayTimer = 0;
     this.nestExitAngle = angle;
@@ -1594,11 +1604,19 @@ class Ant3D {
       this.setState("return");
       return true;
     }
+    if (this.isSortieSoldier && this.sortieMode === "recon" && sim.isRivalNestKnown()) {
+      this.sortieTimer = 0;
+      this.lastTacticalAction = "reconComplete";
+      this.setState("return");
+      return true;
+    }
     const threat = sim.findRivalThreat(this.x, this.z, SOLDIER_SORTIE_SEEK_RANGE, this.squadTargetId);
     const raid = sim.ensureRaidState();
     let target = threat;
     if (!target && this.isSortieSoldier) {
-      target = sim.currentSortieTarget(this.x, this.z, this.sortieMode);
+      target = this.sortieMode === "recon"
+        ? sim.reconSearchTargetForAnt(this)
+        : sim.currentSortieTarget(this.x, this.z, this.sortieMode);
       if (!target && this.sortieTargetX != null && this.sortieTargetZ != null) {
         target = { x: this.sortieTargetX, z: this.sortieTargetZ };
       }
@@ -1647,7 +1665,11 @@ class Ant3D {
     steering.x += ((target.x - this.x) / targetDistance) * pressure;
     steering.z += ((target.z - this.z) / targetDistance) * pressure;
     this.energy = clamp(this.energy - dt * 0.006, 0, 1);
-    this.lastTacticalAction = threat ? "scoutClose" : "scoutSeek";
+    if (this.sortieMode === "recon" && !threat && this.lastTrail > 0.55) {
+      sim.addTrail(this.x, this.z, "alarm", 0.24);
+      this.lastTrail = 0;
+    }
+    this.lastTacticalAction = threat ? "scoutClose" : this.sortieMode === "recon" ? "reconSearch" : "scoutSeek";
     return true;
   }
 
@@ -3861,6 +3883,7 @@ class AntColony3D {
     this.activePointerId = null;
     this.multiPointerGesture = false;
     this.touchButtonTap = null;
+    this.suppressedTouchClick = null;
     this.branchDraft = null;
     this.branchPreview = null;
     this.pinchStart = null;
@@ -3921,6 +3944,7 @@ class AntColony3D {
     this.nextFoodId = 1;
     this.nextAntId = 1;
     this.nextRivalId = 1;
+    this.reconSweepIndex = 0;
     this.ants = [];
     this.water = [];
     this.stones = [];
@@ -5460,6 +5484,18 @@ class AntColony3D {
     return false;
   }
 
+  rivalNestSpottingReconScout() {
+    const nest = this.rivalNest;
+    if (!nest || nest.defeated) return null;
+    return (this.ants ?? []).find((ant) =>
+      ant?.isSortieSoldier &&
+      ant.sortieMode === "recon" &&
+      ant.variant === "scout" &&
+      this.shouldRenderAnt(ant) &&
+      distance2(ant.x, ant.z, nest.x, nest.z) <= this.currentSightRadiusForAnt(ant) + 4,
+    ) ?? null;
+  }
+
   shouldRenderRival(rival) {
     if (!rival || rival.defeated || rival.leftRaid) return false;
     return this.isPointVisible(rival.x, rival.z, 9) || rival.scoutMarkTimer > 0;
@@ -5469,10 +5505,10 @@ class AntColony3D {
     const derived = this.computeDerived();
     this.mapVisionRadiusValue = this.currentMapVisionRadius(derived);
     const discoveredByVision = this.isPointVisible(this.rivalNest.x, this.rivalNest.z, 0);
-    const discoveredByScout = this.hasScoutIntel(derived);
-    if (!this.rivalNest.discovered && (discoveredByVision || discoveredByScout)) {
+    const discoveredByRecon = Boolean(this.rivalNestSpottingReconScout());
+    if (!this.rivalNest.discovered && (discoveredByVision || discoveredByRecon)) {
       this.rivalNest.discovered = true;
-      const reason = discoveredByScout ? "斥候が敵巣の匂いを捕捉" : "探索範囲が敵巣へ到達";
+      const reason = discoveredByRecon ? "偵察中の斥候が敵巣の匂いを捕捉" : "探索範囲が敵巣へ到達";
       if (!this.mapIntelLogState.rivalNestDiscovered) {
         this.pushLog(`${reason}: 遠方に敵アリの巣`);
         this.showRaidNotice("敵巣発見: 軍事出撃で敵巣を攻撃できます", "warning");
@@ -5730,6 +5766,7 @@ class AntColony3D {
       if (kind === "reset") return "新しい巣で再開";
       if (kind === "train") return `${getBarracksTrainingDef(value).label}を育成キューへ`;
       if (kind === "upgrade") return `${UPGRADE_UI[value]?.name ?? upgradeName(value)}を強化`;
+      if (kind === "recon") return "偵察出動";
       if (kind === "sortie") return value === "expedition" ? "遠征出動" : "防衛出動";
       if (kind === "tab") return value === "barracks" ? "育房を表示" : "成長を表示";
       return "主要アクションを実行";
@@ -5755,6 +5792,7 @@ class AntColony3D {
     if (button.id === "panelToggleBtn") return this.panelHidden ? "Panel show" : "Panel hide";
     if (button.id === "panelGrip") return "パネルを開閉";
     if (button.id === "soldierSortieBtn") return "防衛出動";
+    if (button.id === "reconSortieBtn") return "偵察出動";
     if (button.id === "expeditionSortieBtn") return "遠征出動";
     if (button.id === "constructionTrailBtn") return "採餌道を整える";
     if (button.id === "constructionBarricadeBtn") return "低い土塁を置く";
@@ -5788,6 +5826,24 @@ class AntColony3D {
     const button = event.target?.closest?.("button");
     if (!button || button.disabled) return;
     this.showActionFeedback(this.buttonFeedbackText(button), button);
+  }
+
+  shouldSuppressTouchClick(event) {
+    const suppressed = this.suppressedTouchClick;
+    if (!suppressed) return false;
+    if (performance.now() > suppressed.expiresAt) {
+      this.suppressedTouchClick = null;
+      return false;
+    }
+    const button = event.target?.closest?.("button");
+    return button === suppressed.button;
+  }
+
+  handleButtonClickSuppression(event) {
+    if (!this.shouldSuppressTouchClick(event)) return;
+    this.suppressedTouchClick = null;
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }
 
   touchFallbackButtonFromTarget(target) {
@@ -5860,13 +5916,17 @@ class AntColony3D {
     if (!touch) return;
     this.updateTouchButtonTap(touch);
     this.touchButtonTap = null;
-    if (!tap.pointerCanceled || tap.button.disabled) return;
+    if (tap.button.disabled) return;
     const elapsed = performance.now() - tap.startedAt;
     const top = document.elementFromPoint(tap.lastX, tap.lastY);
     const endedOnButton = top === tap.button || tap.button.contains(top);
     if (!endedOnButton || tap.maxDistance > DOM_BUTTON_TOUCH_TAP_SLOP || elapsed > DOM_BUTTON_TOUCH_TAP_MAX_MS) return;
     event.preventDefault();
     tap.button.click();
+    this.suppressedTouchClick = {
+      button: tap.button,
+      expiresAt: performance.now() + DOM_BUTTON_SUPPRESS_CLICK_MS,
+    };
   }
 
   handleButtonTouchCancel(event) {
@@ -5883,11 +5943,13 @@ class AntColony3D {
     this.boundButtonTouchEnd = (event) => this.handleButtonTouchEnd(event);
     this.boundButtonTouchCancel = (event) => this.handleButtonTouchCancel(event);
     this.boundButtonPointerCancel = (event) => this.handleButtonPointerCancel(event);
+    this.boundButtonClickSuppression = (event) => this.handleButtonClickSuppression(event);
     document.addEventListener("touchstart", this.boundButtonTouchStart, true);
     document.addEventListener("touchmove", this.boundButtonTouchMove, true);
     document.addEventListener("touchend", this.boundButtonTouchEnd, { capture: true, passive: false });
     document.addEventListener("touchcancel", this.boundButtonTouchCancel, true);
     document.addEventListener("pointercancel", this.boundButtonPointerCancel, true);
+    document.addEventListener("click", this.boundButtonClickSuppression, true);
   }
 
   bindEvents() {
@@ -5957,6 +6019,7 @@ class AntColony3D {
       this.startBarracksTraining(button.dataset.trainVariant);
     });
     ui.soldierSortieBtn.addEventListener("click", () => this.startSoldierSortie("defense"));
+    ui.reconSortieBtn?.addEventListener("click", () => this.startReconSortie());
     ui.expeditionSortieBtn?.addEventListener("click", () => this.startSoldierSortie("expedition"));
     ui.constructionTrailBtn?.addEventListener("click", () => this.startConstruction("trailReinforce"));
     ui.constructionBarricadeBtn?.addEventListener("click", () => this.startConstruction("lowBarricade"));
@@ -5999,6 +6062,7 @@ class AntColony3D {
       }
       if (kind === "train" && this.startBarracksTraining(value)) return true;
       if (kind === "upgrade" && this.buyUpgrade(value)) return true;
+      if (kind === "recon" && this.startReconSortie()) return true;
       if (kind === "sortie" && this.startSoldierSortie(value || "defense")) return true;
       if (kind === "tab") {
         this.setPanelCompact(false);
@@ -6113,6 +6177,7 @@ class AntColony3D {
     for (const rival of this.rivalAnts) this.antRenderer?.releaseRenderObject(rival);
     this.rivalAnts = [];
     this.nextRivalId = 1;
+    this.reconSweepIndex = 0;
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.raidNestBreachEvents = 0;
     this.rivalNest.discovered = false;
@@ -7230,11 +7295,83 @@ class AntColony3D {
   }
 
   normalizeSortieMode(mode = this.selectedSortieMode) {
-    return mode === "expedition" ? "expedition" : mode === "defense" ? "defense" : "auto";
+    return mode === "recon" ? "recon" : mode === "expedition" ? "expedition" : mode === "defense" ? "defense" : "auto";
   }
 
   canStartExpeditionSortie() {
     return !this.isGameEnded() && this.isRivalNestKnown() && !this.rivalNest.defeated;
+  }
+
+  reconScouts() {
+    return this.deployedSoldiers().filter((ant) => ant.variant === "scout" && ant.sortieMode === "recon");
+  }
+
+  availableReconScouts(derived = this.computeDerived()) {
+    const scouts = Math.max(0, Math.floor(derived.scouts ?? 0));
+    return Math.max(0, scouts - this.deployedSoldierCountByVariant("scout"));
+  }
+
+  plannedReconScoutCount(derived = this.computeDerived()) {
+    const available = this.availableReconScouts(derived);
+    if (available <= 0) return 0;
+    const waveLimit = this.sortieSoldierLimit(derived);
+    return Math.max(0, Math.min(available, RECON_SORTIE_MAX_SCOUTS, waveLimit));
+  }
+
+  canStartReconSortie(derived = this.computeDerived()) {
+    if (this.isGameEnded()) return false;
+    if (!this.rivalNest || this.rivalNest.defeated || this.isRivalNestKnown()) return false;
+    if (this.soldierSortieCooldown > 0) return false;
+    return this.plannedReconScoutCount(derived) > 0;
+  }
+
+  reconSearchTargetForAnt(ant) {
+    if (!ant) return null;
+    if (this.isRivalNestKnown() || this.rivalNest?.defeated) return null;
+    const currentTargetValid =
+      ant.reconTargetX != null &&
+      ant.reconTargetZ != null &&
+      distance2(ant.x, ant.z, ant.reconTargetX, ant.reconTargetZ) > RECON_SEARCH_REACHED_RADIUS &&
+      !this.isPointExplored(ant.reconTargetX, ant.reconTargetZ, 4);
+    if (currentTargetValid) return { x: ant.reconTargetX, z: ant.reconTargetZ, kind: "recon-search" };
+
+    const nestDistance = this.rivalNestDistanceFromColony();
+    const baseRadius = this.mapVisionRadiusValue || this.mapVisionRadius();
+    const scoutSlot = ((ant.sortieIndex ?? 0) - (this.reconScouts().length - 1) / 2) * 0.26;
+    let best = null;
+    let bestScore = -Infinity;
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      const index = (ant.reconWaypointIndex ?? 0) + attempt + this.reconSweepIndex;
+      const searchAngle = Math.atan2(this.rivalNest.z - this.nest.z, this.rivalNest.x - this.nest.x);
+      const sweep = Math.sin(index * 1.73 + (ant.id ?? 1) * 0.41) * 0.88;
+      const angle = searchAngle + sweep + scoutSlot;
+      const radius = clamp(
+        baseRadius + RECON_SEARCH_MIN_STEP + index * RECON_SEARCH_STEP,
+        Math.min(this.worldRadius - 18, baseRadius + RECON_SEARCH_MIN_STEP),
+        Math.min(this.worldRadius - 12, Math.max(baseRadius + RECON_SEARCH_MIN_STEP, nestDistance + 18)),
+      );
+      const point = this.clampPointToWorld({
+        x: this.nest.x + Math.cos(angle) * radius,
+        z: this.nest.z + Math.sin(angle) * radius,
+      }, 8);
+      const explored = this.isPointExplored(point.x, point.z, 6);
+      const distanceFromNest = distance2(point.x, point.z, this.nest.x, this.nest.z);
+      const score =
+        (explored ? -80 : 40) +
+        Math.max(0, distanceFromNest - baseRadius) * 0.12 -
+        Math.abs(distanceFromNest - Math.min(nestDistance, radius)) * 0.04 -
+        distance2(point.x, point.z, ant.x, ant.z) * 0.006;
+      if (score > bestScore) {
+        best = point;
+        bestScore = score;
+      }
+    }
+    ant.reconWaypointIndex = (ant.reconWaypointIndex ?? 0) + 1;
+    this.reconSweepIndex = (this.reconSweepIndex + 1) % 97;
+    if (!best) return null;
+    ant.reconTargetX = best.x;
+    ant.reconTargetZ = best.z;
+    return { x: best.x, z: best.z, kind: "recon-search" };
   }
 
   currentSortieTarget(x = this.nest.x, z = this.nest.z, mode = "auto") {
@@ -7242,6 +7379,7 @@ class AntColony3D {
     const sortieMode = this.normalizeSortieMode(mode);
     const threat = this.findRivalThreat(x, z, SOLDIER_SORTIE_SEEK_RANGE, null, { localSightRange: 0 });
     if (threat) return { x: threat.x, z: threat.z, kind: "rival" };
+    if (sortieMode === "recon") return null;
     if (sortieMode === "expedition") {
       return this.canStartExpeditionSortie() ? { x: this.rivalNest.x, z: this.rivalNest.z, kind: "rival-nest" } : null;
     }
@@ -7352,6 +7490,79 @@ class AntColony3D {
       const [removed] = this.ants.splice(removeIndex, 1);
       this.antRenderer?.releaseRenderObject(removed);
     }
+  }
+
+  startReconSortie() {
+    if (this.isGameEnded()) return false;
+    const derived = this.computeDerived();
+    const count = this.plannedReconScoutCount(derived);
+    this.selectedSortieMode = "recon";
+    if (this.rivalNest?.defeated) {
+      this.pushLog("偵察不要: 敵巣は陥落済み");
+      this.updateStats();
+      return false;
+    }
+    if (this.isRivalNestKnown()) {
+      this.pushLog("偵察不要: 敵巣は発見済み");
+      this.updateStats();
+      return false;
+    }
+    if (this.soldierSortieCooldown > 0 || count < 1) {
+      this.pushLog(count < 1 ? "偵察不可: 巣内に斥候アリがいない" : "偵察不可: 再出撃の準備中");
+      this.updateStats();
+      return false;
+    }
+
+    this.makeRoomForSortie(count);
+    const sortieAnts = [];
+    for (let i = 0; i < count; i += 1) {
+      const ant = new Ant3D(this.nextAntId++, this);
+      const entrance = this.nestEntrances?.[i % Math.max(1, this.nestEntrances.length)];
+      const baseAngle = entrance?.userData?.angle ?? ((i / count) * Math.PI * 2);
+      const radius = this.nest.radius * 0.58 + (i % 3) * 0.55;
+      ant.role = "guard";
+      ant.setVariant("scout");
+      ant.isSortieSoldier = true;
+      ant.sortieMode = "recon";
+      ant.sortieTimer = RECON_SORTIE_SECONDS;
+      ant.sortieIndex = i;
+      ant.reconTargetX = null;
+      ant.reconTargetZ = null;
+      ant.reconWaypointIndex = i;
+      ant.traits.curiosity = clamp(Math.max(ant.traits.curiosity, 0.9) + 0.04, 0, 1);
+      ant.traits.caution = clamp(Math.max(ant.traits.caution, 0.78) + 0.06, 0, 1);
+      ant.traits.persistence = clamp(Math.max(ant.traits.persistence, 0.66) + 0.06, 0, 1);
+      ant.energy = 1;
+      ant.stamina = 1;
+      ant.carrying = 0;
+      ant.foodSourceId = null;
+      ant.state = "explore";
+      ant.currentTask = "sortie";
+      ant.lastTacticalAction = "reconDepart";
+      ant.x = this.nest.x + Math.cos(baseAngle) * radius;
+      ant.z = this.nest.z + Math.sin(baseAngle) * radius;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.angle = baseAngle;
+      this.ants.push(ant);
+      sortieAnts.push(ant);
+      this.antRenderer?.assignRenderIndex(ant);
+    }
+    for (const ant of sortieAnts) {
+      const target = this.reconSearchTargetForAnt(ant);
+      if (target) {
+        ant.sortieTargetX = target.x;
+        ant.sortieTargetZ = target.z;
+        ant.angle = Math.atan2(target.x - ant.x, target.z - ant.z);
+        ant.prevAngle = ant.angle;
+      }
+    }
+
+    this.soldierSortieCooldown = SOLDIER_SORTIE_COOLDOWN_SECONDS;
+    this.pushLog(`偵察出動: 斥候${count}匹が未発見エリアへ`);
+    this.updateStats();
+    this.saveColony();
+    return true;
   }
 
   startSoldierSortie(mode = this.selectedSortieMode) {
@@ -8121,6 +8332,7 @@ class AntColony3D {
     if (this.boundButtonTouchEnd) document.removeEventListener("touchend", this.boundButtonTouchEnd, true);
     if (this.boundButtonTouchCancel) document.removeEventListener("touchcancel", this.boundButtonTouchCancel, true);
     if (this.boundButtonPointerCancel) document.removeEventListener("pointercancel", this.boundButtonPointerCancel, true);
+    if (this.boundButtonClickSuppression) document.removeEventListener("click", this.boundButtonClickSuppression, true);
     this.clearBranchPreview();
     this.clearWallPlacementPreview();
     this.antRenderer?.destroy();
@@ -10370,6 +10582,33 @@ class AntColony3D {
     button.title = `${action}: ${reason}`;
   }
 
+  updateReconCommandButton(button, plannedRecon, cooldownLeft) {
+    if (!button) return;
+    const gameEnded = this.isGameEnded();
+    const known = this.isRivalNestKnown();
+    const defeated = Boolean(this.rivalNest?.defeated);
+    const hasScouts = plannedRecon > 0;
+    const disabled = gameEnded || cooldownLeft > 0 || defeated || known || !hasScouts;
+    button.disabled = disabled;
+    button.classList.toggle("active", this.selectedSortieMode === "recon" && !disabled);
+    const main = button.querySelector(".button-main");
+    const sub = button.querySelector(".button-sub");
+    const reason = gameEnded
+      ? "ゲーム終了"
+      : cooldownLeft > 0
+      ? `再出撃まで ${cooldownLeft}s`
+      : defeated
+        ? "敵巣陥落済み"
+        : known
+          ? "敵巣発見済み"
+          : !hasScouts
+            ? "斥候アリ不足"
+            : "未発見エリアを巡回";
+    if (main) main.textContent = cooldownLeft > 0 ? `再出撃まで ${cooldownLeft}s` : `偵察 ${fmt(plannedRecon, 0)}`;
+    if (sub) sub.textContent = reason;
+    button.title = `偵察: ${reason}`;
+  }
+
   renderMilitaryPanel(d, plannedSortie, deployedSoldiers, sortiePool, cooldownLeft) {
     const gameEnded = this.isGameEnded();
     const composition = this.plannedSortieComposition();
@@ -10456,7 +10695,7 @@ class AntColony3D {
         ? "襲撃拠点は制圧済みです。防衛出動を優先できます。"
         : known
           ? "耐久を0にすると陥落。残存兵力が多いほど守備が強化される。"
-          : "斥候または探索で敵巣を発見すると遠征出動できます。";
+          : "偵察または探索で敵巣を発見すると遠征出動できます。";
     }
   }
 
@@ -10762,6 +11001,7 @@ class AntColony3D {
     const deployedSoldiers = this.deployedSoldierCount();
     const availableSoldiers = this.availableSortieSoldiers();
     const plannedSortie = this.plannedSortieCount();
+    const plannedRecon = this.plannedReconScoutCount(d);
     const sortiePool = this.sortieSoldierPool(d);
     const activeConstruction = this.buildTasks.filter((task) => task.progress < task.maxProgress).length;
     const completeConstruction = this.earthworks.filter((earthwork) => earthwork.strength > 0.95).length;
@@ -10858,6 +11098,7 @@ class AntColony3D {
       availableSoldiers > 0 ? "上限待ち" : "兵隊不足";
     this.renderMilitaryPanel(d, plannedSortie, deployedSoldiers, sortiePool, cooldownLeft);
     this.updateSortieCommandButton(ui.soldierSortieBtn, "defense", plannedSortie, cooldownLeft);
+    this.updateReconCommandButton(ui.reconSortieBtn, plannedRecon, cooldownLeft);
     this.updateSortieCommandButton(ui.expeditionSortieBtn, "expedition", plannedSortie, cooldownLeft);
     if (ui.raidNotice) {
       const visible = this.raidNotice.timer > 0 && this.raidNotice.message;

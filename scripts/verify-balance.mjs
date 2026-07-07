@@ -141,6 +141,13 @@ function singleVariantScenario(variant) {
 }
 
 async function launchBrowser() {
+  const preferBundled = process.env.ANTEX_VERIFY_BROWSER === "bundled";
+  if (preferBundled) {
+    return await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--disable-background-networking"],
+    });
+  }
   try {
     return await chromium.launch({
       channel: "chrome",

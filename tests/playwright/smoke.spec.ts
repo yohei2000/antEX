@@ -654,7 +654,7 @@ test("completed earthworks add live sight to the map fog", async ({ page }) => {
   expect(result.wallPatchVisible).toBe(true);
 });
 
-test("enemy nest stays hidden until scouts or vision reveal it", async ({ page }) => {
+test("enemy nest stays hidden until reconnaissance or vision reveal it", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -714,7 +714,45 @@ test("enemy nest stays hidden until scouts or vision reveal it", async ({ page }
     sim.computeDerived();
     sim.syncAntPopulation();
     sim.updateMapIntel();
-    const afterScout = {
+    sim.setActiveTab("soldiers");
+    sim.updateStats();
+    const afterScoutOwnership = {
+      known: sim.isRivalNestKnown(),
+      visible: sim.rivalNest.group?.visible ?? false,
+      raidIntel: sim.hasRaidDirectionIntel(),
+      target: sim.currentSortieTarget(),
+      reconReady: sim.canStartReconSortie(),
+      reconButtonDisabled: (document.querySelector("#reconSortieBtn") as HTMLButtonElement).disabled,
+    };
+
+    sim.soldierSortieCooldown = 0;
+    sim.updateStats();
+    const reconStarted = sim.startReconSortie();
+    const reconScouts = sim.reconScouts();
+    const scout = reconScouts[0];
+    const firstTarget = scout ? sim.reconSearchTargetForAnt(scout) : null;
+    const firstTargetDistance = firstTarget
+      ? Math.hypot(firstTarget.x - sim.nest.x, firstTarget.z - sim.nest.z)
+      : 0;
+    const knownAfterLaunch = sim.isRivalNestKnown();
+    const sightRadius = scout ? sim.currentSightRadiusForAnt(scout) : 0;
+    if (scout) {
+      scout.x = sim.rivalNest.x - sightRadius * 0.45;
+      scout.z = sim.rivalNest.z;
+      scout.prevX = scout.x;
+      scout.prevZ = scout.z;
+      scout.setState("explore");
+    }
+    sim.updateExploredPatches(0, true);
+    sim.updateMapIntel();
+    const afterRecon = {
+      reconStarted,
+      reconCount: reconScouts.length,
+      reconModes: reconScouts.map((ant: any) => ant.sortieMode),
+      reconVariants: reconScouts.map((ant: any) => ant.variant),
+      firstTarget,
+      firstTargetDistance,
+      knownAfterLaunch,
       known: sim.isRivalNestKnown(),
       visible: sim.rivalNest.group?.visible ?? false,
       raidIntel: sim.hasRaidDirectionIntel(),
@@ -723,7 +761,7 @@ test("enemy nest stays hidden until scouts or vision reveal it", async ({ page }
       log: sim.colony.battleLog.join("\n"),
     };
 
-    return { initial, hiddenRaid, afterScout };
+    return { initial, hiddenRaid, afterScoutOwnership, afterRecon };
   });
 
   expect(result.initial.distance).toBeGreaterThan(result.initial.vision);
@@ -734,12 +772,25 @@ test("enemy nest stays hidden until scouts or vision reveal it", async ({ page }
   expect(result.hiddenRaid.rivalCount).toBe(3);
   expect(Math.max(...result.hiddenRaid.spawnDistances)).toBeLessThan(26);
   expect(result.hiddenRaid.renderedRivals).toBe(0);
-  expect(result.afterScout.known).toBe(true);
-  expect(result.afterScout.visible).toBe(true);
-  expect(result.afterScout.raidIntel).toBe(true);
-  expect(result.afterScout.target?.kind).toBe("rival-nest");
-  expect(result.afterScout.notice).toContain("敵巣発見");
-  expect(result.afterScout.log).toContain("敵巣");
+  expect(result.afterScoutOwnership.known).toBe(false);
+  expect(result.afterScoutOwnership.visible).toBe(false);
+  expect(result.afterScoutOwnership.raidIntel).toBe(true);
+  expect(result.afterScoutOwnership.target).toBeNull();
+  expect(result.afterScoutOwnership.reconReady).toBe(true);
+  expect(result.afterScoutOwnership.reconButtonDisabled).toBe(false);
+  expect(result.afterRecon.reconStarted).toBe(true);
+  expect(result.afterRecon.reconCount).toBe(1);
+  expect(result.afterRecon.reconModes).toEqual(["recon"]);
+  expect(result.afterRecon.reconVariants).toEqual(["scout"]);
+  expect(result.afterRecon.firstTarget?.kind).toBe("recon-search");
+  expect(result.afterRecon.firstTargetDistance).toBeGreaterThan(result.initial.vision);
+  expect(result.afterRecon.knownAfterLaunch).toBe(false);
+  expect(result.afterRecon.known).toBe(true);
+  expect(result.afterRecon.visible).toBe(true);
+  expect(result.afterRecon.raidIntel).toBe(true);
+  expect(result.afterRecon.target?.kind).toBe("rival-nest");
+  expect(result.afterRecon.notice).toContain("敵巣発見");
+  expect(result.afterRecon.log).toContain("敵巣");
 });
 
 test("raidSoon query keeps normal mode but starts a raid quickly without saving", async ({ page }) => {
@@ -1009,21 +1060,26 @@ test("touch tap on the world canvas tolerates small finger drift", async ({ page
   expect(result.multiPointerGesture).toBe(false);
 });
 
-test("mobile DOM buttons tolerate small canceled touch drift", async ({ page }, testInfo) => {
+test("mobile DOM buttons activate once after small touch drift", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chrome", "mobile touch cancellation path");
   await waitForSimulation(page);
 
   await page.evaluate(() => {
     (window as any).__pauseButtonClicks = 0;
+    (window as any).__soldiersTabClicks = 0;
     const button = document.querySelector("#pauseBtn") as HTMLButtonElement;
     button.addEventListener("click", () => {
       (window as any).__pauseButtonClicks += 1;
     });
+    const soldiersTab = document.querySelector('[data-tab="soldiers"]') as HTMLButtonElement;
+    soldiersTab.addEventListener("click", () => {
+      (window as any).__soldiersTabClicks += 1;
+    });
   });
   const client = await page.context().newCDPSession(page);
-  const touchButton = async (dy: number) => {
-    const box = await page.locator("#pauseBtn").boundingBox();
-    if (!box) throw new Error("pause button is not visible");
+  const touchButton = async (selector: string, dy: number) => {
+    const box = await page.locator(selector).boundingBox();
+    if (!box) throw new Error(`${selector} is not visible`);
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
     await client.send("Input.dispatchTouchEvent", {
@@ -1037,7 +1093,7 @@ test("mobile DOM buttons tolerate small canceled touch drift", async ({ page }, 
     await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   };
 
-  await touchButton(16);
+  await touchButton("#pauseBtn", 0);
   await expect.poll(() => page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(true);
 
@@ -1048,10 +1104,31 @@ test("mobile DOM buttons tolerate small canceled touch drift", async ({ page }, 
     button.classList.remove("is-paused");
     (window as any).__pauseButtonClicks = 0;
   });
-  await touchButton(36);
+
+  await touchButton("#pauseBtn", 16);
+  await expect.poll(() => page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(true);
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const button = document.querySelector("#pauseBtn") as HTMLButtonElement;
+    sim.paused = false;
+    button.classList.remove("is-paused");
+    (window as any).__pauseButtonClicks = 0;
+  });
+  await touchButton("#pauseBtn", 36);
   await page.waitForTimeout(260);
   expect(await page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(0);
   expect(await page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(false);
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.setActiveTab("growth");
+    (window as any).__soldiersTabClicks = 0;
+  });
+  await touchButton('[data-tab="soldiers"]', 16);
+  await expect.poll(() => page.evaluate(() => (window as any).__soldiersTabClicks)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).activeTab)).toBe("soldiers");
 });
 
 test("empire panel keeps the same frame across management tabs on desktop", async ({ page }) => {
