@@ -5870,6 +5870,7 @@ class AntColony3D {
   }
 
   handleButtonTouchStart(event) {
+    this.suppressedTouchClick = null;
     if (event.touches.length !== 1 || event.changedTouches.length !== 1) {
       this.touchButtonTap = null;
       return;
@@ -5922,6 +5923,7 @@ class AntColony3D {
     const endedOnButton = top === tap.button || tap.button.contains(top);
     if (!endedOnButton || tap.maxDistance > DOM_BUTTON_TOUCH_TAP_SLOP || elapsed > DOM_BUTTON_TOUCH_TAP_MAX_MS) return;
     event.preventDefault();
+    this.suppressedTouchClick = null;
     tap.button.click();
     this.suppressedTouchClick = {
       button: tap.button,
