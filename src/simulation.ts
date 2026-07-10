@@ -5891,6 +5891,11 @@ class AntColony3D {
     return button;
   }
 
+  shouldPreserveTouchedButton(container) {
+    const button = this.touchButtonTap?.button;
+    return Boolean(button?.isConnected && container?.contains(button));
+  }
+
   pointInsideExpandedRect(x, y, rect, padding = 0) {
     if (!rect) return false;
     return x >= rect.left - padding && x <= rect.right + padding && y >= rect.top - padding && y <= rect.bottom + padding;
@@ -8008,6 +8013,7 @@ class AntColony3D {
   }
 
   renderUpgrades() {
+    if (this.shouldPreserveTouchedButton(ui.upgradeList)) return;
     const gameEnded = this.isGameEnded();
     const focus = this.renderGrowthFocus();
     const tree = UPGRADE_BRANCHES.map((branch) => {
@@ -10688,7 +10694,7 @@ class AntColony3D {
     if (ui.soldierCooldown) ui.soldierCooldown.textContent = cooldownLeft > 0 ? `${fmt(cooldownLeft, 0)}s` : "--";
     if (ui.sortiePlanTotal) ui.sortiePlanTotal.textContent = `${fmt(composition.total, 0)} / ${fmt(waveCap, 0)}`;
 
-    if (ui.sortiePlanList) {
+    if (ui.sortiePlanList && !this.shouldPreserveTouchedButton(ui.sortiePlanList)) {
       ui.sortiePlanList.replaceChildren();
       const totalPlanned = Math.max(1, composition.total);
       for (const item of SORTIE_PLAN_VARIANTS) {
@@ -10828,6 +10834,7 @@ class AntColony3D {
 
   renderConstructionProgress() {
     if (!ui.constructionProgressList) return;
+    if (this.shouldPreserveTouchedButton(ui.constructionProgressList)) return;
     this.cleanupBuildTaskAssignments();
     const activeTasks = this.buildTasks.filter((task) => task.progress < task.maxProgress);
     ui.constructionProgressList.replaceChildren();
@@ -10926,6 +10933,10 @@ class AntColony3D {
 
   renderBarracksPanel() {
     if (!ui.barracksTrainingList || !ui.barracksQueueList) return;
+    if (
+      this.shouldPreserveTouchedButton(ui.barracksTrainingList)
+      || this.shouldPreserveTouchedButton(ui.barracksQueueList)
+    ) return;
     const d = this.computeDerived();
     ui.barracksQueueList.replaceChildren();
     const queue = this.barracksQueue();

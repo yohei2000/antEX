@@ -1203,7 +1203,13 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
     });
   });
   const client = await page.context().newCDPSession(page);
-  const dispatchTouchAt = async (x: number, y: number, dy: number, endType: "touchEnd" | "touchCancel" = "touchEnd") => {
+  const dispatchTouchAt = async (
+    x: number,
+    y: number,
+    dy: number,
+    endType: "touchEnd" | "touchCancel" = "touchEnd",
+    holdMs = 0,
+  ) => {
     await client.send("Input.dispatchTouchEvent", {
       type: "touchStart",
       touchPoints: [{ x, y, radiusX: 5, radiusY: 5, id: 1 }],
@@ -1212,12 +1218,24 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
       type: "touchMove",
       touchPoints: [{ x, y: y + dy, radiusX: 5, radiusY: 5, id: 1 }],
     });
+    if (holdMs > 0) await page.waitForTimeout(holdMs);
     await client.send("Input.dispatchTouchEvent", { type: endType, touchPoints: [] });
   };
-  const touchButton = async (selector: string, dy: number, endType: "touchEnd" | "touchCancel" = "touchEnd") => {
-    const box = await page.locator(selector).boundingBox();
+  const touchButton = async (
+    selector: string,
+    dy: number,
+    endType: "touchEnd" | "touchCancel" = "touchEnd",
+    holdMs = 0,
+  ) => {
+    const box = await page.evaluate((targetSelector) => {
+      const button = document.querySelector(targetSelector) as HTMLButtonElement | null;
+      if (!button) return null;
+      button.scrollIntoView({ block: "center", inline: "center" });
+      const rect = button.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    }, selector);
     if (!box) throw new Error(`${selector} is not visible`);
-    await dispatchTouchAt(box.x + box.width / 2, box.y + box.height / 2, dy, endType);
+    await dispatchTouchAt(box.x + box.width / 2, box.y + box.height / 2, dy, endType, holdMs);
   };
 
   await touchButton("#pauseBtn", 0);
@@ -1266,6 +1284,24 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
     sim.updateStats();
   });
   await touchButton("#nextActionPrimaryBtn", 32);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue[0]?.variant)).toBe("worker");
+  await page.waitForTimeout(320);
+  expect(await page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
+
+  await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.colony.barracksQueue = [];
+    sim.colony.food = 1000;
+    sim.colony.antPopulation = 20;
+    sim.paused = false;
+    sim.setPanelHidden(false, false);
+    sim.setPanelCompact(false, false);
+    sim.setActiveTab("barracks");
+    sim.updateStats();
+  });
+  await expect(page.locator('[data-train-variant="worker"]')).toBeEnabled();
+  await touchButton('[data-train-variant="worker"]', 8, "touchCancel", 320);
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue[0]?.variant)).toBe("worker");
   await page.waitForTimeout(320);
