@@ -1803,6 +1803,363 @@ test("expedition sortie targets a discovered enemy nest instead of defense patro
   expect(result.log).toContain("敵巣へ遠征");
 });
 
+test("enemy nest sends dedicated defenders and grapples stop nest damage", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.clearRivalNestDefenders();
+    sim.colony.gameStatus = "playing";
+    sim.colony.food = 1000;
+    sim.colony.antPopulation = 36;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 6;
+    sim.rivalNest.discovered = true;
+    sim.rivalNest.defeated = false;
+    sim.rivalNest.integrity = 0.8;
+    sim.rivalNest.defenseWaveArmed = true;
+    sim.rivalNest.defenseClearTimer = 0;
+    sim.soldierSortieCooldown = 0;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    const started = sim.startSoldierSortie("expedition");
+    const attackers = sim.deployedSoldiers();
+    attackers.forEach((ant: any, index: number) => {
+      ant.setVariant?.("soldier");
+      ant.role = "guard";
+      ant.sortieMode = "expedition";
+      ant.state = "explore";
+      ant.inNest = false;
+      ant.nestStayTimer = 0;
+      ant.stun = 0;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashRival = null;
+      ant.x = sim.rivalNest.x - 34 - index * 4;
+      ant.z = sim.rivalNest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    });
+
+    const targetCount = sim.rivalNestDefenderTargetCount(attackers);
+    sim.ensureRaidState().phase = "warning";
+    sim.raidNotice.message = "敵襲警告を維持";
+    sim.raidNotice.timer = 5;
+    sim.updateRivalNestDefense(0.1);
+    const raidNoticeAfterDefense = sim.raidNotice.message;
+    sim.ensureRaidState().phase = "calm";
+    const defenders = sim.rivalNestDefenders();
+    const firstWaveCount = defenders.length;
+    sim.updateRivalNestDefense(0.1);
+    const repeatedCount = sim.rivalNestDefenders().length;
+    const firstDefenseTarget = defenders[0].findRivalNestDefenseTarget(sim);
+    firstDefenseTarget.state = "clash";
+    firstDefenseTarget.clashRival = defenders[0];
+    const secondDefenseTarget = defenders[1].findRivalNestDefenseTarget(sim);
+    firstDefenseTarget.state = "explore";
+    firstDefenseTarget.clashRival = null;
+
+    const attacker = attackers[0];
+    const partner = attackers[1];
+    const defender = defenders[0];
+    for (const ant of attackers.slice(2)) {
+      ant.x = sim.rivalNest.x - 80;
+      ant.z = sim.rivalNest.z;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    attacker.x = sim.rivalNest.x;
+    attacker.z = sim.rivalNest.z;
+    attacker.prevX = attacker.x;
+    attacker.prevZ = attacker.z;
+    partner.x = sim.rivalNest.x - 0.7;
+    partner.z = sim.rivalNest.z + 0.4;
+    partner.prevX = partner.x;
+    partner.prevZ = partner.z;
+    defender.x = sim.rivalNest.x + 0.45;
+    defender.z = sim.rivalNest.z;
+    defender.prevX = defender.x;
+    defender.prevZ = defender.z;
+    defender.retreat = 0;
+    defender.clash = null;
+    defender.fightCooldown = 0;
+    defender.defeated = false;
+    defender.leftRaid = false;
+    const contactStarted = defender.resolveAntContacts(sim);
+    const firstPairGrapplers = defender.clash?.ants?.length ?? 0;
+    const integrityBefore = sim.rivalNest.integrity;
+    sim.updateRivalNestAssault(0.5);
+    const attackerStateDuringContact = attacker.state;
+    if (defender.clash) {
+      defender.clash.elapsed = defender.clash.duration;
+      defender.finishClash(sim);
+    }
+    const defenderSurvivedFirstPairClash = sim.rivalAnts.includes(defender);
+    const defenderDamageAfterFirstPairClash = defender.combatDamage;
+    defender.x = sim.rivalNest.x + 0.45;
+    defender.z = sim.rivalNest.z;
+    defender.prevX = defender.x;
+    defender.prevZ = defender.z;
+    defender.retreat = 0;
+    defender.clash = null;
+    defender.fightCooldown = 0;
+    for (const [index, ant] of [attacker, partner].entries()) {
+      ant.state = "explore";
+      ant.fleeTimer = 0;
+      ant.stun = 0;
+      ant.clashRival = null;
+      ant.clashTimer = 0;
+      ant.x = sim.rivalNest.x - index * 0.7;
+      ant.z = sim.rivalNest.z + index * 0.4;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    const secondPairClashStarted = defenderSurvivedFirstPairClash && defender.startClash(attacker, sim.rivalNest.x + 0.2, sim.rivalNest.z, sim);
+    const secondPairGrapplers = defender.clash?.ants?.length ?? 0;
+    if (defender.clash) {
+      defender.clash.elapsed = defender.clash.duration;
+      defender.finishClash(sim);
+    }
+    const defenderSurvivedSecondPairClash = sim.rivalAnts.includes(defender);
+    const defenderDamageAfterSecondPairClash = defender.combatDamage;
+    defender.x = sim.rivalNest.x + 0.45;
+    defender.z = sim.rivalNest.z;
+    defender.prevX = defender.x;
+    defender.prevZ = defender.z;
+    defender.retreat = 0;
+    defender.clash = null;
+    defender.fightCooldown = 0;
+    for (const [index, ant] of [attacker, partner].entries()) {
+      ant.state = "explore";
+      ant.fleeTimer = 0;
+      ant.stun = 0;
+      ant.clashRival = null;
+      ant.clashTimer = 0;
+      ant.x = sim.rivalNest.x - index * 0.7;
+      ant.z = sim.rivalNest.z + index * 0.4;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    const thirdPairClashStarted = defenderSurvivedSecondPairClash && defender.startClash(attacker, sim.rivalNest.x + 0.2, sim.rivalNest.z, sim);
+    const thirdPairGrapplers = defender.clash?.ants?.length ?? 0;
+    if (defender.clash) {
+      defender.clash.elapsed = defender.clash.duration;
+      defender.finishClash(sim);
+    }
+    const defenderDefeatedAfterThirdPairClash = !sim.rivalAnts.includes(defender);
+    for (const ant of attackers) ant.state = "flee";
+    sim.updateRivalNestDefense(6.1);
+    const defendersDuringFlee = sim.rivalNestDefenders().length;
+    const defenseWaveArmedDuringFlee = sim.rivalNest.defenseWaveArmed;
+    for (const ant of attackers) {
+      ant.state = "return";
+    }
+    sim.updateRivalNestDefense(6.1);
+
+    return {
+      started,
+      attackerCount: attackers.length,
+      targetCount,
+      raidNoticeAfterDefense,
+      firstWaveCount,
+      repeatedCount,
+      defenseTargetsDistributed: firstDefenseTarget?.id !== secondDefenseTarget?.id,
+      defenderKinds: defenders.map((rival: any) => ({
+        nestDefender: rival.isRivalNestDefender,
+        raid: rival.isRaidRival,
+        worker: rival.isRivalWorker,
+        variant: rival.variant,
+      })),
+      maxSpawnDistance: Math.max(...defenders.map((rival: any) => Math.hypot(rival.x - sim.rivalNest.x, rival.z - sim.rivalNest.z))),
+      contactStarted,
+      firstPairGrapplers,
+      attackerState: attackerStateDuringContact,
+      integrityBefore,
+      integrityAfter: sim.rivalNest.integrity,
+      defenderSurvivedFirstPairClash,
+      defenderDamageAfterFirstPairClash,
+      secondPairClashStarted,
+      secondPairGrapplers,
+      defenderSurvivedSecondPairClash,
+      defenderDamageAfterSecondPairClash,
+      thirdPairClashStarted,
+      thirdPairGrapplers,
+      defenderDefeatedAfterThirdPairClash,
+      defendersDuringFlee,
+      defenseWaveArmedDuringFlee,
+      defendersAfterReturn: sim.rivalNestDefenders().length,
+      defenseWaveRearmed: sim.rivalNest.defenseWaveArmed,
+      attackerClashCleared: attacker.clashRival == null && attacker.clashTimer === 0,
+      log: sim.colony.battleLog.join("\n"),
+    };
+  });
+
+  expect(result.started).toBe(true);
+  expect(result.attackerCount).toBe(3);
+  expect(result.targetCount).toBe(2);
+  expect(result.raidNoticeAfterDefense).toBe("敵襲警告を維持");
+  expect(result.firstWaveCount).toBe(result.targetCount);
+  expect(result.repeatedCount).toBe(result.firstWaveCount);
+  expect(result.defenseTargetsDistributed).toBe(true);
+  expect(result.defenderKinds.every((rival: any) => rival.nestDefender && !rival.raid && !rival.worker && rival.variant === "soldier")).toBe(true);
+  expect(result.maxSpawnDistance).toBeLessThan(18);
+  expect(result.contactStarted).toBe(true);
+  expect(result.firstPairGrapplers).toBe(2);
+  expect(result.attackerState).toBe("clash");
+  expect(result.integrityAfter).toBeCloseTo(result.integrityBefore, 6);
+  expect(result.defenderSurvivedFirstPairClash).toBe(true);
+  expect(result.defenderDamageAfterFirstPairClash).toBeGreaterThan(0.4);
+  expect(result.defenderDamageAfterFirstPairClash).toBeLessThan(0.55);
+  expect(result.secondPairClashStarted).toBe(true);
+  expect(result.secondPairGrapplers).toBe(2);
+  expect(result.defenderSurvivedSecondPairClash).toBe(true);
+  expect(result.defenderDamageAfterSecondPairClash).toBeGreaterThan(0.8);
+  expect(result.defenderDamageAfterSecondPairClash).toBeLessThan(1);
+  expect(result.thirdPairClashStarted).toBe(true);
+  expect(result.thirdPairGrapplers).toBe(2);
+  expect(result.defenderDefeatedAfterThirdPairClash).toBe(true);
+  expect(result.defendersDuringFlee).toBe(result.firstWaveCount - 1);
+  expect(result.defenseWaveArmedDuringFlee).toBe(false);
+  expect(result.defendersAfterReturn).toBe(0);
+  expect(result.defenseWaveRearmed).toBe(true);
+  expect(result.attackerClashCleared).toBe(true);
+  expect(result.log).toContain("敵巣防衛出動");
+});
+
+test("enemy nest defenders only engage active expedition ants", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.clearRivalNestDefenders();
+    sim.colony.gameStatus = "playing";
+    sim.colony.food = 1000;
+    sim.colony.antPopulation = 36;
+    sim.colony.woundedAnts = 0;
+    sim.colony.soldierAnts = 6;
+    sim.rivalNest.discovered = true;
+    sim.rivalNest.defeated = false;
+    sim.rivalNest.defenseWaveArmed = true;
+    sim.soldierSortieCooldown = 0;
+    sim.computeDerived();
+    sim.syncAntPopulation();
+    const started = sim.startSoldierSortie("expedition");
+    const attackers = sim.deployedSoldiers();
+    const [activeAttacker, returningAttacker, fleeingAttacker] = attackers;
+    const worker = sim.ants.find((ant: any) => !ant.isSortieSoldier);
+    const farX = sim.rivalNest.x - 80;
+    const farZ = sim.rivalNest.z;
+
+    for (const ant of sim.ants) {
+      ant.clashRival = null;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+      ant.x = farX;
+      ant.z = farZ;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.stun = 0;
+      ant.fleeTimer = 0;
+      ant.inNest = false;
+      ant.nestStayTimer = 0;
+      if (ant.state === "clash") ant.setState("explore");
+    }
+    for (const ant of attackers) {
+      ant.setVariant?.("soldier");
+      ant.role = "guard";
+      ant.sortieMode = "expedition";
+      ant.state = "explore";
+    }
+    worker.setVariant?.("worker");
+    worker.role = "worker";
+    worker.state = "explore";
+
+    sim.spawnRivalNestDefenders(1);
+    const defender = sim.rivalNestDefenders()[0];
+    const resetDefenderClash = () => {
+      for (const ant of sim.ants) {
+        if (ant.clashRival !== defender) continue;
+        ant.clashRival = null;
+        ant.clashTimer = 0;
+        ant.clashDuration = 0;
+        if (ant.state === "clash") ant.setState("explore");
+      }
+      defender.clash = null;
+      defender.state = "rival";
+      defender.retreat = 0;
+      defender.fightCooldown = 0;
+    };
+    const placeDefender = () => {
+      defender.x = sim.rivalNest.x + 0.45;
+      defender.z = sim.rivalNest.z;
+      defender.prevX = defender.x;
+      defender.prevZ = defender.z;
+      defender.retreat = 0;
+      defender.fightCooldown = 0;
+    };
+
+    placeDefender();
+    returningAttacker.state = "return";
+    returningAttacker.x = defender.x + 0.1;
+    returningAttacker.z = defender.z;
+    const returningContactResolved = defender.resolveAntContacts(sim);
+    const returningContactIgnored = !returningContactResolved && defender.clash == null && returningAttacker.clashRival == null;
+    resetDefenderClash();
+    returningAttacker.state = "return";
+    returningAttacker.x = farX;
+    returningAttacker.z = farZ;
+
+    placeDefender();
+    worker.x = defender.x + 0.1;
+    worker.z = defender.z;
+    const workerContactResolved = defender.resolveAntContacts(sim);
+    const workerContactIgnored = !workerContactResolved && defender.clash == null && worker.clashRival == null;
+    resetDefenderClash();
+
+    placeDefender();
+    activeAttacker.state = "explore";
+    activeAttacker.x = defender.x + 0.1;
+    activeAttacker.z = defender.z;
+    returningAttacker.state = "return";
+    returningAttacker.x = defender.x + 6.5;
+    returningAttacker.z = defender.z;
+    fleeingAttacker.state = "flee";
+    fleeingAttacker.fleeTimer = 4;
+    fleeingAttacker.x = defender.x + 7;
+    fleeingAttacker.z = defender.z;
+    worker.state = "explore";
+    worker.x = defender.x + 7.5;
+    worker.z = defender.z;
+    const activeContactStarted = defender.resolveAntContacts(sim);
+    const recruitedIds = defender.clash?.ants?.map((ant: any) => ant.id) ?? [];
+
+    return {
+      started,
+      attackerCount: attackers.length,
+      returningContactIgnored,
+      workerContactIgnored,
+      activeContactStarted,
+      recruitedIds,
+      activeAttackerId: activeAttacker.id,
+      returningUnclashed: returningAttacker.clashRival == null,
+      fleeingUnclashed: fleeingAttacker.clashRival == null,
+      workerUnclashed: worker.clashRival == null,
+    };
+  });
+
+  expect(result.started).toBe(true);
+  expect(result.attackerCount).toBe(3);
+  expect(result.returningContactIgnored).toBe(true);
+  expect(result.workerContactIgnored).toBe(true);
+  expect(result.activeContactStarted).toBe(true);
+  expect(result.recruitedIds).toEqual([result.activeAttackerId]);
+  expect(result.returningUnclashed).toBe(true);
+  expect(result.fleeingUnclashed).toBe(true);
+  expect(result.workerUnclashed).toBe(true);
+});
+
 test("enemy nest collapse ends the game in victory", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -4555,6 +4912,7 @@ test("rival nest workers scale up and start contact fights", async ({ page }) =>
       rival.defeated = false;
       rival.clash = null;
       rival.fightCooldown = 0;
+      rival.combatDamage = 0;
       rival.state = "rival";
       rival.aggression = 0.14;
       rival.stubbornness = 0.24;
@@ -4567,6 +4925,7 @@ test("rival nest workers scale up and start contact fights", async ({ page }) =>
     const workerZ = sim.rivalNest.z;
     setupEnemy(workerEnemy, workerX, workerZ);
     setupAnt(workerAnt, "worker", workerX + 0.45, workerZ, false);
+    const workerCombatPower = workerEnemy.combatPowers(workerAnt, sim).rivalPower;
     const workerContactStarted = workerEnemy.resolveAntContacts(sim);
     const workerContactState = workerAnt.state;
     const workerEnemyGrapplers = workerEnemy.clash?.ants?.length ?? 0;
@@ -4581,17 +4940,72 @@ test("rival nest workers scale up and start contact fights", async ({ page }) =>
     const attackerContactState = attackerAnt.state;
     const attackerEnemyGrapplers = attackerEnemy.clash?.ants?.length ?? 0;
 
+    const duelEnemy = enemyWorkers.find((rival: any) => rival !== workerEnemy && rival !== attackerEnemy);
+    const soloAnt = sim.ants.find((ant: any) => ant !== workerAnt && ant !== attackerAnt);
+    const partnerAnt = sim.ants.find((ant: any) => ant !== workerAnt && ant !== attackerAnt && ant !== soloAnt);
+    for (const ant of sim.ants) {
+      if (ant === soloAnt || ant === partnerAnt) continue;
+      ant.x = sim.rivalNest.x + 90;
+      ant.z = sim.rivalNest.z + 30;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.stun = 30;
+    }
+    const duelX = sim.rivalNest.x;
+    const duelZ = sim.rivalNest.z + 6;
+    setupEnemy(duelEnemy, duelX, duelZ);
+    setupAnt(soloAnt, "soldier", duelX + 0.45, duelZ, true);
+    soloAnt.traits.persistence = 0.84;
+    soloAnt.traits.caution = 0.84;
+    partnerAnt.stun = 30;
+    partnerAnt.x = duelX + 30;
+    partnerAnt.z = duelZ;
+    const soloClashStarted = duelEnemy.startClash(soloAnt, duelX + 0.2, duelZ, sim);
+    if (duelEnemy.clash) {
+      duelEnemy.clash.elapsed = duelEnemy.clash.duration;
+      duelEnemy.finishClash(sim);
+    }
+    const soloEnemySurvived = sim.rivalAnts.includes(duelEnemy);
+    const soloWinner = duelEnemy.lastFightWinner;
+    const soloDamage = duelEnemy.combatDamage;
+
+    const pairEnemy = enemyWorkers.find((rival: any) =>
+      rival !== workerEnemy && rival !== attackerEnemy && rival !== duelEnemy
+    );
+    setupEnemy(pairEnemy, duelX, duelZ);
+    setupAnt(soloAnt, "soldier", duelX + 0.45, duelZ, true);
+    setupAnt(partnerAnt, "soldier", duelX + 0.9, duelZ + 0.3, true);
+    for (const ant of [soloAnt, partnerAnt]) {
+      ant.traits.persistence = 0.84;
+      ant.traits.caution = 0.84;
+    }
+    const pairClashStarted = pairEnemy.startClash(soloAnt, duelX + 0.2, duelZ, sim);
+    const pairGrapplers = pairEnemy.clash?.ants?.length ?? 0;
+    if (pairEnemy.clash) {
+      pairEnemy.clash.elapsed = pairEnemy.clash.duration;
+      pairEnemy.finishClash(sim);
+    }
+    const pairDefeatedEnemy = !sim.rivalAnts.includes(pairEnemy);
+
     return {
       baseTarget,
       baseWorkers,
       scaledTarget,
       scaledWorkers: enemyWorkers.length,
+      workerCombatPower,
       workerContactStarted,
       workerContactState,
       workerEnemyGrapplers,
       attackerContactStarted,
       attackerContactState,
       attackerEnemyGrapplers,
+      soloClashStarted,
+      soloEnemySurvived,
+      soloWinner,
+      soloDamage,
+      pairClashStarted,
+      pairGrapplers,
+      pairDefeatedEnemy,
     };
   });
 
@@ -4599,12 +5013,22 @@ test("rival nest workers scale up and start contact fights", async ({ page }) =>
   expect(result.baseWorkers).toBe(9);
   expect(result.scaledTarget).toBeGreaterThan(result.baseTarget);
   expect(result.scaledWorkers).toBe(result.scaledTarget);
+  expect(result.workerCombatPower).toBeGreaterThan(1.4);
+  expect(result.workerCombatPower).toBeLessThan(1.43);
   expect(result.workerContactStarted).toBe(true);
   expect(result.workerContactState).toBe("clash");
   expect(result.workerEnemyGrapplers).toBeGreaterThanOrEqual(1);
   expect(result.attackerContactStarted).toBe(true);
   expect(result.attackerContactState).toBe("clash");
   expect(result.attackerEnemyGrapplers).toBeGreaterThanOrEqual(1);
+  expect(result.soloClashStarted).toBe(true);
+  expect(result.soloWinner).toBe("colony");
+  expect(result.soloEnemySurvived).toBe(true);
+  expect(result.soloDamage).toBeGreaterThan(0.2);
+  expect(result.soloDamage).toBeLessThan(0.5);
+  expect(result.pairClashStarted).toBe(true);
+  expect(result.pairGrapplers).toBe(2);
+  expect(result.pairDefeatedEnemy).toBe(true);
 });
 
 test("rival ant combat grapples before the loser exits or remains", async ({ page }) => {

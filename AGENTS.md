@@ -94,6 +94,7 @@
 - Smoke eval: `npm run eval:smoke`
 - Save/load eval: `npm run eval:save`
 - Combat visual eval: `npm run verify:combat`
+- Expedition defense eval: `npm run verify:expedition`
 - Balance eval: `npm run verify:balance`
 - Raid quick check URL: `/?raidSoon=1`
 - Playwright eval server の既定TTLは15分。大きな敵襲規模を含むmobile/desktop smokeが途中で `ERR_CONNECTION_REFUSED` にならないよう維持する。
@@ -113,6 +114,7 @@
 - `npm run eval:smoke` が通る。
 - セーブ機能がある場合は `npm run eval:save` が通る。
 - 戦闘描画や敵襲AIを変更した場合は `npm run verify:combat` を実行し、出力スクリーンショットを確認する。
+- 敵巣守備、敵巣攻撃、敵働きアリの戦闘力を変更した場合は `npm run verify:expedition` を実行し、`verification/expedition-defense/summary.json` の失敗がないことを確認する。
 - 兵種・敵襲・防衛バランスを変更した場合は `npm run verify:balance` を実行し、`verification/balance/summary.json` の失敗がないことを確認する。
 - 失敗時はPlaywright report、screenshot、console error、原因候補を報告する。
 - 最終報告に変更点、検証結果、残リスク、未対応事項を含める。

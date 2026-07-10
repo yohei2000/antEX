@@ -63,6 +63,16 @@ import {
   RIVAL_CORPSE_CAP,
   RIVAL_GRAPPLER_RECRUIT_RANGE,
   RIVAL_HARASSMENT_RANGE,
+  RIVAL_NEST_DEFENSE_ALERT_RADIUS,
+  RIVAL_NEST_DEFENSE_ATTACKERS_PER_DEFENDER,
+  RIVAL_NEST_DEFENSE_FORCE_RETURN_SECONDS,
+  RIVAL_NEST_DEFENSE_REARM_SECONDS,
+  RIVAL_NEST_DEFENDER_DAMAGE_TAKEN_SCALE,
+  RIVAL_NEST_DEFENDER_MAX_COUNT,
+  RIVAL_NEST_DEFENDER_MIN_COUNT,
+  RIVAL_NEST_WORKER_COMBAT_POWER_SCALE,
+  RIVAL_NEST_WORKER_DAMAGE_DEFEAT_THRESHOLD_SCALE,
+  RIVAL_NEST_WORKER_OVERWHELM_POWER_RATIO,
   SCOUT_MARK_RANGE,
   SCOUT_MARK_SECONDS,
   SCOUT_MARK_STANDOFF,
@@ -2185,7 +2195,8 @@ class RivalAnt3D {
   constructor(id, sim, options = {}) {
     this.id = id;
     this.isRival = true;
-    this.rivalKind = options.kind === "worker" ? "worker" : "soldier";
+    this.isRivalNestDefender = Boolean(options.nestDefense);
+    this.rivalKind = options.kind === "worker" && !this.isRivalNestDefender ? "worker" : "soldier";
     this.isRivalWorker = this.rivalKind === "worker";
     this.isRaidRival = Boolean(options.raid);
     this.raidWave = options.raid?.wave ?? 0;
@@ -2193,11 +2204,13 @@ class RivalAnt3D {
     this.raidCount = options.raid?.count ?? 1;
     this.rivalWorkerIndex = options.index ?? 0;
     this.rivalWorkerCount = options.count ?? RIVAL_NEST_WORKER_COUNT;
+    this.rivalDefenseIndex = options.index ?? 0;
+    this.rivalDefenseCount = options.count ?? RIVAL_NEST_DEFENDER_MIN_COUNT;
     this.raidTargetX = sim.nest.x;
     this.raidTargetZ = sim.nest.z;
     this.leftRaid = false;
     this.defeated = false;
-    this.variant = "worker";
+    this.variant = this.isRivalNestDefender ? "soldier" : "worker";
     this.variantConfig = getAntVariantConfig(this.variant);
     this.role = this.isRivalWorker ? "worker" : "guard";
     this.scale = this.isRivalWorker ? rand(0.82, 0.98) : rand(1.22, 1.42);
@@ -2234,6 +2247,7 @@ class RivalAnt3D {
     this.carrying = 0;
     this.renderInstanceIndex = null;
     if (this.isRivalWorker) this.placeAtRivalNestWorkerSpawn(sim);
+    else if (this.isRivalNestDefender) this.placeAtRivalNestDefenderSpawn(sim);
     else if (this.isRaidRival) this.placeAtRaidSpawn(sim, options.raid);
     else this.placeAtSpawn(sim);
   }
@@ -2323,6 +2337,35 @@ class RivalAnt3D {
     this.prevAngle = this.angle;
   }
 
+  placeAtRivalNestDefenderSpawn(sim) {
+    const nest = sim.rivalNest ?? { x: sim.worldRadius * 0.68, z: sim.worldRadius * 0.62, radius: 9 };
+    const count = Math.max(1, this.rivalDefenseCount);
+    const index = this.rivalDefenseIndex % count;
+    const lane = index - (count - 1) * 0.5;
+    let forwardX = sim.nest.x - nest.x;
+    let forwardZ = sim.nest.z - nest.z;
+    const forwardDistance = Math.hypot(forwardX, forwardZ) || 1;
+    forwardX /= forwardDistance;
+    forwardZ /= forwardDistance;
+    const flankX = -forwardZ;
+    const flankZ = forwardX;
+    const row = Math.floor(index / 4);
+    const depth = nest.radius + 2.8 + row * 1.2;
+    const sideOffset = lane * 1.7;
+    const point = sim.clampPointToWorld({
+      x: nest.x + forwardX * depth + flankX * sideOffset,
+      z: nest.z + forwardZ * depth + flankZ * sideOffset,
+    }, 4);
+    this.x = point.x;
+    this.z = point.z;
+    this.prevX = this.x;
+    this.prevZ = this.z;
+    this.homeX = nest.x + forwardX * (nest.radius + 1.2) + flankX * clamp(sideOffset * 0.42, -3.5, 3.5);
+    this.homeZ = nest.z + forwardZ * (nest.radius + 1.2) + flankZ * clamp(sideOffset * 0.42, -3.5, 3.5);
+    this.angle = Math.atan2(forwardX, forwardZ);
+    this.prevAngle = this.angle;
+  }
+
   update(dt, sim) {
     this.prevX = this.x;
     this.prevZ = this.z;
@@ -2347,6 +2390,11 @@ class RivalAnt3D {
 
     if (this.isRivalWorker) {
       this.updateRivalWorker(dt, sim);
+      return;
+    }
+
+    if (this.isRivalNestDefender) {
+      this.updateRivalNestDefender(dt, sim);
       return;
     }
 
@@ -2450,7 +2498,7 @@ class RivalAnt3D {
     const nest = sim.rivalNest ?? { x: this.homeX, z: this.homeZ, radius: 9 };
     for (const ant of sim.ants) {
       if (!sim.shouldRenderAnt(ant)) continue;
-      if (ant.state === "return" || ant.state === "flee" || ant.stun > 0) continue;
+      if (ant.state === "return" || ant.state === "flee" || ant.state === "clash" || ant.clashRival || ant.stun > 0) continue;
       const nestDistance = distance2(ant.x, ant.z, nest.x, nest.z);
       const isAttacker = ant.isSortieSoldier || ant.role === "guard" || ant.lastTacticalAction === "rivalNestAssault";
       const isWorkerContact = ant.variant === "worker" && ant.role === "worker" && nestDistance <= RIVAL_NEST_WORKER_RETURN_RADIUS + 8;
@@ -2461,6 +2509,63 @@ class RivalAnt3D {
       const score = d - (isAttacker ? 6 : 0);
       if (score < bestScore) {
         best = { ant, kind: isAttacker ? "attacker" : "worker" };
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  updateRivalNestDefender(dt, sim) {
+    const steering = this.steering;
+    steering.x = 0;
+    steering.z = 0;
+    const nest = sim.rivalNest ?? { x: this.homeX, z: this.homeZ, radius: 9 };
+    const nestDistance = distance2(this.x, this.z, nest.x, nest.z) || 1;
+
+    if (this.retreat > 0) {
+      this.addRetreatHome(steering, sim);
+    } else {
+      const target = this.findRivalNestDefenseTarget(sim);
+      if (target) {
+        const d = distance2(this.x, this.z, target.x, target.z) || 1;
+        const pressure = target.lastTacticalAction === "rivalNestAssault" ? 2.15 : 1.82;
+        steering.x += ((target.x - this.x) / d) * pressure;
+        steering.z += ((target.z - this.z) / d) * pressure;
+      } else {
+        const homeDistance = distance2(this.x, this.z, this.homeX, this.homeZ) || 1;
+        const returnPressure = homeDistance > 3.2 ? 1.45 : 0.42;
+        steering.x += ((this.homeX - this.x) / homeDistance) * returnPressure;
+        steering.z += ((this.homeZ - this.z) / homeDistance) * returnPressure;
+      }
+      if (nestDistance > RIVAL_NEST_DEFENSE_ALERT_RADIUS + 14) {
+        steering.x += ((nest.x - this.x) / nestDistance) * 2.1;
+        steering.z += ((nest.z - this.z) / nestDistance) * 2.1;
+      }
+    }
+
+    this.state = "rival";
+    this.addRivalSeparation(steering, sim);
+    this.wander += (Math.random() - 0.5) * dt * (1.4 + this.aggression * 0.8);
+    steering.x += Math.sin(this.wander) * 0.2;
+    steering.z += Math.cos(this.wander) * 0.2;
+    this.move(dt, sim, steering);
+    this.resolveAntContacts(sim);
+  }
+
+  findRivalNestDefenseTarget(sim) {
+    const nest = sim.rivalNest ?? { x: this.homeX, z: this.homeZ, radius: 9 };
+    let best = null;
+    let bestScore = Infinity;
+    for (const ant of sim.deployedSoldiers()) {
+      if (ant.sortieMode !== "expedition" || !sim.shouldRenderAnt(ant)) continue;
+      if (ant.state === "return" || ant.state === "flee" || ant.state === "clash" || ant.clashRival || ant.stun > 0) continue;
+      const nestDistance = distance2(ant.x, ant.z, nest.x, nest.z);
+      if (nestDistance > RIVAL_NEST_DEFENSE_ALERT_RADIUS + 22) continue;
+      const d = distance2(this.x, this.z, ant.x, ant.z);
+      const assaultBonus = ant.lastTacticalAction === "rivalNestAssault" ? 18 : 0;
+      const score = d - assaultBonus;
+      if (score < bestScore) {
+        best = ant;
         bestScore = score;
       }
     }
@@ -2610,13 +2715,17 @@ class RivalAnt3D {
     return !squad || (squad.memberIds?.length ?? 0) <= 0;
   }
 
+  rivalCombatPowerScale() {
+    return this.isRivalWorker ? RIVAL_NEST_WORKER_COMBAT_POWER_SCALE : 1;
+  }
+
   combatPowers(ant, sim = null) {
     const threatPressure = this.isRaidRival && sim ? clamp(sim.colony.enemyThreat / 22, 0, 0.58) : 0;
     const defenseBonus = sim ? Math.max(0, (sim.computeDerived().defensePower ?? 1) - 1) : 0;
     const variant = ant.variantConfig ?? getAntVariantConfig(ant.variant);
     const acidPenalty = 1 - Math.min(0.26, this.acidDebuff * 0.13);
     const scoutMarkPenalty = this.scoutMarkTimer > 0 ? 1 - Math.min(0.18, Math.max(0.35, this.scoutMarkStrength ?? 0) * 0.18) : 1;
-    const rivalPower = (0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28 + threatPressure) * acidPenalty * scoutMarkPenalty * this.combatDamagePowerScale();
+    const rivalPower = (0.74 + this.aggression * 0.86 + this.stubbornness * 0.48 + this.scale * 0.28 + threatPressure) * this.rivalCombatPowerScale() * acidPenalty * scoutMarkPenalty * this.combatDamagePowerScale();
     const rolePower = ant.role === "guard" ? 1.0 : ant.role === "worker" ? 0.22 : ant.role === "scout" ? 0.24 : 0.1;
     const carriedPenalty = ant.carrying > 0 ? -0.18 : 0;
     const braceBonus = ant.braceIntent > 0 ? variant.brace * 0.34 + (sim?.braceBonusAt(ant.x, ant.z) ?? 0) : 0;
@@ -2726,9 +2835,15 @@ class RivalAnt3D {
     return clamp(pressure, 0, 0.72);
   }
 
+  canEngageAnt(ant, sim, eligibleDefenseTargets = null) {
+    if (!this.isRivalNestDefender) return true;
+    if (eligibleDefenseTargets) return eligibleDefenseTargets.has(ant);
+    return sim.activeExpeditionAttackers().includes(ant);
+  }
+
   startClash(ant, anchorX, anchorZ, sim) {
     const duration = RIVAL_CLASH_DURATION + (this.isRaidRival ? 0.45 : 0);
-    if (this.defeated || this.leftRaid || this.clash || this.retreat > 0 || !ant.startRivalClash(this, anchorX, anchorZ, duration)) return false;
+    if (this.defeated || this.leftRaid || this.clash || this.retreat > 0 || !this.canEngageAnt(ant, sim) || !ant.startRivalClash(this, anchorX, anchorZ, duration)) return false;
     const dx = ant.x - this.x;
     const dz = ant.z - this.z;
     const length = Math.hypot(dx, dz);
@@ -2781,8 +2896,10 @@ class RivalAnt3D {
     const limit = this.maxGrapplers(sim);
     if (clash.ants.length >= limit) return;
     const recruitRange = this.isRaidRival ? RAID_GRAPPLER_RECRUIT_RANGE : RIVAL_GRAPPLER_RECRUIT_RANGE;
+    const eligibleDefenseTargets = this.isRivalNestDefender ? new Set(sim.activeExpeditionAttackers()) : null;
     const candidates = sim.ants
       .filter((ant) =>
+        this.canEngageAnt(ant, sim, eligibleDefenseTargets) &&
         !clash.ants.includes(ant) &&
         ant.variant !== "shieldHead" &&
         ant.variant !== "scout" &&
@@ -2947,7 +3064,7 @@ class RivalAnt3D {
     const acidPenalty = 1 - Math.min(0.26, this.acidDebuff * 0.13);
     const scoutMarkPenalty = this.scoutMarkTimer > 0 ? 1 - Math.min(0.18, Math.max(0.35, this.scoutMarkStrength ?? 0) * 0.18) : 1;
     const supportPenalty = 1 - supportPressure * 0.12;
-    const rivalPower = baseRivalPower * this.combatDamagePowerScale() * acidPenalty * scoutMarkPenalty * supportPenalty;
+    const rivalPower = baseRivalPower * this.rivalCombatPowerScale() * this.combatDamagePowerScale() * acidPenalty * scoutMarkPenalty * supportPenalty;
     const dx = primaryAnt.x - this.x;
     const dz = primaryAnt.z - this.z;
     const d = Math.hypot(dx, dz) || 1;
@@ -2981,7 +3098,8 @@ class RivalAnt3D {
       sim.registerRivalFight("rival", victim, this, { grapplers: ants.length, casualty: this.isRaidRival });
     } else {
       const winDamage = clamp(((colonyPower / Math.max(rivalPower, 0.001) - 0.84) * RIVAL_COMBAT_DAMAGE_WIN_SCALE + 0.1 + Math.max(0, ants.length - 1) * 0.08 + squadCoordination * 0.12) * damagePressure, 0.04, 0.72);
-      this.applyCombatDamage(winDamage);
+      const defenderDamageScale = this.isRivalNestDefender ? RIVAL_NEST_DEFENDER_DAMAGE_TAKEN_SCALE : 1;
+      this.applyCombatDamage(winDamage * defenderDamageScale);
       this.x -= nx * 0.38;
       this.z -= nz * 0.38;
       this.angle = Math.atan2(this.homeX - this.x, this.homeZ - this.z);
@@ -2996,7 +3114,11 @@ class RivalAnt3D {
       const damageDefeatThreshold = RIVAL_COMBAT_DAMAGE_DEFEAT_THRESHOLD * (1 - squadCoordination * 0.22);
       if (
         (this.isRaidRival && (colonyPower > rivalPower * 1.24 || this.combatDamage >= damageDefeatThreshold)) ||
-        (this.isRivalWorker && (colonyPower > rivalPower * 1.08 || this.combatDamage >= damageDefeatThreshold * 0.62))
+        (this.isRivalNestDefender && this.combatDamage >= damageDefeatThreshold) ||
+        (this.isRivalWorker && (
+          colonyPower > rivalPower * RIVAL_NEST_WORKER_OVERWHELM_POWER_RATIO ||
+          this.combatDamage >= damageDefeatThreshold * RIVAL_NEST_WORKER_DAMAGE_DEFEAT_THRESHOLD_SCALE
+        ))
       ) {
         enemyDefeated = sim.defeatRivalAnt(this, primaryAnt);
       }
@@ -3046,9 +3168,11 @@ class RivalAnt3D {
   resolveAntContacts(sim) {
     if (this.clash) return true;
     if (this.defeated || this.leftRaid || this.retreat > 0) return false;
+    const eligibleDefenseTargets = this.isRivalNestDefender ? new Set(sim.activeExpeditionAttackers()) : null;
     let resolved = false;
     for (const ant of sim.ants) {
       if (!sim.shouldRenderAnt(ant)) continue;
+      if (!this.canEngageAnt(ant, sim, eligibleDefenseTargets)) continue;
       if (ant.state === "clash" || ant.state === "flee" || ant.fleeTimer > 0 || ant.stun > 0) continue;
       const contact = RIVAL_CONTACT_RADIUS + this.scale * 0.52;
       const dx = ant.x - this.x;
@@ -3918,6 +4042,8 @@ class AntColony3D {
       integrity: 1,
       underAttackTimer: 0,
       attackPulseTimer: 0,
+      defenseWaveArmed: true,
+      defenseClearTimer: 0,
       group: null,
     };
     this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
@@ -4009,7 +4135,7 @@ class AntColony3D {
       materials: this.materials,
       shadowsEnabled: this.quality.shadowQuality !== "off",
     });
-    this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP + RIVAL_NEST_WORKER_MAX_COUNT);
+    this.antRenderer = new AntRenderSystem(this, DISPLAY_ANT_CAP + RAID_RIVAL_CAP + RIVAL_NEST_WORKER_MAX_COUNT + RIVAL_NEST_DEFENDER_MAX_COUNT);
     this.squadRingSystem = new SquadRingSystem(this, DISPLAY_ANT_CAP);
     this.roleLabelSystem = new AntRoleLabelSystem(this, DISPLAY_ANT_CAP);
     this.createWorld();
@@ -6249,6 +6375,8 @@ class AntColony3D {
     this.rivalNest.integrity = 1;
     this.rivalNest.underAttackTimer = 0;
     this.rivalNest.attackPulseTimer = 0;
+    this.rivalNest.defenseWaveArmed = true;
+    this.rivalNest.defenseClearTimer = 0;
     if (newGame) {
       this.manualMapVisionRadius = null;
       this.clearManualMapVisionRadiusStorage();
@@ -6855,6 +6983,7 @@ class AntColony3D {
       this.mapIntelLogState.rivalNestDefeated = true;
       this.clearRaidRivals();
       this.clearRivalNestWorkers();
+      this.clearRivalNestDefenders();
     } else if (this.colony.gameStatus === "defeat") {
       this.colony.nestDurability = 0;
     }
@@ -6874,6 +7003,7 @@ class AntColony3D {
       this.rivalNest.integrity = 0;
       this.clearRaidRivals();
       this.clearRivalNestWorkers();
+      this.clearRivalNestDefenders();
       this.recallSortieSoldiers("game-victory");
       this.pushLog("勝利: 敵巣を陥落させた");
       this.showRaidNotice("勝利: 敵巣を制圧しました", "repelled", 999999);
@@ -7473,6 +7603,8 @@ class AntColony3D {
       this.shouldRenderAnt(ant) &&
       ant.state !== "return" &&
       ant.state !== "flee" &&
+      ant.state !== "clash" &&
+      !ant.clashRival &&
       ant.stun <= 0 &&
       distance2(ant.x, ant.z, nest.x, nest.z) <= nest.radius + RIVAL_NEST_ASSAULT_RADIUS,
     );
@@ -7514,6 +7646,7 @@ class AntColony3D {
     this.colony.enemyThreat = Math.max(0, this.colony.enemyThreat - 8);
     this.clearRaidRivals();
     this.clearRivalNestWorkers();
+    this.clearRivalNestDefenders();
     this.recallSortieSoldiers("rival-nest-defeated");
     if (!this.mapIntelLogState.rivalNestDefeated) {
       this.pushLog("敵巣陥落: 敵アリの襲撃拠点を崩した");
@@ -8332,6 +8465,7 @@ class AntColony3D {
 
     for (const ant of this.ants) ant.update(dt, this);
     this.flushSortieRetires();
+    this.updateRivalNestDefense(dt);
     for (const rival of this.rivalAnts) rival.update(dt, this);
     this.updateExploredPatches(dt);
     this.updateRivalNestAssault(dt);
@@ -8854,6 +8988,96 @@ class AntColony3D {
     return this.rivalAnts.filter((rival) => rival.isRivalWorker);
   }
 
+  rivalNestDefenders() {
+    return this.rivalAnts.filter((rival) => rival.isRivalNestDefender);
+  }
+
+  activeExpeditionAttackers() {
+    return this.deployedSoldiers().filter((ant) =>
+      ant.sortieMode === "expedition" &&
+      this.shouldRenderAnt(ant) &&
+      ant.state !== "return" &&
+      ant.state !== "flee",
+    );
+  }
+
+  expeditionSortiePresence() {
+    return this.deployedSoldiers().filter((ant) =>
+      ant.sortieMode === "expedition" &&
+      this.shouldRenderAnt(ant) &&
+      ant.state !== "return",
+    );
+  }
+
+  rivalNestDefenseApproachers(attackers = this.activeExpeditionAttackers()) {
+    const nest = this.rivalNest;
+    if (!nest || nest.defeated) return [];
+    return attackers.filter((ant) => distance2(ant.x, ant.z, nest.x, nest.z) <= RIVAL_NEST_DEFENSE_ALERT_RADIUS);
+  }
+
+  rivalNestDefenderTargetCount(attackers = this.activeExpeditionAttackers()) {
+    if (!this.rivalNest || this.rivalNest.defeated || attackers.length <= 0) return 0;
+    return Math.floor(clamp(
+      Math.ceil(attackers.length / RIVAL_NEST_DEFENSE_ATTACKERS_PER_DEFENDER),
+      RIVAL_NEST_DEFENDER_MIN_COUNT,
+      RIVAL_NEST_DEFENDER_MAX_COUNT,
+    ));
+  }
+
+  spawnRivalNestDefenders(targetCount = this.rivalNestDefenderTargetCount()) {
+    if (!this.rivalNest || this.rivalNest.defeated || targetCount <= 0) return 0;
+    const liveDefenders = this.rivalNestDefenders().filter((rival) => !rival.defeated && !rival.leftRaid);
+    let spawned = 0;
+    for (let i = liveDefenders.length; i < targetCount; i += 1) {
+      const defender = new RivalAnt3D(this.nextRivalId++, this, {
+        kind: "soldier",
+        nestDefense: true,
+        index: i,
+        count: targetCount,
+      });
+      this.rivalAnts.push(defender);
+      spawned += 1;
+    }
+    return spawned;
+  }
+
+  updateRivalNestDefense(dt) {
+    const nest = this.rivalNest;
+    if (!nest || nest.defeated || this.isGameEnded() || dt <= 0) return;
+    const expeditionPresence = this.expeditionSortiePresence();
+    const attackers = this.activeExpeditionAttackers();
+    if (expeditionPresence.length <= 0) {
+      const defenders = this.rivalNestDefenders();
+      if (defenders.length <= 0) {
+        nest.defenseClearTimer = 0;
+        nest.defenseWaveArmed = true;
+        return;
+      }
+      nest.defenseClearTimer = (nest.defenseClearTimer ?? 0) + dt;
+      const defendersHome = defenders.every((rival) =>
+        distance2(rival.x, rival.z, nest.x, nest.z) <= nest.radius + 5,
+      );
+      const returnTimedOut = nest.defenseClearTimer >= RIVAL_NEST_DEFENSE_FORCE_RETURN_SECONDS;
+      if (nest.defenseClearTimer >= RIVAL_NEST_DEFENSE_REARM_SECONDS && (defendersHome || returnTimedOut)) {
+        this.clearRivalNestDefenders();
+        nest.defenseClearTimer = 0;
+        nest.defenseWaveArmed = true;
+      }
+      return;
+    }
+    nest.defenseClearTimer = 0;
+    if (attackers.length <= 0) return;
+    if (this.rivalNestDefenseApproachers(attackers).length <= 0 || nest.defenseWaveArmed === false) return;
+    nest.defenseWaveArmed = false;
+    const targetCount = this.rivalNestDefenderTargetCount(attackers);
+    const spawned = this.spawnRivalNestDefenders(targetCount);
+    if (spawned <= 0) return;
+    this.pushLog(`敵巣防衛出動: 守備兵${spawned}匹が遠征隊を迎撃`);
+    if (this.ensureRaidState().phase === "calm") {
+      this.showRaidNotice(`敵巣防衛出動: 守備兵${spawned}匹が接近`, "warning");
+    }
+  }
+
   rivalNestWorkerTargetCount(derived = this.derived) {
     if (!this.rivalNest || this.rivalNest.defeated) return 0;
     const d = derived && Number.isFinite(Number(derived.activeAnts)) ? derived : this.computeDerived();
@@ -8885,6 +9109,12 @@ class AntColony3D {
 
   clearRivalNestWorkers() {
     for (const rival of this.rivalNestWorkers()) {
+      this.removeRivalAnt(rival);
+    }
+  }
+
+  clearRivalNestDefenders() {
+    for (const rival of this.rivalNestDefenders()) {
       this.removeRivalAnt(rival);
     }
   }
@@ -9013,6 +9243,14 @@ class AntColony3D {
   }
 
   removeRivalAnt(rival) {
+    for (const ant of rival?.clash?.ants ?? []) {
+      if (ant.clashRival !== rival) continue;
+      ant.clashRival = null;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+      if (ant.state === "clash") ant.setState(ant.carrying > 0 ? "return" : "explore");
+    }
+    if (rival) rival.clash = null;
     const index = this.rivalAnts.indexOf(rival);
     if (index >= 0) this.rivalAnts.splice(index, 1);
     this.antRenderer?.releaseRenderObject(rival);
