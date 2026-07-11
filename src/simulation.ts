@@ -118,17 +118,6 @@ const ui = {
   statThreat: document.querySelector("#statThreat"),
   colonySummary: document.querySelector("#colonySummary"),
   growthFill: document.querySelector("#growthFill"),
-  nextActionDock: document.querySelector("#nextActionDock"),
-  nextActionReason: document.querySelector("#nextActionReason"),
-  nextActionPrimaryBtn: document.querySelector("#nextActionPrimaryBtn"),
-  nextActionPrimaryIcon: document.querySelector(".next-action-primary-icon"),
-  nextActionPrimaryText: document.querySelector("#nextActionPrimaryText"),
-  nextActionQueueCount: document.querySelector("#nextActionQueueCount"),
-  nextActionQueueSlots: document.querySelector("#nextActionQueueSlots"),
-  nextActionQueueHint: document.querySelector("#nextActionQueueHint"),
-  nextActionGrowthHint: document.querySelector("#nextActionGrowthHint"),
-  nextActionBarracksHint: document.querySelector("#nextActionBarracksHint"),
-  nextActionSoldierHint: document.querySelector("#nextActionSoldierHint"),
   actionFeedback: document.querySelector("#actionFeedback"),
   upgradeList: document.querySelector("#upgradeList"),
   growthTab: document.querySelector("#growthTab"),
@@ -465,8 +454,8 @@ const MAP_NEST_LEVEL_ACTIVITY_BONUS = 4.2;
 const MAP_VISION_FADE_WIDTH = 9;
 const MAP_UNEXPLORED_MAX_ALPHA = 0.995;
 const MAP_UNEXPLORED_COLOR = 0x030403;
-const MAP_REMEMBERED_FOG_ALPHA = 0.56;
-const MAP_REMEMBERED_FOG_COLOR = 0x727a74;
+const MAP_REMEMBERED_FOG_ALPHA = 0.3;
+const MAP_REMEMBERED_FOG_COLOR = 0x69716c;
 const MAP_FOG_RENDER_ORDER = 80;
 const MAP_MANUAL_VISION_STORAGE_KEY = "ant3d.manualMapVisionRadius";
 const MAP_MANUAL_VISION_MIN_RADIUS = 36;
@@ -505,10 +494,11 @@ const DOM_BUTTON_TOUCH_TAP_SLOP = 42;
 const DOM_BUTTON_TOUCH_TARGET_PADDING = DOM_BUTTON_TOUCH_TAP_SLOP;
 const DOM_BUTTON_TOUCH_TAP_MAX_MS = 700;
 const DOM_BUTTON_SUPPRESS_CLICK_MS = 700;
-const EXPLORED_PATCH_LIMIT = 80;
-const ACTIVE_SIGHT_PATCH_LIMIT = 48;
+const ACTIVE_SIGHT_PATCH_LIMIT = DISPLAY_ANT_CAP + 48;
 const EXPLORED_PATCH_UPDATE_SECONDS = 0.38;
 const EXPLORED_PATCH_BASE_RADIUS = 18;
+const EXPLORED_MASK_SIZE = 256;
+const EXPLORED_MASK_VISIBLE_THRESHOLD = 0.9;
 const FOOD_RESPAWN_MIN_SECONDS = 70;
 const FOOD_RESPAWN_RANDOM_SECONDS = 52;
 const FOOD_RESPAWN_DISTANCE_SECONDS = 0.12;
@@ -4215,9 +4205,9 @@ class AntColony3D {
     this.fogOfWar = null;
     this.fogOfWarMaterial = null;
     this.visionEdge = null;
-    this.exploredPatches = [];
+    this.exploredMaskData = null;
+    this.exploredMaskTexture = null;
     this.exploredPatchClock = 0;
-    this.exploredPatchSequence = 0;
     this.mapIntelLogState = { rivalNestDiscovered: false, rivalNestDefeated: false };
     this.colony = readColonyState();
     this.derived = {};
@@ -4288,6 +4278,7 @@ class AntColony3D {
     this.sharedGeometries = new Set();
     this.sharedMaterials = new Set();
     this.dynamicObjects = new Set();
+    this.createExplorationMask();
 
     this.assetService.preloadAssets();
     this.applyOfflineProgress(Date.now());
@@ -5527,6 +5518,118 @@ class AntColony3D {
     this.updateRivalNestVisual();
   }
 
+  createExplorationMask() {
+    const data = new Uint8Array(EXPLORED_MASK_SIZE * EXPLORED_MASK_SIZE);
+    const texture = new THREE.DataTexture(
+      data,
+      EXPLORED_MASK_SIZE,
+      EXPLORED_MASK_SIZE,
+      THREE.RedFormat,
+      THREE.UnsignedByteType,
+    );
+    texture.name = "runtime-exploration-mask";
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
+    this.exploredMaskData = data;
+    this.exploredMaskTexture = texture;
+  }
+
+  clearExplorationMask() {
+    this.exploredMaskData?.fill(0);
+    if (this.exploredMaskTexture) this.exploredMaskTexture.needsUpdate = true;
+  }
+
+  explorationMaskCellSize() {
+    return (this.worldRadius * 2) / (EXPLORED_MASK_SIZE - 1);
+  }
+
+  explorationMaskCoordinates(x, z) {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+    const scale = (EXPLORED_MASK_SIZE - 1) / (this.worldRadius * 2);
+    return {
+      x: (x + this.worldRadius) * scale,
+      z: (z + this.worldRadius) * scale,
+    };
+  }
+
+  explorationMaskValueAt(x, z) {
+    const point = this.explorationMaskCoordinates(x, z);
+    if (!point || !this.exploredMaskData) return 0;
+    if (point.x < 0 || point.z < 0 || point.x > EXPLORED_MASK_SIZE - 1 || point.z > EXPLORED_MASK_SIZE - 1) return 0;
+    const column = clamp(Math.round(point.x), 0, EXPLORED_MASK_SIZE - 1);
+    const row = clamp(Math.round(point.z), 0, EXPLORED_MASK_SIZE - 1);
+    return this.exploredMaskData[row * EXPLORED_MASK_SIZE + column] / 255;
+  }
+
+  isPointInExplorationMask(x, z, padding = 0) {
+    const point = this.explorationMaskCoordinates(x, z);
+    if (!point || !this.exploredMaskData) return false;
+    const cellSize = this.explorationMaskCellSize();
+    const pixelRadius = Math.max(0, Math.ceil(Math.max(0, padding) / cellSize));
+    const centerColumn = Math.round(point.x);
+    const centerRow = Math.round(point.z);
+    for (let row = centerRow - pixelRadius; row <= centerRow + pixelRadius; row += 1) {
+      if (row < 0 || row >= EXPLORED_MASK_SIZE) continue;
+      for (let column = centerColumn - pixelRadius; column <= centerColumn + pixelRadius; column += 1) {
+        if (column < 0 || column >= EXPLORED_MASK_SIZE) continue;
+        if (pixelRadius > 0) {
+          const dx = (column - point.x) * cellSize;
+          const dz = (row - point.z) * cellSize;
+          if (Math.hypot(dx, dz) > Math.max(0, padding) + cellSize * 0.75) continue;
+        }
+        const value = this.exploredMaskData[row * EXPLORED_MASK_SIZE + column] / 255;
+        if (value >= EXPLORED_MASK_VISIBLE_THRESHOLD) return true;
+      }
+    }
+    return false;
+  }
+
+  paintExplorationMask(x, z, radius) {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(radius) || !this.exploredMaskData) return false;
+    const clamped = this.clampPointToWorld({ x, z }, 0);
+    const sightRadius = clamp(radius, 2, this.worldRadius + MAP_VISION_FADE_WIDTH);
+    const feather = MAP_VISION_FADE_WIDTH;
+    const outerRadius = sightRadius + feather;
+    const cellSize = this.explorationMaskCellSize();
+    const center = this.explorationMaskCoordinates(clamped.x, clamped.z);
+    if (!center) return false;
+    const pixelRadius = Math.ceil(outerRadius / cellSize);
+    const minRow = Math.max(0, Math.floor(center.z) - pixelRadius);
+    const maxRow = Math.min(EXPLORED_MASK_SIZE - 1, Math.ceil(center.z) + pixelRadius);
+    const minColumn = Math.max(0, Math.floor(center.x) - pixelRadius);
+    const maxColumn = Math.min(EXPLORED_MASK_SIZE - 1, Math.ceil(center.x) + pixelRadius);
+    let changed = false;
+    for (let row = minRow; row <= maxRow; row += 1) {
+      const worldZ = (row / (EXPLORED_MASK_SIZE - 1)) * this.worldRadius * 2 - this.worldRadius;
+      for (let column = minColumn; column <= maxColumn; column += 1) {
+        const worldX = (column / (EXPLORED_MASK_SIZE - 1)) * this.worldRadius * 2 - this.worldRadius;
+        const distance = Math.hypot(worldX - clamped.x, worldZ - clamped.z);
+        if (distance > outerRadius) continue;
+        let visibility = 1;
+        if (distance > sightRadius) {
+          const t = clamp((distance - sightRadius) / feather, 0, 1);
+          visibility = 1 - t * t * (3 - 2 * t);
+        }
+        const value = Math.round(visibility * 255);
+        const index = row * EXPLORED_MASK_SIZE + column;
+        if (value <= this.exploredMaskData[index]) continue;
+        this.exploredMaskData[index] = value;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  recordExploredPatch(x, z, radius = EXPLORED_PATCH_BASE_RADIUS) {
+    const changed = this.paintExplorationMask(x, z, radius);
+    if (changed && this.exploredMaskTexture) this.exploredMaskTexture.needsUpdate = true;
+    return changed;
+  }
+
   createFogOfWar() {
     const uniforms = {
       visionCenter: { value: new THREE.Vector2(this.nest.x, this.nest.z) },
@@ -5536,8 +5639,8 @@ class AntColony3D {
       rememberedAlpha: { value: MAP_REMEMBERED_FOG_ALPHA },
       fogColor: { value: new THREE.Color(MAP_UNEXPLORED_COLOR) },
       rememberedFogColor: { value: new THREE.Color(MAP_REMEMBERED_FOG_COLOR) },
-      exploredCount: { value: 0 },
-      exploredPatches: { value: Array.from({ length: EXPLORED_PATCH_LIMIT }, () => new THREE.Vector3(0, 0, 0)) },
+      exploredMask: { value: this.exploredMaskTexture },
+      exploredMaskWorldRadius: { value: this.worldRadius },
       activeSightCount: { value: 0 },
       activeSightPatches: { value: Array.from({ length: ACTIVE_SIGHT_PATCH_LIMIT }, () => new THREE.Vector3(0, 0, 0)) },
     };
@@ -5564,8 +5667,8 @@ class AntColony3D {
         uniform float rememberedAlpha;
         uniform vec3 fogColor;
         uniform vec3 rememberedFogColor;
-        uniform int exploredCount;
-        uniform vec3 exploredPatches[${EXPLORED_PATCH_LIMIT}];
+        uniform sampler2D exploredMask;
+        uniform float exploredMaskWorldRadius;
         uniform int activeSightCount;
         uniform vec3 activeSightPatches[${ACTIVE_SIGHT_PATCH_LIMIT}];
         varying vec3 vWorldPosition;
@@ -5573,13 +5676,9 @@ class AntColony3D {
           vec2 point = vWorldPosition.xz;
           float d = distance(point, visionCenter);
           float currentVisibility = 1.0 - smoothstep(revealRadius - fadeWidth, revealRadius + fadeWidth, d);
-          float rememberedVisibility = currentVisibility;
-          for (int i = 0; i < ${EXPLORED_PATCH_LIMIT}; i++) {
-            if (i >= exploredCount) break;
-            vec3 exploredPatch = exploredPatches[i];
-            float pd = distance(point, exploredPatch.xy);
-            rememberedVisibility = max(rememberedVisibility, 1.0 - smoothstep(exploredPatch.z - fadeWidth, exploredPatch.z + fadeWidth, pd));
-          }
+          vec2 exploredUv = point / (exploredMaskWorldRadius * 2.0) + 0.5;
+          float insideMask = step(0.0, exploredUv.x) * step(0.0, exploredUv.y) * step(exploredUv.x, 1.0) * step(exploredUv.y, 1.0);
+          float rememberedVisibility = max(currentVisibility, texture2D(exploredMask, exploredUv).r * insideMask);
           for (int i = 0; i < ${ACTIVE_SIGHT_PATCH_LIMIT}; i++) {
             if (i >= activeSightCount) break;
             vec3 activePatch = activeSightPatches[i];
@@ -5782,10 +5881,7 @@ class AntColony3D {
 
   isPointExplored(x, z, padding = 0) {
     if (this.isPointVisible(x, z, padding)) return true;
-    for (const patch of this.exploredPatches ?? []) {
-      if (distance2(x, z, patch.x, patch.z) <= patch.radius + padding) return true;
-    }
-    return false;
+    return this.isPointInExplorationMask(x, z, padding);
   }
 
   rivalNestSpottingReconScout() {
@@ -5862,13 +5958,6 @@ class AntColony3D {
     if (this.fogOfWarMaterial) {
       this.fogOfWarMaterial.uniforms.revealRadius.value = this.currentNestVisionRadius();
       this.fogOfWarMaterial.uniforms.visionCenter.value.set(this.nest.x, this.nest.z);
-      const patches = this.fogOfWarMaterial.uniforms.exploredPatches.value;
-      const count = Math.min(EXPLORED_PATCH_LIMIT, this.exploredPatches.length);
-      this.fogOfWarMaterial.uniforms.exploredCount.value = count;
-      for (let i = 0; i < count; i += 1) {
-        const patch = this.exploredPatches[i];
-        patches[i].set(patch.x, patch.z, patch.radius);
-      }
       const activeSightPatches = this.fogOfWarMaterial.uniforms.activeSightPatches.value;
       const activeSight = this.activeSightPatchesForShader();
       this.fogOfWarMaterial.uniforms.activeSightCount.value = activeSight.length;
@@ -5907,55 +5996,24 @@ class AntColony3D {
     return EXPLORED_PATCH_BASE_RADIUS + variantBonus;
   }
 
-  recordExploredPatch(x, z, radius = EXPLORED_PATCH_BASE_RADIUS) {
-    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
-    const clamped = this.clampPointToWorld({ x, z }, 6);
-    x = clamped.x;
-    z = clamped.z;
-    radius = clamp(radius, 8, 34);
-    const baseVisibleRadius = this.currentNestVisionRadius();
-    if (distance2(x, z, this.nest.x, this.nest.z) <= Math.max(0, baseVisibleRadius - radius * 0.5)) return false;
-    this.exploredPatchSequence += 1;
-    for (const patch of this.exploredPatches) {
-      const d = distance2(x, z, patch.x, patch.z);
-      if (d <= Math.max(radius, patch.radius) * 0.62) {
-        const blend = 0.18;
-        patch.x += (x - patch.x) * blend;
-        patch.z += (z - patch.z) * blend;
-        patch.radius = Math.max(patch.radius, radius);
-        patch.lastSeen = this.exploredPatchSequence;
-        return true;
-      }
-    }
-    const patch = { x, z, radius, lastSeen: this.exploredPatchSequence };
-    if (this.exploredPatches.length < EXPLORED_PATCH_LIMIT) {
-      this.exploredPatches.push(patch);
-      return true;
-    }
-    let replaceIndex = 0;
-    let oldest = Infinity;
-    for (let i = 0; i < this.exploredPatches.length; i += 1) {
-      const seen = this.exploredPatches[i].lastSeen ?? 0;
-      if (seen < oldest) {
-        oldest = seen;
-        replaceIndex = i;
-      }
-    }
-    this.exploredPatches[replaceIndex] = patch;
-    return true;
-  }
-
   updateExploredPatches(dt, force = false) {
     this.exploredPatchClock += Math.max(0, dt);
     if (!force && this.exploredPatchClock < EXPLORED_PATCH_UPDATE_SECONDS) return;
     this.exploredPatchClock = 0;
-    let recorded = 0;
-    for (const ant of this.ants) {
-      if (!this.shouldRenderAnt(ant)) continue;
-      if (this.recordExploredPatch(ant.x, ant.z, this.explorationRadiusForAnt(ant))) recorded += 1;
-      if (recorded >= 28) break;
+    let changed = this.paintExplorationMask(this.nest.x, this.nest.z, this.currentNestVisionRadius());
+    for (const earthwork of this.earthworks ?? []) {
+      for (const patch of this.sightPatchesForEarthwork(earthwork)) {
+        changed = this.paintExplorationMask(patch.x, patch.z, patch.radius) || changed;
+      }
     }
-    if (recorded > 0) this.updateMapIntel();
+    for (const ant of this.ants ?? []) {
+      if (!this.shouldRenderAnt(ant)) continue;
+      changed = this.paintExplorationMask(ant.x, ant.z, this.currentSightRadiusForAnt(ant)) || changed;
+    }
+    if (changed) {
+      if (this.exploredMaskTexture) this.exploredMaskTexture.needsUpdate = true;
+      this.updateMapIntel();
+    }
   }
 
   updateRivalNestVisual() {
@@ -6055,12 +6113,6 @@ class AntColony3D {
     document.querySelectorAll(".stats-strip div").forEach((card, index) => {
       if (statIcons[index]) this.attachButtonIcon(card, statIcons[index], "stat-card-icon");
     });
-    const shortcuts = [
-      [ui.nextActionDock?.querySelector('[data-next-action="growth"]'), UI_ICON_ASSETS.upgradeArrow],
-      [ui.nextActionDock?.querySelector('[data-next-action="barracks"]'), UI_ICON_ASSETS.nurseryEggs],
-      [ui.nextActionDock?.querySelector('[data-next-action="soldiers"]'), UI_ICON_ASSETS.defenseShield],
-    ];
-    for (const [button, src] of shortcuts) this.attachButtonIcon(button, src, "shortcut-icon");
   }
 
   buttonFeedbackText(button) {
@@ -6330,15 +6382,9 @@ class AntColony3D {
 
     ui.buttons.forEach((button) => {
       button.addEventListener("click", () => {
+        this.setPanelCompact(false);
         this.setActiveTab(button.dataset.tab);
       });
-    });
-
-    ui.nextActionDock?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-next-action]");
-      if (!button) return;
-      event.preventDefault();
-      this.performNextAction(button.dataset.nextAction, button);
     });
 
     ui.homeView?.addEventListener("click", () => this.focusCameraOnNest());
@@ -6546,9 +6592,8 @@ class AntColony3D {
     this.mapVisionRadiusValue = MAP_BASE_VISION_RADIUS;
     this.mapActivityRadiusValue = MAP_BASE_VISION_RADIUS;
     this.nestVisionRadiusValue = MAP_BASE_VISION_RADIUS;
-    this.exploredPatches = [];
+    this.clearExplorationMask();
     this.exploredPatchClock = 0;
-    this.exploredPatchSequence = 0;
     this.mapIntelLogState = { rivalNestDiscovered: false, rivalNestDefeated: false };
     this.constructionMessage = "待機";
     this.pendingConstructionKind = null;
@@ -8190,107 +8235,6 @@ class AntColony3D {
     return Array.from({ length: max }, (_, index) => `<span class="${index < level ? "is-filled" : ""}"></span>`).join("");
   }
 
-  nextActionPlan(d = this.computeDerived()) {
-    if (this.isGameEnded()) {
-      const copy = this.gameEndCopy();
-      return {
-        reason: copy.detail,
-        text: "新しい巣で再開",
-        kind: "reset",
-        value: this.colony.gameStatus,
-        iconAsset: this.colony.gameStatus === "victory" ? UI_ICON_ASSETS.militaryMandibles : UI_ICON_ASSETS.queenCare,
-        disabled: false,
-      };
-    }
-    const queue = this.barracksQueue();
-    const raid = this.ensureRaidState();
-    const cooldownLeft = Math.ceil(this.soldierSortieCooldown);
-    const plannedSortie = this.plannedSortieCount();
-    const raidNeedsDefense = raid.phase === "warning" || raid.phase === "active";
-
-    if (raidNeedsDefense && plannedSortie > 0 && cooldownLeft <= 0) {
-      return {
-        reason: "敵襲に対応できます",
-        text: `防衛出動 ${fmt(plannedSortie, 0)}`,
-        kind: "sortie",
-        value: "defense",
-        iconAsset: UI_ICON_ASSETS.defenseShield,
-        disabled: false,
-      };
-    }
-
-    const workerState = this.canStartBarracksTraining("worker");
-    if (queue.length <= 0) {
-      if (workerState.ok) {
-        return {
-          reason: "育成キューが空です",
-          text: "働きアリを育てる",
-          kind: "train",
-          value: "worker",
-          iconAsset: UI_ICON_ASSETS.antPopulation,
-          disabled: false,
-        };
-      }
-      return {
-        reason: `育成キューが空です / ${workerState.reason}`,
-        text: "育房を確認",
-        kind: "tab",
-        value: "barracks",
-        iconAsset: UI_ICON_ASSETS.nurseryEggs,
-        disabled: false,
-      };
-    }
-
-    const availableUpgrade = this.growthRecommendations(1).find((item) => item.available);
-    if (availableUpgrade) {
-      return {
-        reason: "強化できる成長があります",
-        text: `${availableUpgrade.uiDef.name}を強化`,
-        kind: "upgrade",
-        value: availableUpgrade.upgrade.id,
-        iconAsset: availableUpgrade.uiDef.iconAsset,
-        disabled: false,
-      };
-    }
-
-    return {
-      reason: "次の成長条件を確認できます",
-      text: "成長を見る",
-      kind: "tab",
-      value: "growth",
-      iconAsset: UI_ICON_ASSETS.growthLeaf,
-      disabled: false,
-    };
-  }
-
-  renderNextActionDock(d = this.computeDerived()) {
-    if (!ui.nextActionDock) return;
-    const plan = this.nextActionPlan(d);
-    const queue = this.barracksQueue();
-    const plannedSortie = this.plannedSortieCount();
-    const availableGrowth = this.growthRecommendations(20).filter((item) => item.available).length;
-
-    ui.nextActionReason.textContent = plan.reason;
-    ui.nextActionPrimaryText.textContent = plan.text;
-    if (ui.nextActionPrimaryIcon) {
-      ui.nextActionPrimaryIcon.innerHTML = this.iconImage(plan.iconAsset, "generated-ui-icon");
-    }
-    ui.nextActionPrimaryBtn.dataset.actionKind = plan.kind;
-    ui.nextActionPrimaryBtn.dataset.actionValue = plan.value;
-    ui.nextActionPrimaryBtn.disabled = plan.disabled;
-    ui.nextActionQueueCount.textContent = `${fmt(queue.length, 0)}/${fmt(BARRACKS_QUEUE_CAP, 0)}`;
-    ui.nextActionQueueHint.textContent = queue.length <= 0
-      ? "待ちアリなし・すぐに育成できます"
-      : queue[0] ? `${getBarracksTrainingDef(queue[0].variant).label}を育成中` : "育成待ちがあります";
-    ui.nextActionGrowthHint.textContent = availableGrowth > 0 ? `強化可 ${fmt(availableGrowth, 0)}` : "条件を見る";
-    ui.nextActionBarracksHint.textContent = queue.length <= 0 ? "キュー空き" : `待ち ${fmt(queue.length, 0)}件`;
-    ui.nextActionSoldierHint.textContent = plannedSortie > 0 ? `出撃可 ${fmt(plannedSortie, 0)}` : `巣内 ${fmt(this.sortieSoldierPool(d), 0)}`;
-    ui.nextActionQueueSlots.innerHTML = Array.from({ length: 6 }, (_, index) => {
-      const filled = index < Math.min(queue.length, 6);
-      return `<span class="${filled ? "is-filled" : ""}"></span>`;
-    }).join("");
-  }
-
   renderGrowthFocus() {
     const gameEnded = this.isGameEnded();
     const recommendations = this.growthRecommendations(3);
@@ -8751,6 +8695,7 @@ class AntColony3D {
     for (const list of [this.water, this.stones, this.food, this.branches, this.trails, this.buildTasks, this.earthworks, this.combatEffects, this.predators, this.rivalCorpses, this.colonyCorpses]) {
       for (const item of list) this.disposeDynamicItem(item);
     }
+    this.exploredMaskTexture?.dispose();
     this.assetService.dispose();
     for (const geometry of this.sharedGeometries) geometry.dispose();
     for (const material of this.sharedMaterials) disposeMaterial(material);
@@ -11540,7 +11485,6 @@ class AntColony3D {
       : 0;
     const activeBarracksRate = activeBarracksOrder ? (60 * this.barracksTrainingSpeedMultiplier(activeBarracksOrder.variant)) / Math.max(activeBarracksOrder.totalSeconds, 0.001) : 0;
 
-    this.renderNextActionDock(d);
     ui.statFood.textContent = fmt(this.colony.food, 0);
     ui.statAnts.textContent = `${fmt(this.colony.antPopulation, 0)}/${fmt(d.capacity, 0)}`;
     if (ui.statNestDurability) ui.statNestDurability.textContent = `${fmt(this.colony.nestDurability, 0)}/${fmt(PLAYER_NEST_MAX_DURABILITY, 0)}`;

@@ -142,11 +142,14 @@ test("renders the initial ant empire scene", async ({ page }) => {
       fogMaterialTransparent: sim.fogOfWarMaterial?.transparent ?? false,
       fogMaterialToneMapped: sim.fogOfWarMaterial?.toneMapped ?? true,
       fogUniformRevealRadius: sim.fogOfWarMaterial?.uniforms?.revealRadius?.value ?? 0,
-      fogUniformExploredCount: sim.fogOfWarMaterial?.uniforms?.exploredCount?.value ?? -1,
+      fogHasExplorationMask: Boolean(sim.fogOfWarMaterial?.uniforms?.exploredMask?.value?.isDataTexture),
+      fogExplorationMaskSize: sim.fogOfWarMaterial?.uniforms?.exploredMask?.value?.image?.width ?? 0,
       fogUniformActiveSightCount: sim.fogOfWarMaterial?.uniforms?.activeSightCount?.value ?? -1,
       fogUniformRememberedAlpha: sim.fogOfWarMaterial?.uniforms?.rememberedAlpha?.value ?? 0,
       fogUniformMaxAlpha: sim.fogOfWarMaterial?.uniforms?.maxAlpha?.value ?? 0,
-      initialExploredPatchCount: sim.exploredPatches.length,
+      initialExploredMaskCells: sim.exploredMaskData.reduce((count: number, value: number) => count + (value > 0 ? 1 : 0), 0),
+      hasNextActionDock: Boolean(document.querySelector("#nextActionDock")),
+      hasNestNowLabel: document.body.textContent?.includes("巣のいま") ?? false,
       outsideInitialCircleVisible: outsideVisibleBeforeYaw,
       outsideVisibilityChangedByCameraYaw: outsideVisibleBeforeYaw !== outsideVisibleAfterYaw,
       terrainPatches: sim.terrain.length,
@@ -246,11 +249,16 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.fogMaterialTransparent).toBe(true);
   expect(metrics.fogMaterialToneMapped).toBe(false);
   expect(metrics.fogUniformRevealRadius).toBeCloseTo(metrics.nestVisionRadius, 1);
-  expect(metrics.fogUniformExploredCount).toBe(0);
+  expect(metrics.fogHasExplorationMask).toBe(true);
+  expect(metrics.fogExplorationMaskSize).toBe(256);
   expect(metrics.fogUniformActiveSightCount).toBeGreaterThanOrEqual(0);
-  expect(metrics.fogUniformRememberedAlpha).toBeGreaterThan(0.3);
+  expect(metrics.fogUniformRememberedAlpha).toBeGreaterThanOrEqual(0.24);
+  expect(metrics.fogUniformRememberedAlpha).toBeLessThanOrEqual(0.36);
+  expect(metrics.fogUniformMaxAlpha - metrics.fogUniformRememberedAlpha).toBeGreaterThanOrEqual(0.6);
   expect(metrics.fogUniformRememberedAlpha).toBeLessThan(metrics.fogUniformMaxAlpha);
-  expect(metrics.initialExploredPatchCount).toBe(0);
+  expect(metrics.initialExploredMaskCells).toBeGreaterThan(0);
+  expect(metrics.hasNextActionDock).toBe(false);
+  expect(metrics.hasNestNowLabel).toBe(false);
   expect(metrics.outsideInitialCircleVisible).toBe(false);
   expect(metrics.outsideVisibilityChangedByCameraYaw).toBe(false);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(16);
@@ -677,13 +685,18 @@ test("ants reveal current sight while remembered areas stay hazed", async ({ pag
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.paused = true;
-    sim.exploredPatches = [];
+    sim.clearExplorationMask();
     sim.updateMapIntel();
     const radius = sim.mapVisionRadiusValue || sim.mapVisionRadius();
     const x = sim.nest.x + radius + 44;
     const z = sim.nest.z + 14;
     const beforeVisible = sim.isPointVisible(x, z, 0);
     const ant = sim.ants.find((candidate: any) => sim.shouldRenderAnt(candidate));
+    const antSightRadius = sim.currentSightRadiusForAnt(ant);
+    const edgeX = x + antSightRadius * 0.9;
+    const edgeZ = z;
+    const outsideCoreX = x + antSightRadius + 5;
+    const outsideCoreZ = z;
     ant.inNest = false;
     ant.nestStayTimer = 0;
     ant.state = "explore";
@@ -695,6 +708,9 @@ test("ants reveal current sight while remembered areas stay hazed", async ({ pag
     sim.updateMapVisibility();
     const afterVisible = sim.isPointVisible(x, z, 0);
     const afterExplored = sim.isPointExplored(x, z, 0);
+    const edgeExplored = sim.isPointExplored(edgeX, edgeZ, 0);
+    const centerMaskValue = sim.explorationMaskValueAt(x, z);
+    const edgeMaskValue = sim.explorationMaskValueAt(edgeX, edgeZ);
     const rememberedRival = { x, z, defeated: false, leftRaid: false, retreat: 0, clash: null, scoutMarkTimer: 0 };
     const rivalVisibleInCurrentSight = sim.shouldRenderRival(rememberedRival);
     ant.inNest = true;
@@ -702,39 +718,165 @@ test("ants reveal current sight while remembered areas stay hazed", async ({ pag
     sim.updateMapVisibility();
     const rememberedVisible = sim.isPointVisible(x, z, 0);
     const rememberedExplored = sim.isPointExplored(x, z, 0);
+    const outsideCoreExplored = sim.isPointExplored(outsideCoreX, outsideCoreZ, 0);
+    const outsideCoreMaskValue = sim.explorationMaskValueAt(outsideCoreX, outsideCoreZ);
     const rivalVisibleInRememberedArea = sim.shouldRenderRival(rememberedRival);
+    const firstRememberedPoint = { x, z };
+    for (let index = 0; index < 120; index += 1) {
+      const angle = (index / 120) * Math.PI * 2;
+      const distance = index % 2 === 0 ? 180 : 238;
+      sim.recordExploredPatch(Math.cos(angle) * distance, Math.sin(angle) * distance, 12);
+    }
+    const rememberedAfterManyDiscoveries = sim.isPointExplored(firstRememberedPoint.x, firstRememberedPoint.z, 0);
     return {
       x,
       z,
       beforeVisible,
       afterVisible,
       afterExplored,
+      edgeExplored,
+      centerMaskValue,
+      edgeMaskValue,
       rememberedVisible,
       rememberedExplored,
+      outsideCoreExplored,
+      outsideCoreMaskValue,
+      rememberedAfterManyDiscoveries,
       rivalVisibleInCurrentSight,
       rivalVisibleInRememberedArea,
-      patchCount: sim.exploredPatches.length,
-      uniformCount: sim.fogOfWarMaterial.uniforms.exploredCount.value,
+      maskTextureBound: sim.fogOfWarMaterial.uniforms.exploredMask.value === sim.exploredMaskTexture,
+      markedMaskCells: sim.exploredMaskData.reduce((count: number, value: number) => count + (value > 0 ? 1 : 0), 0),
       activeSightCount: sim.fogOfWarMaterial.uniforms.activeSightCount.value,
-      uniformPatchX: sim.fogOfWarMaterial.uniforms.exploredPatches.value[0]?.x ?? 0,
-      uniformPatchZ: sim.fogOfWarMaterial.uniforms.exploredPatches.value[0]?.y ?? 0,
-      patchRadius: sim.exploredPatches[0]?.radius ?? 0,
+      rememberedAlpha: sim.fogOfWarMaterial.uniforms.rememberedAlpha.value,
     };
   });
 
   expect(result.beforeVisible).toBe(false);
   expect(result.afterVisible).toBe(true);
   expect(result.afterExplored).toBe(true);
+  expect(result.edgeExplored).toBe(true);
+  expect(result.centerMaskValue).toBeGreaterThan(0.95);
+  expect(result.edgeMaskValue).toBeGreaterThan(0.8);
   expect(result.rememberedVisible).toBe(false);
   expect(result.rememberedExplored).toBe(true);
+  expect(result.outsideCoreExplored).toBe(false);
+  expect(result.outsideCoreMaskValue).toBeGreaterThan(0);
+  expect(result.outsideCoreMaskValue).toBeLessThan(0.9);
+  expect(result.rememberedAfterManyDiscoveries).toBe(true);
   expect(result.rivalVisibleInCurrentSight).toBe(true);
   expect(result.rivalVisibleInRememberedArea).toBe(false);
-  expect(result.patchCount).toBeGreaterThan(0);
-  expect(result.uniformCount).toBeGreaterThan(0);
+  expect(result.maskTextureBound).toBe(true);
+  expect(result.markedMaskCells).toBeGreaterThan(0);
   expect(result.activeSightCount).toBeGreaterThanOrEqual(0);
-  expect(result.uniformPatchX).toBeCloseTo(result.x, 5);
-  expect(result.uniformPatchZ).toBeCloseTo(result.z, 5);
-  expect(result.patchRadius).toBeGreaterThan(8);
+  expect(result.rememberedAlpha).toBeLessThanOrEqual(0.36);
+});
+
+test("exploration memory records every visible surface ant", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearExplorationMask();
+    const originalAnts = sim.ants;
+    const target = { x: 52, z: -126 };
+    sim.ants = Array.from({ length: 64 }, (_, index) => ({
+      id: 9000 + index,
+      variant: "worker",
+      inNest: false,
+      nestStayTimer: 0,
+      x: index === 63 ? target.x : -54,
+      z: index === 63 ? target.z : -52,
+    }));
+    sim.updateExploredPatches(0, true);
+    const maskValue = sim.explorationMaskValueAt(target.x, target.z);
+    const activeSightCount = sim.fogOfWarMaterial.uniforms.activeSightCount.value;
+    const activeSightIncludesLastAnt = sim.fogOfWarMaterial.uniforms.activeSightPatches.value
+      .slice(0, activeSightCount)
+      .some((patch: any) => Math.hypot(patch.x - target.x, patch.y - target.z) < 0.01);
+    sim.ants = originalAnts;
+    sim.updateMapVisibility();
+    return {
+      maskValue,
+      activeSightCount,
+      activeSightIncludesLastAnt,
+      visibleAfterRestore: sim.isPointVisible(target.x, target.z, 0),
+      exploredAfterRestore: sim.isPointExplored(target.x, target.z, 0),
+    };
+  });
+
+  expect(result.maskValue).toBeGreaterThan(0.95);
+  expect(result.activeSightCount).toBe(64);
+  expect(result.activeSightIncludesLastAnt).toBe(true);
+  expect(result.visibleAfterRestore).toBe(false);
+  expect(result.exploredAfterRestore).toBe(true);
+});
+
+test("remembered fog texture reveals terrain at the recorded world position", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.paused = true;
+    sim.clearExplorationMask();
+    for (const ant of sim.ants) {
+      ant.inNest = true;
+      ant.nestStayTimer = 12;
+    }
+    const remembered = { x: 34, z: 0 };
+    const unexplored = { x: -34, z: 0 };
+    sim.recordExploredPatch(remembered.x, remembered.z, 16);
+    sim.updateMapVisibility();
+    sim.cameraYaw = 0;
+    sim.targetCameraYaw = 0;
+    sim.cameraPitch = 1.2;
+    sim.targetCameraPitch = 1.2;
+    sim.cameraDistance = 220;
+    sim.targetCameraDistance = 220;
+    sim.setCameraTarget(0, 0, true);
+    sim.updateCamera();
+    sim.renderGame(1);
+
+    const source = sim.renderer.domElement as HTMLCanvasElement;
+    const sampleCanvas = document.createElement("canvas");
+    sampleCanvas.width = source.width;
+    sampleCanvas.height = source.height;
+    const context = sampleCanvas.getContext("2d", { willReadFrequently: true })!;
+    context.drawImage(source, 0, 0, sampleCanvas.width, sampleCanvas.height);
+    const Vector3 = sim.camera.position.constructor;
+    const sampleWorld = (point: { x: number; z: number }) => {
+      const projected = new Vector3(point.x, 0.42, point.z).project(sim.camera);
+      const pixelX = Math.round(((projected.x + 1) * 0.5) * (sampleCanvas.width - 1));
+      const pixelY = Math.round(((1 - projected.y) * 0.5) * (sampleCanvas.height - 1));
+      const left = Math.max(0, pixelX - 2);
+      const top = Math.max(0, pixelY - 2);
+      const width = Math.min(5, sampleCanvas.width - left);
+      const height = Math.min(5, sampleCanvas.height - top);
+      const pixels = context.getImageData(left, top, width, height).data;
+      let luminance = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        luminance += pixels[index] * 0.2126 + pixels[index + 1] * 0.7152 + pixels[index + 2] * 0.0722;
+      }
+      return {
+        pixelX,
+        pixelY,
+        inside: projected.x >= -1 && projected.x <= 1 && projected.y >= -1 && projected.y <= 1,
+        luminance: luminance / Math.max(1, pixels.length / 4),
+      };
+    };
+    return {
+      remembered: sampleWorld(remembered),
+      unexplored: sampleWorld(unexplored),
+      rememberedMask: sim.explorationMaskValueAt(remembered.x, remembered.z),
+      unexploredMask: sim.explorationMaskValueAt(unexplored.x, unexplored.z),
+    };
+  });
+
+  expect(result.remembered.inside).toBe(true);
+  expect(result.unexplored.inside).toBe(true);
+  expect(result.rememberedMask).toBeGreaterThan(0.95);
+  expect(result.unexploredMask).toBe(0);
+  expect(result.remembered.luminance).toBeGreaterThan(result.unexplored.luminance + 12);
 });
 
 test("worker activity range tugs ordinary foragers back without granting sight", async ({ page }) => {
@@ -743,7 +885,7 @@ test("worker activity range tugs ordinary foragers back without granting sight",
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.paused = true;
-    sim.exploredPatches = [];
+    sim.clearExplorationMask();
     sim.manualMapVisionRadius = null;
     sim.colony.territory = 3;
     sim.colony.nestLevel = 1;
@@ -821,7 +963,7 @@ test("completed earthworks add live sight to the map fog", async ({ page }) => {
   const result = await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
     sim.paused = true;
-    sim.exploredPatches = [];
+    sim.clearExplorationMask();
     for (const ant of sim.ants) {
       ant.inNest = true;
       ant.nestStayTimer = 12;
@@ -1434,25 +1576,6 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
 
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
-    sim.paused = false;
-    (window as any).__pauseButtonClicks = 0;
-    sim.colony.food = 1000;
-    sim.colony.lifetimeFood = 1000;
-    sim.colony.antPopulation = 20;
-    sim.colony.barracksQueue = [];
-    sim.setPanelHidden(false, false);
-    sim.setPanelCompact(true, false);
-    sim.setActiveTab("growth");
-    sim.updateStats();
-  });
-  await touchButton("#nextActionPrimaryBtn", 32);
-  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
-  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue[0]?.variant)).toBe("worker");
-  await page.waitForTimeout(320);
-  expect(await page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
-
-  await page.evaluate(() => {
-    const sim = window.__ANT_SIM as any;
     sim.colony.barracksQueue = [];
     sim.colony.food = 1000;
     sim.colony.antPopulation = 20;
@@ -1471,12 +1594,14 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
 
   await page.evaluate(() => {
     const sim = window.__ANT_SIM as any;
+    sim.setPanelCompact(true, false);
     sim.setActiveTab("growth");
     (window as any).__soldiersTabClicks = 0;
   });
   await touchButton('[data-tab="soldiers"]', 16);
   await expect.poll(() => page.evaluate(() => (window as any).__soldiersTabClicks)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).activeTab)).toBe("soldiers");
+  await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).panelCompact)).toBe(false);
 });
 
 test("empire panel keeps the same frame across management tabs on desktop", async ({ page }) => {
@@ -2359,7 +2484,7 @@ test("enemy nest collapse ends the game in victory", async ({ page }) => {
       notice: document.querySelector("#raidNotice")?.textContent ?? "",
       bannerHidden: (document.querySelector("#gameEndBanner") as HTMLElement).hidden,
       bannerText: (document.querySelector("#gameEndBanner") as HTMLElement).textContent ?? "",
-      nextAction: (document.querySelector("#nextActionPrimaryBtn") as HTMLButtonElement).textContent ?? "",
+      resetAction: (document.querySelector("#gameEndResetBtn") as HTMLButtonElement).textContent ?? "",
       log: sim.colony.battleLog.join("\n"),
     };
   });
@@ -2371,7 +2496,7 @@ test("enemy nest collapse ends the game in victory", async ({ page }) => {
   expect(result.notice).toContain("勝利");
   expect(result.bannerHidden).toBe(false);
   expect(result.bannerText).toContain("勝利");
-  expect(result.nextAction).toContain("新しい巣で再開");
+  expect(result.resetAction).toContain("新しい巣で再開");
   expect(result.log).toContain("勝利");
 });
 

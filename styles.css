@@ -390,8 +390,6 @@ button {
 .primary-button:active,
 .tab-button:active,
 .upgrade-card button:active,
-.next-action-primary:active,
-.next-action-shortcuts button:active,
 .secondary-button:active,
 .growth-recommend-card button:active,
 .growth-full-link:active {
@@ -636,7 +634,6 @@ button.is-pressed-feedback {
   display: none;
 }
 
-.empire-panel:not(.is-compact) .next-action-dock,
 .empire-panel.is-compact .panel-header {
   display: none;
 }
@@ -712,35 +709,6 @@ button.is-pressed-feedback {
   background: linear-gradient(90deg, #51b7a6, #d9a63f);
 }
 
-.next-action-dock {
-  display: grid;
-  gap: 10px;
-  padding: 2px;
-}
-
-.next-action-topline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.next-action-topline strong,
-.next-action-topline span {
-  display: block;
-}
-
-.next-action-topline strong {
-  font-size: 1.02rem;
-  line-height: 1.1;
-}
-
-.next-action-topline span {
-  margin-top: 6px;
-  color: rgba(244, 241, 232, 0.78);
-  font-size: 0.78rem;
-}
-
 .secondary-button {
   min-height: 40px;
   padding: 0 12px;
@@ -751,157 +719,18 @@ button.is-pressed-feedback {
   cursor: pointer;
 }
 
-.next-action-primary {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 28px;
-  align-items: center;
-  gap: 10px;
-  min-height: 74px;
-  padding: 11px 12px;
-  border: 1px solid rgba(81, 183, 166, 0.78);
-  border-radius: 8px;
-  background: linear-gradient(90deg, rgba(22, 118, 107, 0.66), rgba(37, 160, 141, 0.36));
-  color: var(--ink);
-  box-shadow: inset 0 0 0 1px rgba(96, 230, 207, 0.08);
-  cursor: pointer;
-}
-
-.next-action-primary:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
-.next-action-primary-icon {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border: 1px solid rgba(112, 236, 215, 0.48);
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.18);
-  color: #bdf8ee;
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
 .generated-ui-icon,
-.next-action-primary-icon img,
 .tab-icon,
-.shortcut-icon,
 .branch-chip-icon {
   display: block;
   object-fit: cover;
   object-position: center;
 }
 
-.generated-ui-icon,
-.next-action-primary-icon img {
+.generated-ui-icon {
   width: 100%;
   height: 100%;
   border-radius: inherit;
-}
-
-#nextActionPrimaryText {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 1.08rem;
-  font-weight: 850;
-  line-height: 1.15;
-}
-
-.next-action-arrow {
-  color: #d8fff7;
-  font-size: 2rem;
-  line-height: 1;
-}
-
-.next-action-queue {
-  display: grid;
-  gap: 6px;
-  padding: 9px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.18);
-}
-
-.next-action-queue-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  color: rgba(244, 241, 232, 0.78);
-  font-size: 0.72rem;
-}
-
-.next-action-queue-slots {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 5px;
-}
-
-.next-action-queue-slots span {
-  min-height: 24px;
-  border: 1px dashed rgba(244, 241, 232, 0.28);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.next-action-queue-slots span.is-filled {
-  border-style: solid;
-  border-color: rgba(81, 183, 166, 0.58);
-  background: rgba(81, 183, 166, 0.22);
-}
-
-.next-action-queue-hint {
-  color: #5be0cf;
-  font-size: 0.72rem;
-  text-align: center;
-}
-
-.next-action-shortcuts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-}
-
-.next-action-shortcuts button {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 3px;
-  min-height: 56px;
-  padding: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-
-.shortcut-icon {
-  justify-self: center;
-  align-self: center;
-  grid-row: 1 / span 2;
-  width: 28px;
-  height: 28px;
-  aspect-ratio: 1;
-  border-radius: 7px;
-}
-
-.next-action-shortcuts strong,
-.next-action-shortcuts span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.next-action-shortcuts strong {
-  font-size: 0.72rem;
-}
-
-.next-action-shortcuts span {
-  color: rgba(244, 241, 232, 0.66);
-  font-size: 0.66rem;
-  line-height: 1.24;
 }
 
 .metric-grid,
@@ -2886,10 +2715,6 @@ button.is-pressed-feedback {
     margin-left: 0;
   }
 
-  .next-action-shortcuts {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .tab-button {
     grid-template-columns: 1fr;
     grid-template-rows: 24px auto;
@@ -2899,11 +2724,6 @@ button.is-pressed-feedback {
     padding: 6px 4px;
     text-align: center;
     line-height: 1.1;
-  }
-
-  .next-action-shortcuts button {
-    min-height: 52px;
-    padding: 7px;
   }
 
   .growth-branch-progress {

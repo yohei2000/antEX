@@ -279,6 +279,8 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           foodSources: sim?.food?.length ?? null,
           predatorCount: sim?.predators?.length ?? null,
           rivalCount: sim?.rivalAnts?.length ?? null,
+          rivalNestWorkerCount: sim?.rivalNestWorkers?.().length ?? null,
+          raidRivalCount: sim?.raidRivals?.().length ?? null,
           rivalScaleMin: sim?.rivalAnts?.length ? Math.min(...sim.rivalAnts.map((ant) => ant.scale)) : null,
           rivalScaleMax: sim?.rivalAnts?.length ? Math.max(...sim.rivalAnts.map((ant) => ant.scale)) : null,
           raidPhase: sim?.colony?.raidState?.phase ?? null,
@@ -343,7 +345,9 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.worldRadius < 120 ||
       metrics.foodSources < 4 ||
       metrics.predatorCount !== 0 ||
-      metrics.rivalCount !== 0 ||
+      metrics.rivalCount !== 9 ||
+      metrics.rivalNestWorkerCount !== 9 ||
+      metrics.raidRivalCount !== 0 ||
       metrics.raidPhase !== "calm" ||
       metrics.raidTimer <= 0 ||
       metrics.rivalColor !== "8a4a2f" ||
@@ -579,7 +583,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
         sim.updateRaid(0.02);
         const warning = {
           phase: sim.colony.raidState.phase,
-          rivals: sim.rivalAnts.length,
+          rivals: sim.raidRivals().length,
           activeCount: sim.colony.raidState.activeCount,
           log: sim.colony.battleLog.join("\\n"),
         };
