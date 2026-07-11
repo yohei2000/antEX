@@ -463,6 +463,168 @@ test("near food supports early colonies while distant food unlocks wider growth"
   expect(result.activityEdgeVisibleAfterTerritory).toBe(false);
 });
 
+test("food sites span the map and unlock contested foraging as the colony grows", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const sites = sim.foodSpawnSites.map((site: any) => ({
+      x: site.homeX,
+      z: site.homeZ,
+      amount: site.amount,
+      distance: site.distanceFromNest,
+      tier: site.distanceTier,
+      rivalForage: Boolean(site.rivalForage),
+    }));
+    const initialWorker = sim.ants.find((ant: any) => ant.role === "worker" && ant.id % 6 === 0);
+    const initialContestedTarget = sim.findContestedFoodForWorker(initialWorker);
+    const central = sites.find((site: any) => site.x === 12 && site.z === 8);
+
+    sim.colony.nestLevel = 7;
+    sim.colony.territory = 16;
+    sim.colony.antPopulation = 180;
+    sim.colony.enemyThreat = 0;
+    sim.computeDerived();
+    sim.updateMapIntel();
+    sim.syncAntPopulation();
+    sim.spawnRivalNestWorkers();
+    const matureWorker = sim.ants.find((ant: any) => ant.role === "worker" && ant.id % 6 === 0);
+    matureWorker.setVariant?.("worker");
+    matureWorker.isSortieSoldier = false;
+    matureWorker.state = "explore";
+    matureWorker.carrying = 0;
+    const matureContestedTarget = sim.findContestedFoodForWorker(matureWorker);
+    const quadrants = new Set(sites.map((site: any) => `${site.x >= 0 ? "east" : "west"}-${site.z >= 0 ? "north" : "south"}`));
+
+    return {
+      count: sites.length,
+      totalAmount: sites.reduce((sum: number, site: any) => sum + site.amount, 0),
+      near: sites.filter((site: any) => site.tier === "near"),
+      mid: sites.filter((site: any) => site.tier === "mid"),
+      far: sites.filter((site: any) => site.tier === "far"),
+      rivalForageCount: sites.filter((site: any) => site.rivalForage).length,
+      quadrants: [...quadrants],
+      minWaterDistance: Math.min(...sites.map((site: any) => sim.waterDistanceAt(site.x, site.z, 1.2))),
+      maxWorldDistance: Math.max(...sites.map((site: any) => Math.hypot(site.x, site.z))),
+      initialContestedTargetId: initialContestedTarget?.id ?? null,
+      matureContestedTargetId: matureContestedTarget?.id ?? null,
+      centralFoodId: sim.food.find((food: any) => food.x === central.x && food.z === central.z)?.id ?? null,
+      matureActivityRadius: sim.workerActivityRadius(),
+      matureRivalForageRadius: sim.rivalWorkerForageRadius(),
+      centralDistance: central.distance,
+      centralRivalDistance: Math.hypot(central.x - sim.rivalNest.x, central.z - sim.rivalNest.z),
+    };
+  });
+
+  expect(result.count).toBe(12);
+  expect(result.totalAmount).toBe(188);
+  expect(result.near).toHaveLength(4);
+  expect(result.mid).toHaveLength(2);
+  expect(result.far).toHaveLength(6);
+  expect(result.rivalForageCount).toBe(4);
+  expect(result.quadrants).toHaveLength(4);
+  expect(result.minWaterDistance).toBeGreaterThanOrEqual(1);
+  expect(result.maxWorldDistance).toBeLessThan(270);
+  expect(result.initialContestedTargetId).toBeNull();
+  expect(result.matureContestedTargetId).toBe(result.centralFoodId);
+  expect(result.matureActivityRadius).toBeGreaterThan(result.centralDistance);
+  expect(result.matureRivalForageRadius).toBeGreaterThan(result.centralRivalDistance);
+});
+
+test("mature worker colonies meet rival workers at shared forage without forced placement", async ({ page }) => {
+  test.setTimeout(75_000);
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    const originalRandom = Math.random;
+    let randomState = 74023;
+    Math.random = () => {
+      randomState = (randomState * 1664525 + 1013904223) >>> 0;
+      return randomState / 4294967296;
+    };
+    try {
+      sim.reset(true);
+      sim.paused = true;
+      sim.frameAccumulator = 0;
+      sim.clearRaidRivals();
+      sim.clearRivalNestDefenders();
+      sim.colony.gameStatus = "playing";
+      sim.colony.food = 1200;
+      sim.colony.lifetimeFood = 5000;
+      sim.colony.nestLevel = 7;
+      sim.colony.territory = 16;
+      sim.colony.antPopulation = 180;
+      sim.colony.enemyThreat = 0;
+      sim.computeDerived();
+      sim.updateMapIntel();
+      sim.syncAntPopulation();
+      sim.spawnRivalNestWorkers();
+      const raid = sim.ensureRaidState();
+      raid.phase = "calm";
+      raid.timer = 9999;
+
+      for (const ant of sim.ants) {
+        ant.setVariant?.("worker");
+        ant.role = "worker";
+        ant.isSortieSoldier = false;
+        ant.sortieMode = "defense";
+        ant.state = "explore";
+        ant.inNest = false;
+        ant.nestStayTimer = 0;
+        ant.fleeTimer = 0;
+        ant.stun = 0;
+        ant.clashTimer = 0;
+        ant.clashDuration = 0;
+        ant.clashRival = null;
+        ant.carrying = 0;
+      }
+      for (const rival of sim.rivalNestWorkers()) {
+        rival.clash = null;
+        rival.retreat = 0;
+        rival.fightCooldown = 0;
+        rival.workerTaskTimer = 0;
+        rival.workerTargetFoodId = null;
+      }
+
+      let workerClashes = 0;
+      let sharedWorkerFrames = 0;
+      let firstContactSeconds: number | null = null;
+      const seenClashes = new Set<number>();
+      const stepDt = 1 / 60;
+      for (let frame = 0; frame < 75 / stepDt; frame += 1) {
+        sim.updateGame(stepDt);
+        for (const ant of sim.ants) {
+          if (ant.role === "worker" && sim.isRivalForageZone(ant.x, ant.z, 5)) sharedWorkerFrames += 1;
+        }
+        for (const rival of sim.rivalNestWorkers()) {
+          const worker = rival.clash?.ants?.find((ant: any) => ant.role === "worker" && ant.variant === "worker");
+          if (!worker || seenClashes.has(rival.id)) continue;
+          seenClashes.add(rival.id);
+          workerClashes += 1;
+          if (firstContactSeconds == null) firstContactSeconds = frame * stepDt;
+        }
+      }
+      return {
+        workerClashes,
+        sharedWorkerFrames,
+        firstContactSeconds,
+        matureActivityRadius: sim.workerActivityRadius(),
+        matureRivalForageRadius: sim.rivalWorkerForageRadius(),
+      };
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  expect(result.matureActivityRadius).toBeGreaterThan(230);
+  expect(result.matureRivalForageRadius).toBeGreaterThan(230);
+  expect(result.sharedWorkerFrames, JSON.stringify(result)).toBeGreaterThan(0);
+  expect(result.workerClashes, JSON.stringify(result)).toBeGreaterThanOrEqual(1);
+  expect(result.firstContactSeconds).not.toBeNull();
+  expect(result.firstContactSeconds).toBeLessThan(75);
+});
+
 test("top stats omit territory display", async ({ page }) => {
   await waitForSimulation(page);
 
@@ -5268,6 +5430,219 @@ test("rival ant combat grapples before the loser exits or remains", async ({ pag
   expect(fight.repelNoticeHidden).toBe(false);
   expect(fight.repelNoticeText).toContain("敵アリ撃退");
   expect(fight.repelNoticeKind).toBe("repelled");
+});
+
+test("nearby rival peels a crowd into separate one-on-one clashes", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.clearRivalNestDefenders();
+    const [source, entrant, ...otherRivals] = sim.rivalNestWorkers();
+    const [primary, extra, spare] = sim.ants;
+    for (const ant of sim.ants) {
+      ant.setVariant?.("soldier");
+      ant.role = "guard";
+      ant.isSortieSoldier = true;
+      ant.sortieMode = "defense";
+      ant.state = "explore";
+      ant.fleeTimer = 0;
+      ant.stun = 0;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+      ant.clashRival = null;
+      ant.x = -90;
+      ant.z = -90;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    for (const rival of otherRivals) {
+      rival.x = 80;
+      rival.z = 80;
+      rival.prevX = rival.x;
+      rival.prevZ = rival.z;
+      rival.clash = null;
+      rival.retreat = 0;
+      rival.fightCooldown = 8;
+    }
+
+    source.isRaidRival = true;
+    entrant.isRaidRival = true;
+    source.x = 0;
+    source.z = 0;
+    source.prevX = source.x;
+    source.prevZ = source.z;
+    source.clash = null;
+    source.retreat = 0;
+    source.fightCooldown = 0;
+    entrant.x = 42;
+    entrant.z = 0;
+    entrant.prevX = entrant.x;
+    entrant.prevZ = entrant.z;
+    entrant.clash = null;
+    entrant.retreat = 0;
+    entrant.fightCooldown = 0;
+
+    const setupAnt = (ant: any, x: number, z: number) => {
+      ant.x = x;
+      ant.z = z;
+      ant.prevX = x;
+      ant.prevZ = z;
+      ant.state = "explore";
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+      ant.clashRival = null;
+    };
+    setupAnt(primary, 0.45, 0);
+    setupAnt(extra, 0.9, 0.35);
+    setupAnt(spare, 1.15, -0.45);
+    const crowdStarted = source.startClash(primary, 0.2, 0, sim);
+    const crowdCount = source.clash?.ants?.length ?? 0;
+
+    entrant.x = 8;
+    entrant.z = 0;
+    entrant.prevX = entrant.x;
+    entrant.prevZ = entrant.z;
+    const entrantApproach = entrant.findCrowdedClashApproach(sim)?.rival === source;
+    source.updateClash(1 / 60, sim);
+    const splitState = {
+      sourceIds: source.clash?.ants?.map((ant: any) => ant.id) ?? [],
+      entrantIds: entrant.clash?.ants?.map((ant: any) => ant.id) ?? [],
+      spareDetached: spare.clashRival == null && spare.state !== "clash",
+    };
+
+    for (let i = 0; i < 48; i += 1) {
+      source.updateClash(1 / 60, sim);
+      entrant.updateClash(1 / 60, sim);
+    }
+
+    return {
+      crowdStarted,
+      crowdCount,
+      entrantApproach,
+      sourceIds: source.clash?.ants?.map((ant: any) => ant.id) ?? [],
+      entrantIds: entrant.clash?.ants?.map((ant: any) => ant.id) ?? [],
+      splitState,
+      primaryId: primary.id,
+      extraId: extra.id,
+      spareId: spare.id,
+      sourcePrimaryReference: primary.clashRival === source,
+      entrantExtraReference: extra.clashRival === entrant,
+      spareDetached: spare.clashRival == null && spare.state !== "clash",
+    };
+  });
+
+  expect(result.crowdStarted).toBe(true);
+  expect(result.crowdCount).toBe(3);
+  expect(result.entrantApproach).toBe(true);
+  expect(result.splitState.sourceIds).toEqual([result.primaryId]);
+  expect(result.splitState.entrantIds).toEqual([result.extraId]);
+  expect(result.splitState.spareDetached).toBe(true);
+  expect(result.sourceIds).toEqual([result.primaryId]);
+  expect(result.entrantIds).toEqual([result.extraId]);
+  expect(result.sourcePrimaryReference).toBe(true);
+  expect(result.entrantExtraReference).toBe(true);
+  expect(result.spareDetached).toBe(true);
+});
+
+test("a nearby rival already fighting still peels excess grapplers apart", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.clearRivalNestDefenders();
+    const [source, occupied, ...otherRivals] = sim.rivalNestWorkers();
+    const [primary, extra, spare, occupiedOpponent] = sim.ants;
+    for (const ant of sim.ants) {
+      ant.setVariant?.("soldier");
+      ant.role = "guard";
+      ant.isSortieSoldier = true;
+      ant.sortieMode = "defense";
+      ant.state = "stunned";
+      ant.stun = 30;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+      ant.clashRival = null;
+      ant.x = -90;
+      ant.z = -90;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+    }
+    for (const rival of otherRivals) {
+      rival.x = 80;
+      rival.z = 80;
+      rival.prevX = rival.x;
+      rival.prevZ = rival.z;
+      rival.clash = null;
+      rival.retreat = 0;
+      rival.fightCooldown = 8;
+    }
+
+    const setupRival = (rival: any, x: number, z: number) => {
+      rival.isRaidRival = true;
+      rival.x = x;
+      rival.z = z;
+      rival.prevX = x;
+      rival.prevZ = z;
+      rival.clash = null;
+      rival.retreat = 0;
+      rival.fightCooldown = 0;
+      rival.defeated = false;
+      rival.leftRaid = false;
+      rival.peelTargetRivalId = null;
+    };
+    const setupAnt = (ant: any, x: number, z: number) => {
+      ant.state = "explore";
+      ant.stun = 0;
+      ant.fleeTimer = 0;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+      ant.clashRival = null;
+      ant.x = x;
+      ant.z = z;
+      ant.prevX = x;
+      ant.prevZ = z;
+    };
+
+    setupRival(source, 0, 0);
+    setupRival(occupied, 42, 0);
+    setupAnt(primary, 0.45, 0);
+    setupAnt(extra, 0.9, 0.35);
+    setupAnt(spare, 1.15, -0.45);
+    setupAnt(occupiedOpponent, 42.45, 0);
+    const crowdStarted = source.startClash(primary, 0.2, 0, sim);
+    const crowdCount = source.clash?.ants?.length ?? 0;
+
+    occupied.x = 8;
+    occupied.z = 0;
+    occupied.prevX = occupied.x;
+    occupied.prevZ = occupied.z;
+    setupAnt(occupiedOpponent, 8.45, 0);
+    const occupiedClashStarted = occupied.startClash(occupiedOpponent, 8.2, 0, sim);
+    source.updateClash(1 / 60, sim);
+
+    return {
+      crowdStarted,
+      crowdCount,
+      occupiedClashStarted,
+      sourceIds: source.clash?.ants?.map((ant: any) => ant.id) ?? [],
+      occupiedIds: occupied.clash?.ants?.map((ant: any) => ant.id) ?? [],
+      primaryId: primary.id,
+      occupiedOpponentId: occupiedOpponent.id,
+      extrasReleased: [extra, spare].every((ant: any) => ant.clashRival == null && ant.state !== "clash"),
+    };
+  });
+
+  expect(result.crowdStarted).toBe(true);
+  expect(result.crowdCount).toBe(3);
+  expect(result.occupiedClashStarted).toBe(true);
+  expect(result.sourceIds).toEqual([result.primaryId]);
+  expect(result.occupiedIds).toEqual([result.occupiedOpponentId]);
+  expect(result.extrasReleased).toBe(true);
 });
 
 test("raid rivals keep cumulative damage across repeated one-on-one clashes", async ({ page }) => {

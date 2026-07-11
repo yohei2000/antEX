@@ -56,6 +56,9 @@ import {
   RIVAL_COMBAT_DAMAGE_DEFEAT_THRESHOLD,
   RIVAL_COMBAT_DAMAGE_LOSS_SCALE,
   RIVAL_COMBAT_DAMAGE_POWER_PENALTY,
+  RIVAL_COMBAT_PEEL_APPROACH_RADIUS,
+  RIVAL_COMBAT_PEEL_RELEASE_DISTANCE,
+  RIVAL_COMBAT_PEEL_TRIGGER_RADIUS,
   RIVAL_COMBAT_DAMAGE_SORTIE_ESCAPE_THRESHOLD,
   RIVAL_COMBAT_DAMAGE_UNSUPPORTED_SORTIE_ESCAPE_THRESHOLD,
   RIVAL_COMBAT_DAMAGE_WIN_SCALE,
@@ -518,6 +521,13 @@ const FORAGING_FAR_MIN_EFFICIENCY = 0.64;
 const FORAGING_TERRITORY_BASE_COST = 10;
 const FORAGING_TERRITORY_COST_STEP = 5;
 const RECENT_FORAGING_WINDOW_SECONDS = 60;
+const WORKER_CONTESTED_FOOD_STRIDE = 6;
+const RIVAL_NEST_WORKER_FORAGE_BASE_RADIUS = 108;
+const RIVAL_NEST_WORKER_FORAGE_MAX_RADIUS = 255;
+const RIVAL_NEST_WORKER_FORAGE_TERRITORY_RADIUS = 10;
+const RIVAL_NEST_WORKER_FORAGE_ACTIVITY_RADIUS = 0.25;
+const RIVAL_NEST_WORKER_FORAGE_NEST_LEVEL_RADIUS = 4;
+const RIVAL_NEST_WORKER_FORAGE_SPEED_SCALE = 1.36;
 
 function squadColorForId(id) {
   return SQUAD_COLORS[Math.max(0, Math.floor((id ?? 1) - 1)) % SQUAD_COLORS.length];
@@ -1419,6 +1429,14 @@ class Ant3D {
       steering.z += ((sensed.closestFood.z - this.z) / (sensed.foodDistance || 1)) * strength;
     }
 
+    const contestedFood = sim.findContestedFoodForWorker?.(this);
+    if (contestedFood) {
+      const d = distance2(this.x, this.z, contestedFood.x, contestedFood.z) || 1;
+      const pressure = 1.08 + this.traits.curiosity * 0.42;
+      steering.x += ((contestedFood.x - this.x) / d) * pressure;
+      steering.z += ((contestedFood.z - this.z) / d) * pressure;
+    }
+
     for (const trail of sim.trails) {
       if (trail.kind !== "food") continue;
       const d = distance2(this.x, this.z, trail.x, trail.z);
@@ -1429,7 +1447,10 @@ class Ant3D {
       }
     }
 
-    if (this.homeTimer > 9 + this.traits.persistence * 7 || this.energy < 0.2) {
+    const contestedForageWindow = contestedFood
+      ? 32 + Math.min(20, sim.foodDistanceFromNest(contestedFood) / 20)
+      : 0;
+    if (this.homeTimer > 9 + this.traits.persistence * 7 + contestedForageWindow || this.energy < 0.2) {
       this.setState("return");
       this.carrying = 0;
       this.foodSourceId = null;
@@ -2244,6 +2265,8 @@ class RivalAnt3D {
     this.workerCarryTimer = rand(0.8, 6.4);
     this.workerTargetX = 0;
     this.workerTargetZ = 0;
+    this.workerTargetFoodId = null;
+    this.peelTargetRivalId = null;
     this.carrying = 0;
     this.renderInstanceIndex = null;
     if (this.isRivalWorker) this.placeAtRivalNestWorkerSpawn(sim);
@@ -2404,11 +2427,15 @@ class RivalAnt3D {
     if (this.retreat > 0) {
       this.addRetreatHome(steering, sim);
     } else {
-      const targetAnt = this.findHarassmentTarget(sim);
-      if (targetAnt) this.addAntHarassment(steering, targetAnt);
+      const peelTarget = this.findCrowdedClashApproach(sim, RIVAL_COMBAT_PEEL_TRIGGER_RADIUS);
+      if (peelTarget) this.addClashPeelApproach(steering, peelTarget);
       else {
-        this.addFoodCompetition(steering, sim);
-        if (this.isRaidRival) this.addRaidPressure(steering, sim);
+        const targetAnt = this.findHarassmentTarget(sim);
+        if (targetAnt) this.addAntHarassment(steering, targetAnt);
+        else {
+          this.addFoodCompetition(steering, sim);
+          if (this.isRaidRival) this.addRaidPressure(steering, sim);
+        }
       }
       this.addNestAvoidance(steering, sim);
     }
@@ -2434,7 +2461,11 @@ class RivalAnt3D {
     steering.x = 0;
     steering.z = 0;
     const nest = sim.rivalNest ?? { x: this.homeX, z: this.homeZ, radius: 9 };
-    const contactTarget = this.findRivalWorkerContactTarget(sim);
+    const forageRadius = sim.rivalWorkerForageRadius?.() ?? RIVAL_NEST_WORKER_RETURN_RADIUS;
+    const targetFood = sim.getFoodSource?.(this.workerTargetFoodId);
+    if (!targetFood?.rivalForage) this.workerTargetFoodId = null;
+    const peelTarget = this.findCrowdedClashApproach(sim);
+    const contactTarget = peelTarget ? null : this.findRivalWorkerContactTarget(sim);
     const nestDistance = distance2(this.x, this.z, nest.x, nest.z) || 1;
 
     this.workerTaskTimer -= dt;
@@ -2444,13 +2475,22 @@ class RivalAnt3D {
       this.workerCarryTimer = rand(3.2, 8.5);
     }
 
-    if (contactTarget) {
+    if (peelTarget) {
+      const d = distance2(this.x, this.z, peelTarget.x, peelTarget.z) || 1;
+      steering.x += ((peelTarget.x - this.x) / d) * 1.42;
+      steering.z += ((peelTarget.z - this.z) / d) * 1.42;
+      this.carrying = 0;
+      this.state = "rival";
+    } else if (contactTarget) {
       const target = contactTarget.ant;
       const d = distance2(this.x, this.z, target.x, target.z) || 1;
       const pressure = contactTarget.kind === "attacker" ? 1.65 : 1.18;
       steering.x += ((target.x - this.x) / d) * pressure;
       steering.z += ((target.z - this.z) / d) * pressure;
-      if (nestDistance > RIVAL_NEST_WORKER_RETURN_RADIUS * 0.82) {
+      const contactForageRadius = sim.isRivalForageZone?.(this.x, this.z, 12) || sim.isRivalForageZone?.(target.x, target.z, 12)
+        ? forageRadius
+        : RIVAL_NEST_WORKER_RETURN_RADIUS;
+      if (nestDistance > contactForageRadius * 0.82) {
         steering.x += ((nest.x - this.x) / nestDistance) * 0.55;
         steering.z += ((nest.z - this.z) / nestDistance) * 0.55;
       }
@@ -2463,7 +2503,8 @@ class RivalAnt3D {
       const targetDistance = distance2(this.x, this.z, this.workerTargetX, this.workerTargetZ) || 1;
       steering.x += ((this.workerTargetX - this.x) / targetDistance) * 1.05;
       steering.z += ((this.workerTargetZ - this.z) / targetDistance) * 1.05;
-      if (nestDistance > RIVAL_NEST_WORKER_RETURN_RADIUS) {
+      const workerRange = this.workerTargetFoodId != null ? forageRadius : RIVAL_NEST_WORKER_RETURN_RADIUS;
+      if (nestDistance > workerRange) {
         steering.x += ((nest.x - this.x) / nestDistance) * 1.8;
         steering.z += ((nest.z - this.z) / nestDistance) * 1.8;
       }
@@ -2480,6 +2521,28 @@ class RivalAnt3D {
 
   pickRivalWorkerTarget(sim) {
     const nest = sim.rivalNest ?? { x: this.homeX, z: this.homeZ, radius: 9 };
+    const forageRadius = sim.rivalWorkerForageRadius?.() ?? RIVAL_NEST_WORKER_RETURN_RADIUS;
+    const forageFoods = (sim.food ?? []).filter((food) =>
+      food.rivalForage &&
+      food.amount > 0 &&
+      distance2(food.x, food.z, nest.x, nest.z) <= forageRadius,
+    );
+    if (forageFoods.length > 0 && chance(0.76)) {
+      const food = forageFoods
+        .slice()
+        .sort((a, b) => distance2(b.x, b.z, nest.x, nest.z) - distance2(a.x, a.z, nest.x, nest.z))[0];
+      const angle = rand(0, Math.PI * 2);
+      const point = sim.clampPointToWorld({
+        x: food.x + Math.cos(angle) * rand(0, Math.max(0.6, food.radius * 0.5)),
+        z: food.z + Math.sin(angle) * rand(0, Math.max(0.6, food.radius * 0.5)),
+      }, 4);
+      this.workerTargetX = point.x;
+      this.workerTargetZ = point.z;
+      this.workerTargetFoodId = food.id;
+      this.workerTaskTimer = rand(18, 30);
+      return;
+    }
+    this.workerTargetFoodId = null;
     const base = Math.atan2(this.z - nest.z, this.x - nest.x);
     const angle = base + rand(-1.15, 1.15) + (chance(0.28) ? Math.PI : 0);
     const radius = rand(RIVAL_NEST_WORKER_MIN_RADIUS, RIVAL_NEST_WORKER_MAX_RADIUS);
@@ -2501,7 +2564,10 @@ class RivalAnt3D {
       if (ant.state === "return" || ant.state === "flee" || ant.state === "clash" || ant.clashRival || ant.stun > 0) continue;
       const nestDistance = distance2(ant.x, ant.z, nest.x, nest.z);
       const isAttacker = ant.isSortieSoldier || ant.role === "guard" || ant.lastTacticalAction === "rivalNestAssault";
-      const isWorkerContact = ant.variant === "worker" && ant.role === "worker" && nestDistance <= RIVAL_NEST_WORKER_RETURN_RADIUS + 8;
+      const isWorkerContact = ant.variant === "worker" && ant.role === "worker" && (
+        nestDistance <= RIVAL_NEST_WORKER_RETURN_RADIUS + 8 ||
+        sim.isRivalForageZone?.(ant.x, ant.z, RIVAL_NEST_WORKER_WORKER_CONTACT_RADIUS + 4)
+      );
       if (!isAttacker && !isWorkerContact) continue;
       const d = distance2(this.x, this.z, ant.x, ant.z);
       const range = isAttacker ? RIVAL_NEST_WORKER_ATTACKER_RADIUS : RIVAL_NEST_WORKER_WORKER_CONTACT_RADIUS;
@@ -2656,6 +2722,35 @@ class RivalAnt3D {
     const charge = 1.65 + this.aggression * 1.25;
     steering.x += ((ant.x - this.x) / d) * charge;
     steering.z += ((ant.z - this.z) / d) * charge;
+  }
+
+  findCrowdedClashApproach(sim, approachRadius = RIVAL_COMBAT_PEEL_APPROACH_RADIUS) {
+    this.peelTargetRivalId = null;
+    if (this.defeated || this.leftRaid || this.retreat > 0 || this.clash) return null;
+    let best = null;
+    let bestScore = Infinity;
+    for (const rival of sim.rivalAnts) {
+      const clash = rival === this ? null : rival.clash;
+      if (!clash || clash.ants.length <= 1) continue;
+      const primaryAnt = clash.ants[0];
+      if (!primaryAnt || !this.canEngageAnt(primaryAnt, sim)) continue;
+      const d = distance2(this.x, this.z, clash.anchorX, clash.anchorZ);
+      if (d > approachRadius) continue;
+      const score = d - Math.min(5, clash.ants.length * 1.8);
+      if (score < bestScore) {
+        best = { rival, x: clash.anchorX, z: clash.anchorZ };
+        bestScore = score;
+      }
+    }
+    if (best) this.peelTargetRivalId = best.rival.id;
+    return best;
+  }
+
+  addClashPeelApproach(steering, target) {
+    const d = distance2(this.x, this.z, target.x, target.z) || 1;
+    const pressure = 1.18 + this.aggression * 0.82;
+    steering.x += ((target.x - this.x) / d) * pressure;
+    steering.z += ((target.z - this.z) / d) * pressure;
   }
 
   addNestAvoidance(steering, sim) {
@@ -2841,6 +2936,21 @@ class RivalAnt3D {
     return sim.activeExpeditionAttackers().includes(ant);
   }
 
+  nearbyCombatRivals(sim, ant, radius = RIVAL_COMBAT_PEEL_TRIGGER_RADIUS) {
+    const clash = this.clash;
+    const originX = clash?.anchorX ?? this.x;
+    const originZ = clash?.anchorZ ?? this.z;
+    return sim.rivalAnts.filter((other) => {
+      if (other === this || other.defeated || other.leftRaid || other.retreat > 0 || other.fightCooldown > 0) return false;
+      if (!other.canEngageAnt(ant, sim)) return false;
+      const enteringCrowd = other.peelTargetRivalId === this.id;
+      if (!enteringCrowd && !other.clash) return false;
+      const otherX = other.clash?.anchorX ?? other.x;
+      const otherZ = other.clash?.anchorZ ?? other.z;
+      return distance2(originX, originZ, otherX, otherZ) <= radius;
+    });
+  }
+
   startClash(ant, anchorX, anchorZ, sim) {
     const duration = RIVAL_CLASH_DURATION + (this.isRaidRival ? 0.45 : 0);
     if (this.defeated || this.leftRaid || this.clash || this.retreat > 0 || !this.canEngageAnt(ant, sim) || !ant.startRivalClash(this, anchorX, anchorZ, duration)) return false;
@@ -2868,6 +2978,7 @@ class RivalAnt3D {
       nextEffect: 0.06,
     };
     this.state = "clash";
+    this.peelTargetRivalId = null;
     this.disrupt = Math.max(this.disrupt, 0.55);
     this.recruitGrapplers(sim);
     sim.addCombatEffect(anchorX, anchorZ, 0.85, 1, Math.atan2(lineZ, lineX));
@@ -2875,10 +2986,58 @@ class RivalAnt3D {
   }
 
   maxGrapplers(sim) {
+    const primaryAnt = this.clash?.ants?.[0];
+    if (primaryAnt && this.nearbyCombatRivals(sim, primaryAnt).length > 0) return 1;
     const defense = sim.computeDerived().defensePower ?? 1;
     const guardBonus = defense >= 1.45 ? 1 : 0;
     const raidGroupBonus = this.isRaidRival ? 1 : 0;
     return Math.min(3, 2 + Math.max(guardBonus, raidGroupBonus));
+  }
+
+  trySplitNearbyClash(sim) {
+    const clash = this.clash;
+    if (!clash || clash.ants.length <= 1) return false;
+    const primaryAnt = clash.ants[0];
+    const nearbyRivals = this.nearbyCombatRivals(sim, primaryAnt);
+    if (!nearbyRivals.length) return false;
+    const entrants = nearbyRivals.filter((rival) => !rival.clash);
+
+    const extras = clash.ants.slice(1);
+    clash.ants = [primaryAnt];
+    for (const ant of extras) {
+      ant.clashRival = null;
+      ant.clashTimer = 0;
+      ant.clashDuration = 0;
+      if (ant.state === "clash") ant.setState(ant.carrying > 0 ? "return" : "explore");
+    }
+
+    let paired = 0;
+    for (const rival of entrants) {
+      const ant = extras.shift();
+      if (!ant) break;
+      const offsetX = rival.x - clash.anchorX;
+      const offsetZ = rival.z - clash.anchorZ;
+      const offsetLength = Math.hypot(offsetX, offsetZ);
+      const directionX = offsetLength > 0.001 ? offsetX / offsetLength : clash.lineX;
+      const directionZ = offsetLength > 0.001 ? offsetZ / offsetLength : clash.lineZ;
+      const splitDistance = clamp(offsetLength * 0.55, 3.4, RIVAL_COMBAT_PEEL_RELEASE_DISTANCE);
+      const anchorX = clash.anchorX + directionX * splitDistance;
+      const anchorZ = clash.anchorZ + directionZ * splitDistance;
+      if (rival.startClash(ant, anchorX, anchorZ, sim)) {
+        paired += 1;
+      }
+    }
+    extras.forEach((ant, index) => {
+      const angle = Math.atan2(ant.z - this.z, ant.x - this.x) + (index % 2 ? 0.7 : -0.7);
+      ant.x = this.x + Math.cos(angle) * RIVAL_COMBAT_PEEL_RELEASE_DISTANCE;
+      ant.z = this.z + Math.sin(angle) * RIVAL_COMBAT_PEEL_RELEASE_DISTANCE;
+      ant.prevX = ant.x;
+      ant.prevZ = ant.z;
+      ant.keepInWorld(sim);
+    });
+    this.disrupt = Math.max(this.disrupt, 0.82);
+    sim.addCombatEffect(clash.anchorX, clash.anchorZ, 1.04, Math.max(1, paired + 1), Math.atan2(clash.lineZ, clash.lineX));
+    return true;
   }
 
   addGrappler(ant) {
@@ -2954,6 +3113,8 @@ class RivalAnt3D {
       this.state = "rival";
       return;
     }
+
+    this.trySplitNearbyClash(sim);
 
     clash.elapsed += dt;
     const progress = clamp(clash.elapsed / clash.duration, 0, 1);
@@ -3155,7 +3316,8 @@ class RivalAnt3D {
       this.angle += (Math.random() - 0.5) * dt * 0.4;
     }
     const acidSlow = 1 - Math.min(0.46, this.acidDebuff * 0.2);
-    const speed = this.baseSpeed * acidSlow * (1 - this.disrupt * 0.28) * (this.retreat > 0 ? 1.28 : 1) * sim.terrainSpeedAt(this.x, this.z) * sim.rivalSpeedAt(this.x, this.z) * sim.timeScale;
+    const forageSpeed = this.isRivalWorker && this.workerTargetFoodId != null ? RIVAL_NEST_WORKER_FORAGE_SPEED_SCALE : 1;
+    const speed = this.baseSpeed * forageSpeed * acidSlow * (1 - this.disrupt * 0.28) * (this.retreat > 0 ? 1.28 : 1) * sim.terrainSpeedAt(this.x, this.z) * sim.rivalSpeedAt(this.x, this.z) * sim.timeScale;
     this.x += Math.sin(this.angle) * speed * dt;
     this.z += Math.cos(this.angle) * speed * dt;
     this.vx = (this.x - this.prevX) / Math.max(dt, 0.000001);
@@ -6859,6 +7021,49 @@ class AntColony3D {
     return 1.22;
   }
 
+  findContestedFoodForWorker(ant) {
+    if (!ant || ant.isSortieSoldier || ant.role !== "worker" || ant.carrying > 0) return null;
+    if (ant.id % WORKER_CONTESTED_FOOD_STRIDE !== 0) return null;
+    const activityRadius = this.workerActivityRadius();
+    if (activityRadius < FOOD_TERRITORY_DISTANCE) return null;
+    let best = null;
+    let bestScore = Infinity;
+    for (const food of this.food) {
+      if (!food.rivalForage || food.amount <= 0) continue;
+      const sourceDistance = this.foodDistanceFromNest(food);
+      if (sourceDistance > activityRadius - 6) continue;
+      const score = sourceDistance + distance2(ant.x, ant.z, food.x, food.z) * 0.14;
+      if (score < bestScore) {
+        best = food;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  rivalWorkerForageRadius(derived = this.derived) {
+    const d = derived && Number.isFinite(Number(derived.activeAnts)) ? derived : this.computeDerived();
+    const territory = Math.max(0, Number(this.colony.territory) || 0);
+    const nestLevel = Math.max(1, Number(this.colony.nestLevel) || 1);
+    const activeAnts = Math.max(0, Number(d.activeAnts ?? this.colony.antPopulation) || 0);
+    return clamp(
+      RIVAL_NEST_WORKER_FORAGE_BASE_RADIUS +
+        territory * RIVAL_NEST_WORKER_FORAGE_TERRITORY_RADIUS +
+        Math.max(0, activeAnts - 30) * RIVAL_NEST_WORKER_FORAGE_ACTIVITY_RADIUS +
+        Math.max(0, nestLevel - 1) * RIVAL_NEST_WORKER_FORAGE_NEST_LEVEL_RADIUS,
+      RIVAL_NEST_WORKER_FORAGE_BASE_RADIUS,
+      RIVAL_NEST_WORKER_FORAGE_MAX_RADIUS,
+    );
+  }
+
+  isRivalForageZone(x, z, padding = 0) {
+    for (const food of this.food) {
+      if (!food.rivalForage || food.amount <= 0) continue;
+      if (distance2(x, z, food.x, food.z) <= food.radius + padding) return true;
+    }
+    return false;
+  }
+
   foragingTerritoryCost() {
     return FORAGING_TERRITORY_BASE_COST + Math.max(0, Math.floor(this.colony.territory)) * FORAGING_TERRITORY_COST_STEP;
   }
@@ -8769,11 +8974,14 @@ class AntColony3D {
       { x: -178, z: -184, amount: 12, radius: 3.6, crumbs: 12, material: this.materials.foodSeed, kind: "seed" },
       { x: -210, z: -82, amount: 9, radius: 2.9, crumbs: 9, material: this.materials.foodLeaf, kind: "leaf" },
       { x: -92, z: -134, amount: 14, radius: 3.8, crumbs: 12, material: this.materials.foodSeed, kind: "seed" },
-      { x: 76, z: -176, amount: 28, radius: 5.0, crumbs: 18, material: this.materials.foodFruit, kind: "fruit" },
-      { x: -86, z: 128, amount: 24, radius: 4.6, crumbs: 16, material: this.materials.foodLeaf, kind: "leaf" },
-      { x: 144, z: -162, amount: 34, radius: 5.3, crumbs: 20, material: this.materials.foodSeed, kind: "seed" },
-      { x: 92, z: 132, amount: 26, radius: 4.8, crumbs: 17, material: this.materials.foodFruit, kind: "fruit" },
-      { x: 206, z: 78, amount: 30, radius: 5.0, crumbs: 18, material: this.materials.foodLeaf, kind: "leaf" },
+      { x: -24, z: -220, amount: 15, radius: 4.1, crumbs: 14, material: this.materials.foodFruit, kind: "fruit" },
+      { x: -74, z: -52, amount: 14, radius: 4.0, crumbs: 14, material: this.materials.foodLeaf, kind: "leaf" },
+      { x: -20, z: -18, amount: 16, radius: 4.3, crumbs: 15, material: this.materials.foodSeed, kind: "seed" },
+      { x: 12, z: 8, amount: 18, radius: 4.5, crumbs: 16, material: this.materials.foodFruit, kind: "fruit", rivalForage: true },
+      { x: -8, z: 66, amount: 17, radius: 4.4, crumbs: 15, material: this.materials.foodLeaf, kind: "leaf", rivalForage: true },
+      { x: 92, z: 132, amount: 22, radius: 4.8, crumbs: 17, material: this.materials.foodFruit, kind: "fruit", rivalForage: true },
+      { x: 206, z: 78, amount: 22, radius: 4.9, crumbs: 17, material: this.materials.foodSeed, kind: "seed", rivalForage: true },
+      { x: 218, z: -154, amount: 19, radius: 4.6, crumbs: 16, material: this.materials.foodLeaf, kind: "leaf" },
     ];
     this.foodSpawnSites = naturalFoods.map((food, index) => ({
       ...food,
@@ -9848,6 +10056,7 @@ class AntColony3D {
       crumbs: [],
       kind: options.kind ?? "placed",
       spawnSiteId: options.spawnSiteId ?? null,
+      rivalForage: Boolean(options.rivalForage),
       distanceFromNest,
       distanceTier: options.distanceTier ?? this.foodDistanceTier(distanceFromNest),
     };
@@ -9906,6 +10115,7 @@ class AntColony3D {
       minScale: site.minScale,
       maxScale: site.maxScale,
       spawnSiteId: site.id,
+      rivalForage: site.rivalForage,
       distanceFromNest: site.distanceFromNest,
       distanceTier: site.distanceTier,
     });

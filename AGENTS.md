@@ -25,7 +25,7 @@
 - 敵アリ色は落ち着いた赤茶 `#8a4a2f` を維持する。
 - 味方アリのライブ表示色は状態に関係なくデフォルト色を維持する。戦闘状態を色変更で表現しない。
 - 戦闘は即ワープ/即ノックバックではなく、約2秒以上の組み合いとして見せる。
-- 味方側は最大3匹まで1匹の敵に取り付き、正面・横・後ろ寄りから噛み付く配置を許可する。
+- 味方側は孤立した敵1匹に対してのみ最大3匹まで取り付き、正面・横・後ろ寄りから噛み付く配置を許可する。別の交戦可能な敵が組み合いへ入った時は味方を引きはがし、各組み合いを1対1へ分割する。
 - 戦闘後、敗者は画面内で固まらない。敵は画面外へ退却するか、死体として残る。死体は敵味方とも10秒で消える。
 - 敵襲完了時の味方死亡数表示は、敵襲開始時の `fallenAnts` との差分を使う。`raid.casualties` 単体を表示の根拠にしない。
 - 枝はアリが引っかかる原因になるため、通常マップの自然障害物として配置しない。
@@ -95,6 +95,7 @@
 - Save/load eval: `npm run eval:save`
 - Combat visual eval: `npm run verify:combat`
 - Expedition defense eval: `npm run verify:expedition`
+- Foraging ecology eval: `npm run verify:foraging`
 - Balance eval: `npm run verify:balance`
 - Raid quick check URL: `/?raidSoon=1`
 - Playwright eval server の既定TTLは15分。大きな敵襲規模を含むmobile/desktop smokeが途中で `ERR_CONNECTION_REFUSED` にならないよう維持する。
@@ -115,6 +116,7 @@
 - セーブ機能がある場合は `npm run eval:save` が通る。
 - 戦闘描画や敵襲AIを変更した場合は `npm run verify:combat` を実行し、出力スクリーンショットを確認する。
 - 敵巣守備、敵巣攻撃、敵働きアリの戦闘力を変更した場合は `npm run verify:expedition` を実行し、`verification/expedition-defense/summary.json` の失敗がないことを確認する。
+- 餌場分布、働きアリの採餌導線、敵働きアリの生態・接敵を変更した場合は `npm run verify:foraging` を実行し、`verification/foraging-competition/summary.json` の失敗がないことを確認する。
 - 兵種・敵襲・防衛バランスを変更した場合は `npm run verify:balance` を実行し、`verification/balance/summary.json` の失敗がないことを確認する。
 - 失敗時はPlaywright report、screenshot、console error、原因候補を報告する。
 - 最終報告に変更点、検証結果、残リスク、未対応事項を含める。
