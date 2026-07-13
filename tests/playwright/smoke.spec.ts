@@ -2500,7 +2500,127 @@ test("enemy nest collapse ends the game in victory", async ({ page }) => {
   expect(result.log).toContain("勝利");
 });
 
-test("nest durability reaching zero ends the game in defeat", async ({ page }) => {
+test("raid staging near the nest does not damage durability without a direct attack", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    sim.colony.gameStatus = "playing";
+    sim.colony.nestDurability = 100;
+    sim.colony.food = 1000;
+    sim.colony.enemyThreat = 6;
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: 0,
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: sim.colony.fallenAnts,
+      lastOutcome: "warning",
+    };
+    sim.raidNestBreachEvents = 0;
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    rival.raidTargetKind = "food";
+    rival.x = sim.nest.x + sim.nest.radius + 15;
+    rival.z = sim.nest.z;
+    rival.prevX = rival.x;
+    rival.prevZ = rival.z;
+    rival.retreat = 0;
+    rival.clash = null;
+    rival.defeated = false;
+    rival.leftRaid = false;
+    sim.colony.raidState.breachTimer = 7.19;
+    const before = sim.colony.nestDurability;
+    const oldRandom = Math.random;
+    Math.random = () => 1;
+    try {
+      sim.updateRaidBreachDamage(0.2);
+    } finally {
+      Math.random = oldRandom;
+    }
+    return {
+      before,
+      after: sim.colony.nestDurability,
+      gameStatus: sim.colony.gameStatus,
+      breachEvents: sim.raidNestBreachEvents,
+      breachTimer: sim.colony.raidState.breachTimer,
+      log: sim.colony.battleLog.join("\n"),
+    };
+  });
+
+  expect(result.after).toBe(result.before);
+  expect(result.gameStatus).toBe("playing");
+  expect(result.breachEvents).toBe(0);
+  expect(result.breachTimer).toBeLessThan(7.19);
+  expect(result.log).not.toContain("巣穴を直接攻撃");
+  expect(result.log).not.toContain("巣耐久-");
+});
+
+test("assigned nest attacker reaches the entrance before applying direct pressure", async ({ page }) => {
+  await waitForSimulation(page);
+
+  const result = await page.evaluate(() => {
+    const sim = window.__ANT_SIM as any;
+    sim.clearRaidRivals();
+    for (const ant of sim.ants) {
+      ant.inNest = true;
+      ant.nestStayTimer = 30;
+      ant.clashRival = null;
+    }
+    sim.colony.raidState = {
+      phase: "warning",
+      timer: 0,
+      wave: 1,
+      activeCount: 1,
+      approachAngle: sim.raidApproachAngle(),
+      signalTimer: 0,
+      breachTimer: 0,
+      casualties: 0,
+      enemyCasualties: 0,
+      startFallenAnts: sim.colony.fallenAnts,
+      lastOutcome: "warning",
+    };
+    sim.updateRaid(0.01);
+    const rival = sim.raidRivals()[0];
+    rival.aggression = 0;
+    rival.stubbornness = 1;
+    let minNestDistance = Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z);
+    let secondsToReach: number | null = null;
+    for (let step = 0; step < 92 * 30; step += 1) {
+      rival.update(1 / 30, sim);
+      minNestDistance = Math.min(minNestDistance, Math.hypot(rival.x - sim.nest.x, rival.z - sim.nest.z));
+      if (sim.isRaidRivalDirectlyAttackingPlayerNest(rival)) {
+        secondsToReach = (step + 1) / 30;
+        break;
+      }
+    }
+    return {
+      targetKind: rival.raidTargetKind,
+      baseSpeed: rival.baseSpeed,
+      targetDistance: Math.hypot(rival.raidTargetX - sim.nest.x, rival.raidTargetZ - sim.nest.z),
+      minNestDistance,
+      nestRadius: sim.nest.radius,
+      directlyAttacking: sim.isRaidRivalDirectlyAttackingPlayerNest(rival),
+      secondsToReach,
+    };
+  });
+
+  expect(result.targetKind).toBe("nest");
+  expect(result.baseSpeed).toBeGreaterThanOrEqual(4.6 * 1.7);
+  expect(result.targetDistance).toBeLessThanOrEqual(result.nestRadius);
+  expect(result.minNestDistance).toBeLessThanOrEqual(result.nestRadius);
+  expect(result.directlyAttacking).toBe(true);
+  expect(result.secondsToReach).not.toBeNull();
+  expect(result.secondsToReach).toBeLessThanOrEqual(84.8);
+});
+
+test("direct nest attack reaching zero ends the game in defeat", async ({ page }) => {
   await waitForSimulation(page);
 
   const result = await page.evaluate(() => {
@@ -2534,6 +2654,7 @@ test("nest durability reaching zero ends the game in defeat", async ({ page }) =
     rival.clash = null;
     rival.defeated = false;
     rival.leftRaid = false;
+    rival.raidTargetKind = "nest";
     sim.colony.raidState.breachTimer = 7.19;
     const beforeFood = sim.colony.food;
     const oldRandom = Math.random;
@@ -4984,6 +5105,10 @@ test("rival raids warn first and enter from the hidden enemy nest", async ({ pag
     const spawnLateralSpread = Math.max(...spawnLateral) - Math.min(...spawnLateral);
     const targetLateralSpread = Math.max(...targetLateral) - Math.min(...targetLateral);
     const maxExitDistance = Math.max(...exitRadii);
+    const nestAttackers = rivals.filter((rival: any) => rival.raidTargetKind === "nest");
+    const maxNestAttackTargetDistance = Math.max(
+      ...nestAttackers.map((rival: any) => Math.hypot(rival.raidTargetX - sim.nest.x, rival.raidTargetZ - sim.nest.z)),
+    );
     return {
       warning,
       largeNestRaidCount,
@@ -4998,6 +5123,10 @@ test("rival raids warn first and enter from the hidden enemy nest", async ({ pag
       spawnLateralSpread,
       targetLateralSpread,
       maxExitDistance,
+      nestAttackerCount: nestAttackers.length,
+      expectedNestAttackerCount: Math.max(1, Math.ceil(rivals.length / 8)),
+      maxNestAttackTargetDistance,
+      nestRadius: sim.nest.radius,
       worldRadius: sim.worldRadius,
       log: sim.colony.battleLog.join("\n"),
     };
@@ -5018,6 +5147,8 @@ test("rival raids warn first and enter from the hidden enemy nest", async ({ pag
   expect(raid.spawnLateralSpread).toBeGreaterThan(12);
   expect(raid.targetLateralSpread).toBeGreaterThan(6);
   expect(raid.maxExitDistance).toBeLessThan(8);
+  expect(raid.nestAttackerCount).toBe(raid.expectedNestAttackerCount);
+  expect(raid.maxNestAttackTargetDistance).toBeLessThanOrEqual(raid.nestRadius);
   expect(raid.log).toContain("敵巣方面");
   expect(raid.log).toContain("敵襲開始");
 });
@@ -5963,6 +6094,7 @@ test("rival ants actively harass ants near food instead of only camping", async 
     rival.fightCooldown = 0;
     rival.defeated = false;
     rival.leftRaid = false;
+    rival.raidTargetKind = "food";
     const targetBeforeMove = rival.findHarassmentTarget(sim);
     const beforeDistance = Math.hypot(ant.x - rival.x, ant.z - rival.z);
     let minDistance = beforeDistance;
@@ -6006,6 +6138,8 @@ test("raid food pressure does not damage stored food or kill ants inside the nes
     sim.colony.woundedAnts = 0;
     sim.colony.enemyThreat = 50;
     sim.colony.fallenAnts = 3;
+    sim.colony.nestDurability = 100;
+    sim.colony.gameStatus = "playing";
     sim.syncAntPopulation();
     for (const ant of sim.ants) {
       ant.inNest = true;
@@ -6046,12 +6180,14 @@ test("raid food pressure does not damage stored food or kill ants inside the nes
     rival.clash = null;
     rival.defeated = false;
     rival.leftRaid = false;
-    sim.colony.raidState.breachTimer = 7.19;
+    sim.colony.raidState.breachTimer = 0;
+    sim.raidFoodPressureTimer = 7.19;
     const before = {
       food: sim.colony.food,
       population: sim.colony.antPopulation,
       fallen: sim.colony.fallenAnts,
       ants: sim.ants.length,
+      nestDurability: sim.colony.nestDurability,
     };
     const oldRandom = Math.random;
     Math.random = () => 0;
@@ -6067,6 +6203,9 @@ test("raid food pressure does not damage stored food or kill ants inside the nes
         population: sim.colony.antPopulation,
         fallen: sim.colony.fallenAnts,
         ants: sim.ants.length,
+        nestDurability: sim.colony.nestDurability,
+        gameStatus: sim.colony.gameStatus,
+        breachEvents: sim.raidNestBreachEvents,
         casualties: sim.colony.raidState.casualties,
         log: sim.colony.battleLog.join("\n"),
       },
@@ -6077,6 +6216,9 @@ test("raid food pressure does not damage stored food or kill ants inside the nes
   expect(result.after.population).toBe(result.before.population);
   expect(result.after.fallen).toBe(result.before.fallen);
   expect(result.after.ants).toBe(result.before.ants);
+  expect(result.after.nestDurability).toBe(result.before.nestDurability);
+  expect(result.after.gameStatus).toBe("playing");
+  expect(result.after.breachEvents).toBe(0);
   expect(result.after.casualties).toBe(0);
   expect(result.after.log).toContain("餌場");
   expect(result.after.log).toContain("貯蔵食料への被害なし");

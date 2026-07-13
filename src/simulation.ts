@@ -34,7 +34,9 @@ import {
   RAID_EXIT_PADDING,
   RAID_GRAPPLER_RECRUIT_RANGE,
   RAID_HARASSMENT_RANGE,
+  RAID_NEST_ATTACKERS_PER_ASSAULT,
   RAID_NEST_PRESSURE_LOSS_SCALE,
+  RAID_NEST_ATTACKER_SPEED_SCALE,
   RAID_NEST_THREAT_LOSS_SCALE,
   RAID_NOTICE_SECONDS,
   RAID_RECOVERY_SECONDS,
@@ -2219,6 +2221,10 @@ class RivalAnt3D {
     this.rivalDefenseCount = options.count ?? RIVAL_NEST_DEFENDER_MIN_COUNT;
     this.raidTargetX = sim.nest.x;
     this.raidTargetZ = sim.nest.z;
+    this.raidNestAttackerCount = this.isRaidRival
+      ? Math.max(1, Math.ceil(this.raidCount / RAID_NEST_ATTACKERS_PER_ASSAULT))
+      : 0;
+    this.raidTargetKind = this.isRaidRival && this.raidIndex < this.raidNestAttackerCount ? "nest" : "food";
     this.leftRaid = false;
     this.defeated = false;
     this.variant = this.isRivalNestDefender ? "soldier" : "worker";
@@ -2226,6 +2232,7 @@ class RivalAnt3D {
     this.role = this.isRivalWorker ? "worker" : "guard";
     this.scale = this.isRivalWorker ? rand(0.82, 0.98) : rand(1.22, 1.42);
     this.baseSpeed = this.isRivalWorker ? rand(3.2, 4.9) : rand(4.6, 7.2);
+    if (this.raidTargetKind === "nest") this.baseSpeed *= RAID_NEST_ATTACKER_SPEED_SCALE;
     this.aggression = this.isRivalWorker ? rand(0.06, 0.24) : rand(0.42, 1);
     this.stubbornness = this.isRivalWorker ? rand(0.18, 0.46) : rand(0.36, 1);
     this.state = "rival";
@@ -2320,10 +2327,17 @@ class RivalAnt3D {
     this.homeX = nest.x + flankX * clamp(sideOffset * 0.42, -4, 4);
     this.homeZ = nest.z + flankZ * clamp(sideOffset * 0.42, -4, 4);
 
-    const targetDistance = sim.nest.radius + 15 + (this.raidIndex % 3) * 4.5 + row * 1.8;
-    const targetFlank = -lane * 2.8 + (this.raidIndex % 2 === 0 ? -1.3 : 1.3);
-    this.raidTargetX = sim.nest.x + approachX * -targetDistance + flankX * targetFlank;
-    this.raidTargetZ = sim.nest.z + approachZ * -targetDistance + flankZ * targetFlank;
+    if (this.raidTargetKind === "nest") {
+      const attackerLane = this.raidIndex - (this.raidNestAttackerCount - 1) * 0.5;
+      const entranceOffset = clamp(attackerLane * 1.6, -sim.nest.radius * 0.3, sim.nest.radius * 0.3);
+      this.raidTargetX = sim.nest.x + flankX * entranceOffset;
+      this.raidTargetZ = sim.nest.z + flankZ * entranceOffset;
+    } else {
+      const targetDistance = sim.nest.radius + 15 + (this.raidIndex % 3) * 4.5 + row * 1.8;
+      const targetFlank = -lane * 2.8 + (this.raidIndex % 2 === 0 ? -1.3 : 1.3);
+      this.raidTargetX = sim.nest.x + approachX * -targetDistance + flankX * targetFlank;
+      this.raidTargetZ = sim.nest.z + approachZ * -targetDistance + flankZ * targetFlank;
+    }
     this.angle = Math.atan2(approachX, approachZ);
     this.prevAngle = this.angle;
   }
@@ -2416,6 +2430,8 @@ class RivalAnt3D {
     steering.z = 0;
     if (this.retreat > 0) {
       this.addRetreatHome(steering, sim);
+    } else if (this.isRaidRival && this.raidTargetKind === "nest") {
+      this.addRaidPressure(steering, sim);
     } else {
       const peelTarget = this.findCrowdedClashApproach(sim, RIVAL_COMBAT_PEEL_TRIGGER_RADIUS);
       if (peelTarget) this.addClashPeelApproach(steering, peelTarget);
@@ -2432,7 +2448,8 @@ class RivalAnt3D {
     this.addRivalSeparation(steering, sim);
 
     this.wander += (Math.random() - 0.5) * dt * (1.9 + this.aggression * 1.2);
-    const wanderStrength = this.retreat > 0 ? 0.16 : 0.52 + this.stubbornness * 0.26;
+    const isDirectNestAssault = this.isRaidRival && this.raidTargetKind === "nest" && this.retreat <= 0;
+    const wanderStrength = this.retreat > 0 ? 0.16 : isDirectNestAssault ? 0.08 : 0.52 + this.stubbornness * 0.26;
     steering.x += Math.sin(this.wander) * wanderStrength;
     steering.z += Math.cos(this.wander) * wanderStrength;
 
@@ -2650,18 +2667,20 @@ class RivalAnt3D {
     let targetZ = this.raidTargetZ;
     let bestFood = null;
     let bestFoodScore = -Infinity;
-    for (const food of sim.food) {
-      if (food.amount <= 0) continue;
-      const distanceFromSelf = distance2(this.x, this.z, food.x, food.z);
-      const distanceFromNest = distance2(food.x, food.z, sim.nest.x, sim.nest.z);
-      const pressureRadius = Math.max(MAP_RAID_FOOD_PRESSURE_RADIUS, (sim.mapVisionRadiusValue ?? MAP_BASE_VISION_RADIUS) + 34);
-      if (this.isRaidRival && distanceFromNest > pressureRadius) continue;
-      const foodSizeScore = Math.sqrt(Math.max(0, food.amount)) * 5.2;
-      const remoteFoodPenalty = food.distanceTier === "far" ? 8 : food.distanceTier === "mid" ? 2.5 : 0;
-      const score = foodSizeScore - distanceFromSelf * 0.04 - distanceFromNest * 0.016 - remoteFoodPenalty;
-      if (score > bestFoodScore) {
-        bestFood = food;
-        bestFoodScore = score;
+    if (this.raidTargetKind !== "nest") {
+      for (const food of sim.food) {
+        if (food.amount <= 0) continue;
+        const distanceFromSelf = distance2(this.x, this.z, food.x, food.z);
+        const distanceFromNest = distance2(food.x, food.z, sim.nest.x, sim.nest.z);
+        const pressureRadius = Math.max(MAP_RAID_FOOD_PRESSURE_RADIUS, (sim.mapVisionRadiusValue ?? MAP_BASE_VISION_RADIUS) + 34);
+        if (this.isRaidRival && distanceFromNest > pressureRadius) continue;
+        const foodSizeScore = Math.sqrt(Math.max(0, food.amount)) * 5.2;
+        const remoteFoodPenalty = food.distanceTier === "far" ? 8 : food.distanceTier === "mid" ? 2.5 : 0;
+        const score = foodSizeScore - distanceFromSelf * 0.04 - distanceFromNest * 0.016 - remoteFoodPenalty;
+        if (score > bestFoodScore) {
+          bestFood = food;
+          bestFoodScore = score;
+        }
       }
     }
     if (bestFood) {
@@ -2744,6 +2763,7 @@ class RivalAnt3D {
   }
 
   addNestAvoidance(steering, sim) {
+    if (this.isRaidRival && this.raidTargetKind === "nest" && this.retreat <= 0) return;
     const d = distance2(this.x, this.z, sim.nest.x, sim.nest.z);
     const reach = sim.nest.radius + (this.isRaidRival ? 10 : 24);
     if (d >= reach) return;
@@ -4254,6 +4274,7 @@ class AntColony3D {
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.raidNotice = { message: "", kind: "warning", timer: 0 };
     this.raidNestBreachEvents = 0;
+    this.raidFoodPressureTimer = 0;
     this.constructionMessage = "待機";
     this.renderAntBuffer = [];
     this.soldierSortieCooldown = 0;
@@ -6578,6 +6599,7 @@ class AntColony3D {
     this.reconSweepIndex = 0;
     this.rivalFightStats = { clashes: 0, colonyWins: 0, rivalWins: 0 };
     this.raidNestBreachEvents = 0;
+    this.raidFoodPressureTimer = 0;
     this.rivalNest.discovered = false;
     this.rivalNest.defeated = false;
     this.rivalNest.integrity = 1;
@@ -9346,6 +9368,7 @@ class AntColony3D {
     raid.startFallenAnts = Math.floor(this.colony.fallenAnts ?? 0);
     raid.lastOutcome = "warning";
     this.raidNestBreachEvents = 0;
+    this.raidFoodPressureTimer = 0;
     const hasIntel = this.hasRaidDirectionIntel();
     this.emitRaidSignal(raid, 0.88);
     if (hasIntel) {
@@ -9363,6 +9386,7 @@ class AntColony3D {
     const raid = this.ensureRaidState();
     this.clearRaidRivals();
     this.raidNestBreachEvents = 0;
+    this.raidFoodPressureTimer = 0;
     const count = Math.floor(clamp(raid.activeCount || this.raidEnemyCount(), 1, RAID_RIVAL_CAP));
     for (let i = 0; i < count; i += 1) {
       const rival = new RivalAnt3D(this.nextRivalId++, this, {
@@ -9517,6 +9541,7 @@ class AntColony3D {
   resolveRaid(outcome = "repelled") {
     if (this.isGameEnded()) return;
     const raid = this.ensureRaidState();
+    this.raidFoodPressureTimer = 0;
     const count = Math.max(1, raid.activeCount || this.raidEnemyCount());
     if (outcome === "repelled") {
       const relief = 0.75 + count * 0.22 + Math.max(0, this.computeDerived().defensePower - 1) * 0.22;
@@ -9623,6 +9648,12 @@ class AntColony3D {
     return true;
   }
 
+  isRaidRivalDirectlyAttackingPlayerNest(rival) {
+    if (!rival?.isRaidRival || rival.raidTargetKind !== "nest") return false;
+    if (rival.defeated || rival.leftRaid || rival.retreat > 0 || rival.clash) return false;
+    return distance2(rival.x, rival.z, this.nest.x, this.nest.z) <= this.nest.radius;
+  }
+
   updateRaidBreachDamage(dt) {
     const raid = this.ensureRaidState();
     if (this.isGameEnded()) return;
@@ -9631,44 +9662,49 @@ class AntColony3D {
     let foodPressure = 0;
     for (const rival of this.raidRivals()) {
       if (rival.defeated || rival.leftRaid || rival.retreat > 0) continue;
-      const nearNest = distance2(rival.x, rival.z, this.nest.x, this.nest.z) < this.nest.radius + 24;
+      const directlyAttackingNest = this.isRaidRivalDirectlyAttackingPlayerNest(rival);
       const nearFood = this.isNearFood(rival.x, rival.z, 7);
-      if (!nearNest && !nearFood) continue;
+      if (!directlyAttackingNest && !nearFood) continue;
       const shieldRelief = this.shieldBlockStrengthAt(rival.x, rival.z);
       const rivalPressure = Math.max(0.28, 1 - shieldRelief * 0.42);
-      if (nearNest) nestPressure += rivalPressure;
+      if (directlyAttackingNest) nestPressure += rivalPressure;
       else foodPressure += rivalPressure;
     }
-    const pressure = nestPressure + foodPressure;
-    if (pressure <= 0) {
+
+    if (nestPressure > 0) raid.breachTimer += dt * nestPressure;
+    else {
       raid.breachTimer = Math.max(0, raid.breachTimer - dt * 0.6);
-      return;
     }
-    raid.breachTimer += dt * pressure;
+
+    if (foodPressure > 0) this.raidFoodPressureTimer += dt * foodPressure;
+    else this.raidFoodPressureTimer = Math.max(0, this.raidFoodPressureTimer - dt * 0.6);
+
+    const foodPressureReady = this.raidFoodPressureTimer >= 7.2;
+    if (foodPressureReady) {
+      this.raidFoodPressureTimer = 0;
+      this.pushLog("敵が餌場を荒らした: 貯蔵食料への被害なし");
+    }
+
     if (raid.breachTimer < 7.2) return;
     raid.breachTimer = 0;
-    if (nestPressure > 0) this.raidNestBreachEvents = Math.floor((this.raidNestBreachEvents ?? 0) + 1);
+    this.raidNestBreachEvents = Math.floor((this.raidNestBreachEvents ?? 0) + 1);
     const defense = this.computeDerived().defensePower;
-    const loss = nestPressure > 0
-      ? Math.min(this.colony.food, (1.8 + pressure * RAID_NEST_PRESSURE_LOSS_SCALE + this.colony.enemyThreat * RAID_NEST_THREAT_LOSS_SCALE) / defense)
-      : 0;
+    const loss = Math.min(
+      this.colony.food,
+      (1.8 + nestPressure * RAID_NEST_PRESSURE_LOSS_SCALE + this.colony.enemyThreat * RAID_NEST_THREAT_LOSS_SCALE) / defense,
+    );
     if (loss > 0) this.colony.food = Math.max(0, this.colony.food - loss);
-    const nestDamage = nestPressure > 0
-      ? this.damagePlayerNest(
-          (PLAYER_NEST_BREACH_BASE_DAMAGE + nestPressure * PLAYER_NEST_BREACH_PRESSURE_DAMAGE + this.colony.enemyThreat * 0.12) /
-            Math.max(0.72, Math.sqrt(defense)),
-        )
-      : 0;
-    const casualtyChance = nestPressure > 0
-      ? clamp((nestPressure - 1) * 0.18 + this.colony.enemyThreat * 0.012 - (defense - 1) * 0.18, 0, 0.62)
-      : 0;
+    const nestDamage = this.damagePlayerNest(
+      (PLAYER_NEST_BREACH_BASE_DAMAGE + nestPressure * PLAYER_NEST_BREACH_PRESSURE_DAMAGE + this.colony.enemyThreat * 0.12) /
+        Math.max(0.72, Math.sqrt(defense)),
+    );
+    const casualtyChance = clamp((nestPressure - 1) * 0.18 + this.colony.enemyThreat * 0.012 - (defense - 1) * 0.18, 0, 0.62);
     let casualties = 0;
     if (Math.random() < casualtyChance) casualties = this.applyRaidCasualties(1, "breach");
-    const pressureArea = nestPressure > 0 ? "巣周辺" : "餌場";
     const nestDamageText = nestDamage > 0 ? `巣耐久-${fmt(nestDamage, 0)} / ` : "";
     const foodDamageText = loss > 0 ? `食料-${fmt(loss, 0)}` : "貯蔵食料への被害なし";
-    this.pushLog(`敵が${pressureArea}を荒らした: ${nestDamageText}${foodDamageText}${casualties ? ` / 死亡${casualties}` : ""}`);
-    if (nestPressure > 0 && this.colony.nestDurability <= 0) this.endGame("defeat");
+    this.pushLog(`敵が巣穴を直接攻撃した: ${nestDamageText}${foodDamageText}${casualties ? ` / 死亡${casualties}` : ""}`);
+    if (this.colony.nestDurability <= 0) this.endGame("defeat");
   }
 
   updateRaid(dt) {

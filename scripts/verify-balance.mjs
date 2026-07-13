@@ -180,16 +180,19 @@ function aggregate(runs) {
   const sum = (key) => runs.reduce((total, run) => total + (Number(run[key]) || 0), 0);
   const successCount = runs.filter((run) => run.success).length;
   const perfectCount = runs.filter((run) => run.raidOutcome === "repelled" && run.harmScore <= 0.001).length;
+  const defeatCount = runs.filter((run) => run.defeated).length;
   return {
     runs: runs.length,
     successCount,
     perfectCount,
+    defeatCount,
     minActiveCount: Math.min(...runs.map((run) => run.activeCount)),
     avgDeaths: sum("deaths") / count,
     avgEnemyCasualties: sum("enemyCasualties") / count,
     avgFoodLoss: sum("foodLoss") / count,
     avgWoundedDelta: sum("woundedDelta") / count,
     avgBreachEvents: sum("breachEvents") / count,
+    avgNestDurabilityLoss: sum("nestDurabilityLoss") / count,
     avgHarmScore: sum("harmScore") / count,
     avgClearSeconds: sum("clearSeconds") / count,
   };
@@ -203,6 +206,7 @@ function assertBalance(summary) {
   const latePressure = summary.scenarios.late_pressure.aggregate;
 
   if (earlySortie.successCount < 4) failures.push(`early_sortie successCount ${earlySortie.successCount} < 4`);
+  if (earlySortie.defeatCount > 0) failures.push(`early_sortie defeatCount ${earlySortie.defeatCount} > 0`);
   const earlySortieDeathLimit = Math.min(2.6, earlyNoSortie.avgDeaths * 0.72);
   if (earlySortie.avgDeaths > earlySortieDeathLimit) {
     failures.push(`early_sortie avgDeaths ${earlySortie.avgDeaths.toFixed(2)} > ${earlySortieDeathLimit.toFixed(2)}`);
@@ -212,6 +216,7 @@ function assertBalance(summary) {
   if (earlyNoSortie.avgHarmScore <= noSortieMinimum) {
     failures.push(`early_no_sortie avgHarmScore ${earlyNoSortie.avgHarmScore.toFixed(2)} <= ${noSortieMinimum.toFixed(2)}`);
   }
+  if (earlyNoSortie.defeatCount > 0) failures.push(`early_no_sortie defeatCount ${earlyNoSortie.defeatCount} > 0`);
 
   if (midMixed.successCount < 4) failures.push(`mid_mixed successCount ${midMixed.successCount} < 4`);
   if (midMixed.perfectCount > 2) failures.push(`mid_mixed perfectCount ${midMixed.perfectCount} > 2`);
@@ -285,6 +290,8 @@ async function runScenario(page, scenario, seed) {
           nestLevel: scenario.nestLevel,
           territory: scenario.territory,
           enemyThreat: scenario.enemyThreat,
+          nestDurability: 100,
+          gameStatus: "playing",
           fallenAnts: 0,
           hatchProgress: 0,
           battleCooldownUntil: 0,
@@ -303,7 +310,7 @@ async function runScenario(page, scenario, seed) {
         const originalPushLog = sim.pushLog.bind(sim);
         sim.pushLog = (message) => {
           const text = String(message ?? "");
-          if (text.includes("\u6575\u304c\u5de3\u5468\u8fba\u3092\u8352\u3089\u3057\u305f")) breachEvents += 1;
+          if (text.includes("\u6575\u304c\u5de3\u7a74\u3092\u76f4\u63a5\u653b\u6483\u3057\u305f")) breachEvents += 1;
           const match = text.match(/\u98df\u6599-(\d+(?:\.\d+)?)/u);
           if (match) loggedFoodLoss += Number(match[1]) || 0;
           originalPushLog(message);
@@ -328,6 +335,7 @@ async function runScenario(page, scenario, seed) {
         const startFood = sim.colony.food;
         const startWounded = sim.colony.woundedAnts;
         const startFallen = sim.colony.fallenAnts;
+        const startNestDurability = sim.colony.nestDurability;
         if (scenario.sortie) sim.startSoldierSortie();
 
         let elapsed = 0;
@@ -344,6 +352,7 @@ async function runScenario(page, scenario, seed) {
         const foodLoss = Math.max(loggedFoodLoss, Math.max(0, startFood - sim.colony.food));
         const enemyCasualties = Math.floor(finalRaid.enemyCasualties ?? 0);
         const raidOutcome = finalRaid.phase === "recovering" ? finalRaid.lastOutcome : finalRaid.phase;
+        const nestDurabilityLoss = Math.max(0, startNestDurability - sim.colony.nestDurability);
         const harmScore = deaths + woundedDelta * 0.25 + foodLoss / 15 + breachEvents * 0.75;
         return {
           scenarioId: scenario.id,
@@ -358,6 +367,8 @@ async function runScenario(page, scenario, seed) {
           woundedDelta,
           clearSeconds: Number(elapsed.toFixed(2)),
           breachEvents,
+          nestDurabilityLoss,
+          defeated: sim.colony.gameStatus === "defeat",
           harmScore: Number(harmScore.toFixed(3)),
           deployedSoldiers: sim.deployedSoldierCount(),
           remainingRivals: sim.raidRivals().length,
