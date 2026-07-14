@@ -86,6 +86,7 @@ import {
   SOLDIER_SORTIE_SECONDS,
   SOLDIER_SORTIE_SEEK_RANGE,
   UNSUPPORTED_SORTIE_DAMAGE_PRESSURE_SCALE,
+  UNSUPPORTED_SORTIE_FULL_PENALTY_RAID_SIZE,
   UNSUPPORTED_SORTIE_LARGE_RAID_MIN_SIZE,
   UNSUPPORTED_SORTIE_POWER_SCALE,
 } from "./config/balance";
@@ -2802,16 +2803,22 @@ class RivalAnt3D {
     }
   }
 
-  isUnsupportedLargeRaidSortieAnt(ant, sim = null) {
-    if (!sim || !this.isRaidRival || !ant?.isSortieSoldier || ant.variant !== "soldier") return false;
+  unsupportedLargeRaidSortiePenalty(ant, sim = null) {
+    if (!sim || !this.isRaidRival || !ant?.isSortieSoldier || ant.variant !== "soldier") return 0;
     const raidSize = Math.floor(sim.ensureRaidState?.().activeCount ?? 0);
-    return raidSize >= UNSUPPORTED_SORTIE_LARGE_RAID_MIN_SIZE && !sim.hasSortieSupportVariants?.();
+    if (raidSize < UNSUPPORTED_SORTIE_LARGE_RAID_MIN_SIZE || sim.hasSortieSupportVariants?.()) return 0;
+    const penaltySpan = Math.max(
+      1,
+      UNSUPPORTED_SORTIE_FULL_PENALTY_RAID_SIZE - UNSUPPORTED_SORTIE_LARGE_RAID_MIN_SIZE + 1,
+    );
+    return clamp((raidSize - UNSUPPORTED_SORTIE_LARGE_RAID_MIN_SIZE + 1) / penaltySpan, 0, 1);
   }
 
   unsupportedSortieDamagePressureScale(ants, sim = null) {
     if (!sim || !this.isRaidRival) return 1;
-    if (!ants.length || !ants.every((ant) => this.isUnsupportedLargeRaidSortieAnt(ant, sim))) return 1;
-    return UNSUPPORTED_SORTIE_DAMAGE_PRESSURE_SCALE;
+    if (!ants.length || !ants.every((ant) => this.unsupportedLargeRaidSortiePenalty(ant, sim) > 0)) return 1;
+    const penalty = ants.reduce((sum, ant) => sum + this.unsupportedLargeRaidSortiePenalty(ant, sim), 0) / ants.length;
+    return 1 - (1 - UNSUPPORTED_SORTIE_DAMAGE_PRESSURE_SCALE) * penalty;
   }
 
   isUnsupportedCaptain(ant, sim = null) {
@@ -2837,7 +2844,8 @@ class RivalAnt3D {
     const wallAttackBonus = sim?.wallAttackBonusAt?.(ant.x, ant.z) ?? 0;
     const nestDefense = defenseBonus * (ant.variant === "shieldHead" ? 0.78 : ant.role === "guard" || ant.variant === "heavySoldier" ? 0.62 : 0.26);
     const squadSupportBonus = this.squadSupportPowerBonus(ant, sim);
-    const unsupportedSortieScale = this.isUnsupportedLargeRaidSortieAnt(ant, sim) ? UNSUPPORTED_SORTIE_POWER_SCALE : 1;
+    const unsupportedSortiePenalty = this.unsupportedLargeRaidSortiePenalty(ant, sim);
+    const unsupportedSortieScale = 1 - (1 - UNSUPPORTED_SORTIE_POWER_SCALE) * unsupportedSortiePenalty;
     const unsupportedCaptainScale = this.isUnsupportedCaptain(ant, sim) ? CAPTAIN_UNSUPPORTED_POWER_SCALE : 1;
     const baseAntPower =
       0.7 +
@@ -3255,10 +3263,15 @@ class RivalAnt3D {
         ant.energy = clamp(ant.energy - 0.16 * this.aggression, 0, 1);
         if (ant !== victim) ant.startFleeHome(this.x, this.z, 4.2 + this.aggression * 1.2);
       }
-      const raidSize = this.isRaidRival ? Math.floor(sim.ensureRaidState().activeCount ?? 0) : 0;
-      const unsupportedSoloSortie = raidSize >= 8 && ants.length === 1 && victim.variant === "soldier" && victim.squadId == null;
-      const sortieEscapeThreshold = unsupportedSoloSortie ? RIVAL_COMBAT_DAMAGE_UNSUPPORTED_SORTIE_ESCAPE_THRESHOLD : RIVAL_COMBAT_DAMAGE_SORTIE_ESCAPE_THRESHOLD;
-      const sortieCanEscape = victim.isSortieSoldier && damagePressure >= 1 && this.combatDamage >= sortieEscapeThreshold;
+      const unsupportedSoloSortiePenalty = ants.length === 1 && victim.squadId == null
+        ? this.unsupportedLargeRaidSortiePenalty(victim, sim)
+        : 0;
+      const sortieEscapeThreshold = RIVAL_COMBAT_DAMAGE_SORTIE_ESCAPE_THRESHOLD +
+        (RIVAL_COMBAT_DAMAGE_UNSUPPORTED_SORTIE_ESCAPE_THRESHOLD - RIVAL_COMBAT_DAMAGE_SORTIE_ESCAPE_THRESHOLD) * unsupportedSoloSortiePenalty;
+      const frontlineEscapeWeight = this.combatDamageWeight(victim, sim) >= 1;
+      const sortieCanEscape = victim.isSortieSoldier &&
+        (damagePressure >= 1 || frontlineEscapeWeight) &&
+        this.combatDamage >= sortieEscapeThreshold;
       if (this.isRaidRival && sim.canLoseAnt() && !sortieCanEscape) {
         sim.killAnt(victim, this);
       } else {

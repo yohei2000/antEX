@@ -9,6 +9,10 @@ const OUTPUT_DIR = resolve("verification", "balance");
 const SUMMARY_PATH = join(OUTPUT_DIR, "summary.json");
 const STEP_DT = 1 / 60;
 const MAX_SECONDS = 126;
+const SCENARIO_FILTER = process.env.ANTEX_BALANCE_SCENARIO?.trim() || null;
+if (SCENARIO_FILTER && SCENARIO_FILTER !== "mid_reinforced_normal") {
+  throw new Error(`Unsupported filtered balance scenario: ${SCENARIO_FILTER}`);
+}
 
 const BASE_UPGRADES = {
   foragerTrails: 0,
@@ -51,6 +55,11 @@ const MID_BASE = {
   food: 280,
   soldierAnts: 24,
   upgrades: { soldierTraining: 3, nestGuard: 2, sentinelPosts: 1 },
+};
+
+const MID_REINFORCED_NORMAL_BASE = {
+  ...MID_BASE,
+  soldierAnts: 20,
 };
 
 const LATE_BASE = {
@@ -103,6 +112,17 @@ const SCENARIOS = [
         captainBrood: 1,
       },
       variants: { heavySoldierAnts: 1, shieldHeadAnts: 1, acidShooterAnts: 1, scoutAnts: 1, medicAnts: 1, captainAnts: 1 },
+    },
+  },
+  {
+    id: "mid_reinforced_normal",
+    suite: "mid_reinforcement",
+    config: {
+      ...MID_REINFORCED_NORMAL_BASE,
+      sortie: true,
+      sortieWaves: 2,
+      fixedEnemyCount: 8,
+      variants: {},
     },
   },
   ...["heavySoldier", "shieldHead", "acidShooter", "scout", "medic", "captain", "soldier"].map((variant) => ({
@@ -187,7 +207,9 @@ function aggregate(runs) {
     perfectCount,
     defeatCount,
     minActiveCount: Math.min(...runs.map((run) => run.activeCount)),
+    maxActiveCount: Math.max(...runs.map((run) => run.activeCount)),
     avgDeaths: sum("deaths") / count,
+    avgSortieDeaths: sum("sortieDeaths") / count,
     avgEnemyCasualties: sum("enemyCasualties") / count,
     avgFoodLoss: sum("foodLoss") / count,
     avgWoundedDelta: sum("woundedDelta") / count,
@@ -195,7 +217,37 @@ function aggregate(runs) {
     avgNestDurabilityLoss: sum("nestDurabilityLoss") / count,
     avgHarmScore: sum("harmScore") / count,
     avgClearSeconds: sum("clearSeconds") / count,
+    maxDeaths: Math.max(...runs.map((run) => run.deaths)),
+    maxSortieDeaths: Math.max(...runs.map((run) => run.sortieDeaths)),
+    minEnemyCasualties: Math.min(...runs.map((run) => run.enemyCasualties)),
+    minPeakDeployedSoldiers: Math.min(...runs.map((run) => run.peakDeployedSoldiers)),
   };
+}
+
+function assertMidReinforcedNormal(entry) {
+  const failures = [];
+  if (!entry) return ["mid_reinforced_normal result missing"];
+  const aggregate = entry.aggregate;
+  if (aggregate.minActiveCount !== 8 || aggregate.maxActiveCount !== 8) {
+    failures.push(`mid_reinforced_normal activeCount range ${aggregate.minActiveCount}-${aggregate.maxActiveCount} !== 8`);
+  }
+  if (aggregate.minPeakDeployedSoldiers < 20) {
+    failures.push(`mid_reinforced_normal minPeakDeployedSoldiers ${aggregate.minPeakDeployedSoldiers} < 20`);
+  }
+  if (aggregate.avgSortieDeaths > 3) {
+    failures.push(`mid_reinforced_normal avgSortieDeaths ${aggregate.avgSortieDeaths.toFixed(2)} > 3`);
+  }
+  if (aggregate.maxSortieDeaths > 6) {
+    failures.push(`mid_reinforced_normal maxSortieDeaths ${aggregate.maxSortieDeaths} > 6`);
+  }
+  if (aggregate.avgEnemyCasualties < 7) {
+    failures.push(`mid_reinforced_normal avgEnemyCasualties ${aggregate.avgEnemyCasualties.toFixed(2)} < 7`);
+  }
+  if (aggregate.minEnemyCasualties < 6) {
+    failures.push(`mid_reinforced_normal minEnemyCasualties ${aggregate.minEnemyCasualties} < 6`);
+  }
+  if (aggregate.defeatCount > 0) failures.push(`mid_reinforced_normal defeatCount ${aggregate.defeatCount} > 0`);
+  return failures;
 }
 
 function assertBalance(summary) {
@@ -220,6 +272,8 @@ function assertBalance(summary) {
 
   if (midMixed.successCount < 4) failures.push(`mid_mixed successCount ${midMixed.successCount} < 4`);
   if (midMixed.perfectCount > 2) failures.push(`mid_mixed perfectCount ${midMixed.perfectCount} > 2`);
+
+  failures.push(...assertMidReinforcedNormal(summary.scenarios.mid_reinforced_normal));
 
   for (const [id, entry] of Object.entries(summary.scenarios)) {
     if (!id.startsWith("mid_single_")) continue;
@@ -321,7 +375,7 @@ async function runScenario(page, scenario, seed) {
           phase: "warning",
           timer: 0,
           wave: seed,
-          activeCount: sim.raidEnemyCount(),
+          activeCount: scenario.fixedEnemyCount ?? sim.raidEnemyCount(),
           approachAngle: Math.random() * Math.PI * 2,
           signalTimer: 0,
           breachTimer: 0,
@@ -336,11 +390,23 @@ async function runScenario(page, scenario, seed) {
         const startWounded = sim.colony.woundedAnts;
         const startFallen = sim.colony.fallenAnts;
         const startNestDurability = sim.colony.nestDurability;
-        if (scenario.sortie) sim.startSoldierSortie();
+        const startSoldierPool = sim.sortieSoldierPool();
+        let sortieWavesStarted = 0;
+        if (scenario.sortie && sim.startSoldierSortie("defense")) sortieWavesStarted = 1;
+        let peakDeployedSoldiers = sim.deployedSoldierCount();
 
         let elapsed = 0;
         const maxSteps = Math.ceil(maxSeconds / stepDt);
         for (let step = 0; step < maxSteps; step += 1) {
+          if (
+            scenario.sortie &&
+            sortieWavesStarted < Math.max(1, Math.floor(scenario.sortieWaves ?? 1)) &&
+            sim.soldierSortieCooldown <= 0 &&
+            sim.startSoldierSortie("defense")
+          ) {
+            sortieWavesStarted += 1;
+          }
+          peakDeployedSoldiers = Math.max(peakDeployedSoldiers, sim.deployedSoldierCount());
           sim.updateGame(stepDt);
           elapsed += stepDt;
           if (sim.colony.raidState.phase === "recovering") break;
@@ -348,6 +414,7 @@ async function runScenario(page, scenario, seed) {
 
         const finalRaid = sim.ensureRaidState();
         const deaths = Math.max(0, Math.floor((sim.colony.fallenAnts ?? 0) - startFallen));
+        const sortieDeaths = Math.max(0, Math.floor(startSoldierPool - sim.sortieSoldierPool()));
         const woundedDelta = Math.max(0, Math.floor((sim.colony.woundedAnts ?? 0) - startWounded));
         const foodLoss = Math.max(loggedFoodLoss, Math.max(0, startFood - sim.colony.food));
         const enemyCasualties = Math.floor(finalRaid.enemyCasualties ?? 0);
@@ -362,6 +429,7 @@ async function runScenario(page, scenario, seed) {
           success: raidOutcome === "repelled" || raidOutcome === "held",
           activeCount,
           deaths,
+          sortieDeaths,
           enemyCasualties,
           foodLoss,
           woundedDelta,
@@ -371,6 +439,8 @@ async function runScenario(page, scenario, seed) {
           defeated: sim.colony.gameStatus === "defeat",
           harmScore: Number(harmScore.toFixed(3)),
           deployedSoldiers: sim.deployedSoldierCount(),
+          peakDeployedSoldiers,
+          sortieWavesStarted,
           remainingRivals: sim.raidRivals().length,
         };
       },
@@ -394,8 +464,12 @@ try {
   await page.goto(`${targetUrl}?raidSoon=1`);
   await waitForSimulation(page);
   await delay(160);
+  const selectedScenarios = SCENARIO_FILTER
+    ? SCENARIOS.filter((scenario) => scenario.id === SCENARIO_FILTER)
+    : SCENARIOS;
+  if (selectedScenarios.length === 0) throw new Error(`Unknown balance scenario: ${SCENARIO_FILTER}`);
   const results = {};
-  for (const scenario of SCENARIOS) {
+  for (const scenario of selectedScenarios) {
     const runs = [];
     for (const seed of SEEDS) {
       runs.push(await runScenario(page, scenario, seed));
@@ -412,7 +486,9 @@ try {
     harmScoreFormula: "deaths + woundedDelta * 0.25 + foodLoss / 15 + breachEvents * 0.75",
     scenarios: results,
   };
-  const failures = assertBalance(summary);
+  const failures = SCENARIO_FILTER === "mid_reinforced_normal"
+    ? assertMidReinforcedNormal(summary.scenarios.mid_reinforced_normal)
+    : assertBalance(summary);
   summary.failures = failures;
   writeFileSync(SUMMARY_PATH, JSON.stringify(summary, null, 2));
   console.log(JSON.stringify({ summaryPath: SUMMARY_PATH, failures, scenarios: Object.fromEntries(Object.entries(results).map(([id, entry]) => [id, entry.aggregate])) }, null, 2));
