@@ -4506,8 +4506,7 @@ class AntColony3D {
       nestRim: new THREE.TorusGeometry(1, 0.11, 8, 36),
       soilPebble: new THREE.DodecahedronGeometry(1, 0),
       earthworkVoxel: new THREE.BoxGeometry(1, 1, 1),
-      terrainBump: new THREE.SphereGeometry(1, 12, 8),
-      stoneRock: new THREE.DodecahedronGeometry(1, 0),
+      stoneRock: new THREE.DodecahedronGeometry(1, 1),
       detailPlane: new THREE.PlaneGeometry(1, 1),
     };
 
@@ -4546,12 +4545,12 @@ class AntColony3D {
       foodFruit: new THREE.MeshStandardMaterial({ color: 0xc45b33, roughness: 0.7 }),
       foodSeed: new THREE.MeshStandardMaterial({ color: 0xb28c45, roughness: 0.72 }),
       foodLeaf: new THREE.MeshStandardMaterial({ color: 0x6f8d38, roughness: 0.8 }),
-      stone: new THREE.MeshStandardMaterial({ color: 0x9ea49d, map: this.assetService.get("stoneTexture"), roughness: 0.88 }),
-      stoneSurface: naturalSurface({
-        color: 0x9da49b,
+      stone: new THREE.MeshStandardMaterial({
+        color: 0xd8d2c7,
         map: this.assetService.get("stoneTexture"),
-        opacity: 0.34,
-      }, { clipRadius: null, start: 0.68 }),
+        roughness: 0.94,
+        metalness: 0,
+      }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
       terrainMoss: naturalSurface({ color: 0x6c8f56, map: this.assetService.get("terrainMossTexture"), opacity: 0.2 }),
       terrainLeaf: naturalSurface({ color: 0x8a6b3b, map: this.assetService.get("terrainMossTexture"), opacity: 0.16 }),
@@ -4564,12 +4563,11 @@ class AntColony3D {
       terrainMicroGravel: naturalSurface({ color: 0xb7b0a1, map: this.assetService.get("microGravelTexture"), opacity: 0.26 }),
       terrainCrackedMud: naturalSurface({ color: 0xd1a866, map: this.assetService.get("crackedMudTexture"), opacity: 0.3 }),
       terrainWetEdge: naturalSurface({ color: 0x6f8f72, map: this.assetService.get("shorelineWetEdgeTexture"), opacity: 0.28 }, { start: 0.62 }),
-      terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
       grassTuft: new THREE.MeshStandardMaterial({
-        color: 0xc8d999,
+        color: 0xb8c99a,
         map: this.assetService.get("grassTuftTexture"),
         transparent: true,
-        alphaTest: 0.16,
+        alphaTest: 0.3,
         depthWrite: false,
         side: THREE.DoubleSide,
         roughness: 0.92,
@@ -4716,7 +4714,6 @@ class AntColony3D {
     ];
 
     for (const patch of patches) this.createTerrainPatch(patch);
-    this.seedTerrainBumps();
   }
 
   createTerrainPatch(patch) {
@@ -4755,45 +4752,6 @@ class AntColony3D {
     this.addWater(82, -36, 1, { permanent: true, radius: 20, rx: 28, rz: 20, rotation: 0.34, power: 0.48, ring: false });
     this.addWater(-200, 132, 1, { permanent: true, radius: 24, rx: 35, rz: 27, rotation: 0.16, power: 0.5, ring: false });
     this.addWater(-170, 48, 1, { permanent: true, radius: 22, rx: 34, rz: 27, rotation: -0.32, power: 0.46, ring: false });
-  }
-
-  seedTerrainBumps() {
-    const bumps = [
-      { x: -220, z: -122, rx: 4.6, rz: 1.8, h: 0.3, rotation: -0.3 },
-      { x: -138, z: -188, rx: 5.2, rz: 2.0, h: 0.34, rotation: 0.2 },
-      { x: -98, z: -68, rx: 6.0, rz: 2.4, h: 0.38, rotation: 0.54 },
-      { x: -214, z: 108, rx: 4.6, rz: 1.8, h: 0.3, rotation: -0.7 },
-      { x: -138, z: 146, rx: 4.2, rz: 1.8, h: 0.28, rotation: 0.58 },
-      { x: -42, z: 102, rx: 5.2, rz: 2.1, h: 0.34, rotation: -0.1 },
-      { x: 8, z: 138, rx: 6.6, rz: 2.4, h: 0.4, rotation: 0.28 },
-      { x: 74, z: 104, rx: 4.6, rz: 2.0, h: 0.34, rotation: -0.54 },
-      { x: 130, z: 74, rx: 4.0, rz: 1.8, h: 0.3, rotation: 0.72 },
-      { x: 210, z: 126, rx: 5.8, rz: 2.3, h: 0.4, rotation: -0.18 },
-      { x: 74, z: -142, rx: 5.0, rz: 2.0, h: 0.3, rotation: 0.66 },
-      { x: 150, z: -158, rx: 5.8, rz: 2.2, h: 0.36, rotation: -0.44 },
-      { x: 210, z: -48, rx: 4.6, rz: 1.8, h: 0.3, rotation: 0.36 },
-      { x: -34, z: -156, rx: 4.8, rz: 1.8, h: 0.32, rotation: -0.62 },
-      { x: 34, z: 24, rx: 5.2, rz: 2.0, h: 0.34, rotation: 0.42 },
-      { x: 118, z: 12, rx: 4.6, rz: 2.0, h: 0.3, rotation: -0.24 },
-      { x: 54, z: -26, rx: 4.4, rz: 1.7, h: 0.26, rotation: 0.48 },
-      { x: 190, z: -114, rx: 5.0, rz: 2.0, h: 0.32, rotation: -0.38 },
-      { x: 102, z: -38, rx: 4.8, rz: 1.9, h: 0.28, rotation: 0.82 },
-      { x: -92, z: 180, rx: 5.4, rz: 2.2, h: 0.34, rotation: -0.42 },
-      { x: 164, z: 176, rx: 5.2, rz: 2.2, h: 0.34, rotation: 0.18 },
-      { x: 232, z: 166, rx: 4.6, rz: 1.9, h: 0.28, rotation: -0.58 },
-    ];
-    for (const bump of bumps) this.addTerrainBump(bump);
-  }
-
-  addTerrainBump(bump) {
-    const mesh = new THREE.Mesh(this.geometries.terrainBump, this.materials.terrainRise);
-    mesh.position.set(bump.x, bump.h * 0.44, bump.z);
-    mesh.scale.set(bump.rx, bump.h, bump.rz);
-    mesh.rotation.set(0, bump.rotation, 0);
-    mesh.castShadow = this.quality.shadowQuality !== "off";
-    mesh.receiveShadow = this.quality.shadowQuality !== "off";
-    this.scene.add(mesh);
-    this.terrainBumps.push({ ...bump, mesh });
   }
 
   terrainSpeedAt(x, z) {
@@ -9306,8 +9264,8 @@ class AntColony3D {
       { x: 214, z: 144, rx: 48, rz: 30, count: 7, rotation: -0.36 },
       { x: -46, z: -104, rx: 58, rz: 30, count: 8, rotation: -0.42 },
     ], ({ x, z, rng }) => {
-      const scale = 4.2 + rng() * 4.8;
-      return { x, z, y: 0.075 + rng() * 0.02, rotationZ: rng() * Math.PI * 2, scaleX: scale * (0.8 + rng() * 0.45), scaleY: scale * (0.72 + rng() * 0.38), scaleZ: 1 };
+      const scale = 2.2 + rng() * 2.6;
+      return { x, z, y: 0.04 + rng() * 0.012, rotationZ: rng() * Math.PI * 2, scaleX: scale * (0.8 + rng() * 0.4), scaleY: scale * (0.72 + rng() * 0.34), scaleZ: 1 };
     });
     this.addInstancedNaturalDetail("grass", this.geometries.detailPlane, this.materials.grassTuft, grassPlacements);
     this.naturalDetailStats.grassClumps = grassPlacements.length;
@@ -10165,18 +10123,6 @@ class AntColony3D {
     stone.castShadow = this.quality.shadowQuality !== "off";
     stone.receiveShadow = this.quality.shadowQuality !== "off";
     group.add(stone);
-    const surfaceBlob = createIrregularBlobGeometry(`stone-surface-${config.x}-${config.z}-${config.radius}`, 32, {
-      roughness: 0.28,
-      minRadius: 0.68,
-      maxRadius: 1.26,
-      uvScale: 2.35,
-    });
-    const surface = new THREE.Mesh(surfaceBlob.geometry, this.materials.stoneSurface);
-    surface.name = "natural-stone-surface";
-    surface.rotation.set(-Math.PI / 2, 0, config.rotation);
-    surface.position.y = config.radius * (0.48 + config.scaleY * 0.62);
-    surface.scale.set(config.radius * (config.scaleX ?? 1) * 0.62, config.radius * (config.scaleZ ?? 1) * 0.52, 1);
-    group.add(surface);
     const pebbleCount = Math.max(0, Math.floor(config.pebbles ?? 0));
     for (let i = 0; i < pebbleCount; i += 1) {
       const angle = config.rotation + i * 2.16 + config.radius * 0.31;

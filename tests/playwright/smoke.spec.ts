@@ -33,7 +33,6 @@ test("renders the initial ant empire scene", async ({ page }) => {
     );
     const waterProfileSpreads = sim.water.map((water: any) => profileSpread(water.boundaryProfile));
     const stoneSurfaces = sim.stones.flatMap((stone: any) => stone.group?.children?.filter((child: any) => child.name === "natural-stone-surface") ?? []);
-    const stoneSurfaceProfileSpreads = stoneSurfaces.map((surface: any) => profileSpread(surface.geometry?.userData?.irregularProfile));
     const groundMesh = sim.scene.getObjectByName("procedural-soil-ground");
     const generatedMapTextureKeys = [
       "groundTexture",
@@ -258,7 +257,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       terrainUvDensityMaxRelativeSpread,
       minTerrainProfileSpread: Math.min(...terrainProfileSpreads),
       stoneMaterialUsesGeneratedTexture: sim.materials.stone.map === sim.assetService.get("stoneTexture"),
-      stoneSurfaceUsesGeneratedTexture: sim.materials.stoneSurface.map === sim.assetService.get("stoneTexture"),
+      stoneGeometryDetail: sim.geometries.stoneRock?.parameters?.detail ?? 0,
       waterMaterialUsesGeneratedTexture: sim.materials.water.map === sim.assetService.get("waterTexture"),
       waterCount: sim.water.length,
       permanentWaterCount: sim.water.filter((water: any) => water.permanent).length,
@@ -281,8 +280,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
       nestEntranceMaxHoleDiameter: Math.max(...(sim.nestEntrances ?? []).map((entrance: any) => (entrance.children?.[0]?.scale?.x ?? 0) * 2)),
       stoneCount: sim.stones.length,
       stoneMeshCount: sim.stones.reduce((count: number, stone: any) => count + (stone.group?.children?.filter((child: any) => child.type === "Mesh").length ?? 0), 0),
-      irregularStoneSurfaces: stoneSurfaces.filter((surface: any) => Boolean(surface.geometry?.userData?.naturalBlob)).length,
-      minStoneSurfaceProfileSpread: Math.min(...stoneSurfaceProfileSpreads),
+      stoneSurfaceCount: stoneSurfaces.length,
       naturalDetailObjects: sim.naturalDetails?.length ?? 0,
       naturalDetailStats: sim.naturalDetailStats ?? {},
       grassPlacementCount: clusteredSurfacePlacements.filter((placement: any) => placement.kind === "grass").length,
@@ -355,7 +353,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.outsideInitialCircleVisible).toBe(false);
   expect(metrics.outsideVisibilityChangedByCameraYaw).toBe(false);
   expect(metrics.terrainPatches).toBeGreaterThanOrEqual(16);
-  expect(metrics.terrainBumps).toBeGreaterThanOrEqual(20);
+  expect(metrics.terrainBumps).toBe(0);
   expect(metrics.groundTextureSource).toBe("generated-soil-texture");
   expect(metrics.generatedMapTextureCount).toBe(11);
   expect(metrics.generatedTerrainTextureWraps.every((texture) => texture.wrapS === THREE.MirroredRepeatWrapping)).toBe(true);
@@ -374,7 +372,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.terrainUvDensityMaxRelativeSpread).toBeLessThan(0.05);
   expect(metrics.minTerrainProfileSpread).toBeGreaterThan(0.12);
   expect(metrics.stoneMaterialUsesGeneratedTexture).toBe(true);
-  expect(metrics.stoneSurfaceUsesGeneratedTexture).toBe(true);
+  expect(metrics.stoneGeometryDetail).toBeGreaterThanOrEqual(1);
   expect(metrics.waterMaterialUsesGeneratedTexture).toBe(true);
   expect(metrics.waterCount).toBeGreaterThanOrEqual(4);
   expect(metrics.permanentWaterCount).toBeGreaterThanOrEqual(4);
@@ -395,8 +393,7 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.nestEntranceMaxHoleDiameter).toBeLessThan(0.7);
   expect(metrics.stoneCount).toBeGreaterThanOrEqual(34);
   expect(metrics.stoneMeshCount).toBeGreaterThan(metrics.stoneCount);
-  expect(metrics.irregularStoneSurfaces).toBeGreaterThanOrEqual(metrics.stoneCount);
-  expect(metrics.minStoneSurfaceProfileSpread).toBeGreaterThan(0.12);
+  expect(metrics.stoneSurfaceCount).toBe(0);
   expect(metrics.naturalDetailObjects).toBeGreaterThanOrEqual(20);
   expect(metrics.naturalDetailStats.grassClumps).toBeGreaterThanOrEqual(50);
   expect(metrics.naturalDetailStats.microPebbles).toBeGreaterThanOrEqual(200);

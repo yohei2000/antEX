@@ -287,7 +287,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
           raidTimer: sim?.colony?.raidState?.timer ?? null,
           rivalColor: sim?.materials?.antRival?.color?.getHexString?.() ?? null,
           terrainPatches: sim?.terrain?.length ?? null,
-          terrainBumps: sim?.terrainBumps?.length ?? null,
+          terrainBumps: sim?.terrainBumps?.length ?? 0,
           nestEntranceCount: sim?.nestEntrances?.length ?? sim?.nestHoles?.length ?? null,
           nestSpoilCount: sim?.nestSpoils?.length ?? null,
           stoneCount: sim?.stones?.length ?? null,
@@ -352,7 +352,7 @@ async function verifyViewport({ label, width, height }, targetUrl, outputDir) {
       metrics.raidTimer <= 0 ||
       metrics.rivalColor !== "8a4a2f" ||
       metrics.terrainPatches < 6 ||
-      metrics.terrainBumps < 8 ||
+      metrics.terrainBumps !== 0 ||
       metrics.nestEntranceCount < 4 ||
       metrics.nestSpoilCount < 24 ||
       metrics.stoneCount < 6 ||

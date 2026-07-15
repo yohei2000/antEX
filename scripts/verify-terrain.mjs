@@ -198,6 +198,7 @@ async function captureTerrain(browser, targetUrl, capture) {
     if (capture.fog === "normal" && !setup.fog.fogOfWarVisible) throw new Error("Normal-fog capture unexpectedly hid fog of war.");
     if (capture.fog === "hidden" && setup.fog.fogOfWarVisible) throw new Error("No-fog capture unexpectedly showed fog of war.");
     if (terrainCounts.patches <= 0 || terrainCounts.waterPools <= 0) throw new Error("Terrain scene counts are unexpectedly empty.");
+    if (terrainCounts.bumps !== 0) throw new Error(`Removed leaf-like terrain bumps returned: ${terrainCounts.bumps}`);
     if (consoleErrors.length > 0) throw new Error(`Browser console errors: ${JSON.stringify(consoleErrors)}`);
 
     return {
