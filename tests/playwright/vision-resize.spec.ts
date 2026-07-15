@@ -74,7 +74,8 @@ test("exploration edge drag resizes worker activity range without revealing fog"
       outsideVisibleAfterShrink,
       stored,
       fogRevealRadius: sim.fogOfWarMaterial.uniforms.revealRadius.value,
-      edgeScale: sim.visionEdge.scale.x,
+      edgeRadius: sim.visionEdge.material.uniforms.radius.value,
+      edgeLineWidth: sim.visionEdge.material.uniforms.lineWidth.value,
     };
   });
 
@@ -88,5 +89,6 @@ test("exploration edge drag resizes worker activity range without revealing fog"
   expect(result.outsideVisibleAfterShrink).toBe(false);
   expect(result.stored).toBeCloseTo(result.afterShrink, 1);
   expect(result.fogRevealRadius).toBeCloseTo(result.beforeFogRevealRadius, 1);
-  expect(result.edgeScale).toBeCloseTo(result.afterShrink, 1);
+  expect(result.edgeRadius).toBeCloseTo(result.afterShrink, 1);
+  expect(result.edgeLineWidth).toBeCloseTo(1.15, 2);
 });

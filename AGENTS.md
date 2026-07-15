@@ -94,6 +94,7 @@
 - Smoke eval: `npm run eval:smoke`
 - Save/load eval: `npm run eval:save`
 - Combat visual eval: `npm run verify:combat`
+- Terrain visual eval: `npm run verify:terrain`
 - Expedition defense eval: `npm run verify:expedition`
 - Foraging ecology eval: `npm run verify:foraging`
 - Balance eval: `npm run verify:balance`
@@ -114,6 +115,7 @@
 - `npm run test` が通る。
 - `npm run eval:smoke` が通る。
 - セーブ機能がある場合は `npm run eval:save` が通る。
+- 地形描画を変更した場合は `npm run verify:terrain` を実行し、固定条件のdesktop/mobile、fogあり、overview、water close-upのスクリーンショットを確認して、`verification/terrain-graphics/summary.json` に失敗がないことを確認する。
 - 戦闘描画や敵襲AIを変更した場合は `npm run verify:combat` を実行し、出力スクリーンショットを確認する。
 - 敵巣守備、敵巣攻撃、敵働きアリの戦闘力を変更した場合は `npm run verify:expedition` を実行し、`verification/expedition-defense/summary.json` の失敗がないことを確認する。
 - 餌場分布、働きアリの採餌導線、敵働きアリの生態・接敵を変更した場合は `npm run verify:foraging` を実行し、`verification/foraging-competition/summary.json` の失敗がないことを確認する。

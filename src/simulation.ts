@@ -564,8 +564,8 @@ function makeGroundTexture() {
   }
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
+  texture.wrapS = THREE.MirroredRepeatWrapping;
+  texture.wrapT = THREE.MirroredRepeatWrapping;
   texture.repeat.set(4, 4);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.flipY = false;
@@ -576,8 +576,8 @@ function configureGeneratedTexture(texture, { repeat = 1, anisotropy = 4 } = {})
   const repeatX = Array.isArray(repeat) ? repeat[0] : repeat;
   const repeatY = Array.isArray(repeat) ? repeat[1] : repeat;
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
+  texture.wrapS = THREE.MirroredRepeatWrapping;
+  texture.wrapT = THREE.MirroredRepeatWrapping;
   texture.repeat.set(repeatX, repeatY);
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
@@ -620,6 +620,53 @@ function seededRandom(seed) {
   };
 }
 
+function naturalTextureUvOptions(material, worldScaleX, worldScaleY, textureWorldSize, seedKey) {
+  const map = material?.map;
+  const rng = seededRandom(hashSeed(`natural-uv-${seedKey}`));
+  return {
+    worldScaleX,
+    worldScaleY,
+    textureWorldSize,
+    textureRepeatX: Math.max(0.001, map?.repeat?.x ?? 1),
+    textureRepeatY: Math.max(0.001, map?.repeat?.y ?? 1),
+    uvOffsetX: rng() * 2,
+    uvOffsetY: rng() * 2,
+  };
+}
+
+function enableNaturalEdgeFade(material, { start = 0.76, end = 1, clipRadius = null } = {}) {
+  if (!material) return material;
+  const fadeStart = clamp(start, 0, 0.98);
+  const fadeEnd = Math.max(fadeStart + 0.01, end);
+  const hasClip = Number.isFinite(clipRadius) && clipRadius > 0;
+  const clipStart = hasClip ? Math.max(0, clipRadius - 2.4) : 0;
+  const clipEnd = hasClip ? clipRadius : 0;
+  material.userData.naturalEdgeFade = { start: fadeStart, end: fadeEnd, clipRadius: hasClip ? clipRadius : null };
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>\nattribute float naturalEdge;\nvarying float vNaturalEdge;${hasClip ? "\nvarying vec3 vNaturalWorldPosition;" : ""}`,
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>\nvNaturalEdge = naturalEdge;${hasClip ? "\nvNaturalWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;" : ""}`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>\nvarying float vNaturalEdge;${hasClip ? "\nvarying vec3 vNaturalWorldPosition;" : ""}`,
+      )
+      .replace(
+        "#include <alphamap_fragment>",
+        `#include <alphamap_fragment>\ndiffuseColor.a *= 1.0 - smoothstep(${fadeStart.toFixed(4)}, ${fadeEnd.toFixed(4)}, vNaturalEdge);${hasClip ? `\ndiffuseColor.a *= 1.0 - smoothstep(${clipStart.toFixed(4)}, ${clipEnd.toFixed(4)}, length(vNaturalWorldPosition.xz));` : ""}`,
+      );
+  };
+  material.customProgramCacheKey = () => `natural-edge-${fadeStart.toFixed(3)}-${fadeEnd.toFixed(3)}-${hasClip ? clipRadius.toFixed(2) : "none"}`;
+  material.needsUpdate = true;
+  return material;
+}
+
 function makeIrregularBlobProfile(seedKey, segments = 48, { roughness = 0.18, minRadius = 0.76, maxRadius = 1.24 } = {}) {
   const rng = seededRandom(hashSeed(seedKey));
   const lobeA = 2 + Math.floor(rng() * 3);
@@ -658,9 +705,17 @@ function makeIrregularBlobProfile(seedKey, segments = 48, { roughness = 0.18, mi
 function createIrregularBlobGeometry(seedKey, segments = 48, options = {}) {
   const profile = makeIrregularBlobProfile(seedKey, segments, options);
   const uvScale = options.uvScale ?? 2.7;
+  const textureWorldSize = options.textureWorldSize ?? 0;
+  const worldScaleX = options.worldScaleX ?? 1;
+  const worldScaleY = options.worldScaleY ?? 1;
+  const textureRepeatX = Math.max(0.001, options.textureRepeatX ?? 1);
+  const textureRepeatY = Math.max(0.001, options.textureRepeatY ?? 1);
+  const uvOffsetX = options.uvOffsetX ?? 0.5;
+  const uvOffsetY = options.uvOffsetY ?? 0.5;
   const positions = [0, 0, 0];
   const normals = [0, 0, 1];
-  const uvs = [0.5, 0.5];
+  const uvs = [uvOffsetX, uvOffsetY];
+  const naturalEdges = [0];
   const indices = [];
   for (let i = 0; i < segments; i += 1) {
     const angle = (i / segments) * Math.PI * 2;
@@ -669,7 +724,15 @@ function createIrregularBlobGeometry(seedKey, segments = 48, options = {}) {
     const y = Math.sin(angle) * radius;
     positions.push(x, y, 0);
     normals.push(0, 0, 1);
-    uvs.push(0.5 + x / uvScale, 0.5 + y / uvScale);
+    if (textureWorldSize > 0) {
+      uvs.push(
+        uvOffsetX + (x * worldScaleX) / (textureWorldSize * textureRepeatX),
+        uvOffsetY + (y * worldScaleY) / (textureWorldSize * textureRepeatY),
+      );
+    } else {
+      uvs.push(0.5 + x / uvScale, 0.5 + y / uvScale);
+    }
+    naturalEdges.push(1);
     indices.push(0, i + 1, i === segments - 1 ? 1 : i + 2);
   }
   const geometry = new THREE.BufferGeometry();
@@ -677,11 +740,71 @@ function createIrregularBlobGeometry(seedKey, segments = 48, options = {}) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("naturalEdge", new THREE.Float32BufferAttribute(naturalEdges, 1));
   geometry.userData.naturalBlob = true;
   geometry.userData.irregularProfile = profile;
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return { geometry, profile };
+}
+
+function createIrregularRingGeometry(profile, options = {}) {
+  const segments = profile.length;
+  const innerScale = options.innerScale ?? 0.92;
+  const outerScale = options.outerScale ?? 1.08;
+  const worldScaleX = options.worldScaleX ?? 1;
+  const worldScaleY = options.worldScaleY ?? 1;
+  const textureWorldSize = Math.max(0.001, options.textureWorldSize ?? 18);
+  const textureRepeatX = Math.max(0.001, options.textureRepeatX ?? 1);
+  const textureRepeatY = Math.max(0.001, options.textureRepeatY ?? 1);
+  const uvOffsetX = options.uvOffsetX ?? 0.5;
+  const uvOffsetY = options.uvOffsetY ?? 0.5;
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const naturalEdges = [];
+  const indices = [];
+  const ringBands = [[innerScale, 1], [1, 0], [outerScale, 1]];
+  for (let i = 0; i < segments; i += 1) {
+    const angle = (i / segments) * Math.PI * 2;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const radius = profile[i];
+    for (const [scale, edge] of ringBands) {
+      const x = cos * radius * scale;
+      const y = sin * radius * scale;
+      positions.push(x, y, 0);
+      normals.push(0, 0, 1);
+      uvs.push(
+        uvOffsetX + (x * worldScaleX) / (textureWorldSize * textureRepeatX),
+        uvOffsetY + (y * worldScaleY) / (textureWorldSize * textureRepeatY),
+      );
+      naturalEdges.push(edge);
+    }
+    const next = (i + 1) % segments;
+    const inner = i * 3;
+    const middle = inner + 1;
+    const outer = inner + 2;
+    const nextInner = next * 3;
+    const nextMiddle = nextInner + 1;
+    const nextOuter = nextInner + 2;
+    indices.push(
+      inner, middle, nextMiddle,
+      inner, nextMiddle, nextInner,
+      middle, outer, nextOuter,
+      middle, nextOuter, nextMiddle,
+    );
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setIndex(indices);
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("naturalEdge", new THREE.Float32BufferAttribute(naturalEdges, 1));
+  geometry.userData.naturalShoreline = true;
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
 }
 
 function sampleIrregularProfile(profile, angle) {
@@ -825,7 +948,7 @@ class AssetService {
   preloadAssets() {
     const loader = new THREE.TextureLoader(this.manager);
     const loadTexture = (fileName, options) => configureGeneratedTexture(loader.load(`${GENERATED_TEXTURE_BASE_URL}${fileName}`), options);
-    this.cache.set("groundTexture", loadTexture(GENERATED_TEXTURE_ASSETS.soil, { repeat: 7, anisotropy: 8 }));
+    this.cache.set("groundTexture", loadTexture(GENERATED_TEXTURE_ASSETS.soil, { repeat: 12, anisotropy: 8 }));
     this.cache.set("terrainMossTexture", loadTexture(GENERATED_TEXTURE_ASSETS.moss, { repeat: 2.4, anisotropy: 6 }));
     this.cache.set("terrainSandTexture", loadTexture(GENERATED_TEXTURE_ASSETS.sand, { repeat: 2.8, anisotropy: 6 }));
     this.cache.set("terrainGravelTexture", loadTexture(GENERATED_TEXTURE_ASSETS.gravel, { repeat: 3.2, anisotropy: 6 }));
@@ -4277,7 +4400,7 @@ class AntColony3D {
     this.terrain = [];
     this.terrainBumps = [];
     this.naturalDetails = [];
-    this.naturalDetailStats = { grassClumps: 0, microPebbles: 0, wetEdgeDecals: 0, crackDecals: 0, mossDecals: 0, gravelDecals: 0 };
+    this.naturalDetailStats = { grassClumps: 0, microPebbles: 0, waterShorelines: 0, dampPatches: 0, crackDecals: 0, mossDecals: 0, gravelDecals: 0 };
     this.nestEntrances = [];
     this.nestSpoils = [];
     this.predators = [];
@@ -4388,11 +4511,23 @@ class AntColony3D {
       detailPlane: new THREE.PlaneGeometry(1, 1),
     };
 
+    const naturalSurface = (parameters, fadeOptions = {}) => enableNaturalEdgeFade(
+      new THREE.MeshStandardMaterial({
+        roughness: 0.98,
+        metalness: 0,
+        transparent: true,
+        depthWrite: false,
+        ...parameters,
+      }),
+      { clipRadius: this.worldRadius + 1, ...fadeOptions },
+    );
+
     this.materials = {
-      ground: new THREE.MeshBasicMaterial({
+      ground: new THREE.MeshStandardMaterial({
         map: this.assetService.get("groundTexture") ?? makeGroundTexture(),
         color: 0xffffff,
-        toneMapped: false,
+        roughness: 0.98,
+        metalness: 0,
       }),
       nest: new THREE.MeshStandardMaterial({ color: 0x6d4e2a, roughness: 0.95 }),
       nestLoose: new THREE.MeshStandardMaterial({ color: 0x8a6335, roughness: 0.96 }),
@@ -4412,48 +4547,56 @@ class AntColony3D {
       foodSeed: new THREE.MeshStandardMaterial({ color: 0xb28c45, roughness: 0.72 }),
       foodLeaf: new THREE.MeshStandardMaterial({ color: 0x6f8d38, roughness: 0.8 }),
       stone: new THREE.MeshStandardMaterial({ color: 0x9ea49d, map: this.assetService.get("stoneTexture"), roughness: 0.88 }),
-      stoneSurface: new THREE.MeshBasicMaterial({
-        color: 0xc7cbc3,
+      stoneSurface: naturalSurface({
+        color: 0x9da49b,
         map: this.assetService.get("stoneTexture"),
-        transparent: true,
-        opacity: 0.62,
-        depthWrite: false,
-        toneMapped: false,
-      }),
+        opacity: 0.34,
+      }, { clipRadius: null, start: 0.68 }),
       branch: new THREE.MeshStandardMaterial({ color: 0x8a6232, roughness: 0.9 }),
-      terrainMoss: new THREE.MeshBasicMaterial({ color: 0x6c8f56, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
-      terrainLeaf: new THREE.MeshBasicMaterial({ color: 0x8a6b3b, map: this.assetService.get("terrainMossTexture"), transparent: true, opacity: 0.14, depthWrite: false }),
-      terrainSand: new THREE.MeshBasicMaterial({ color: 0xf3ce84, map: this.assetService.get("terrainSandTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
-      terrainDamp: new THREE.MeshBasicMaterial({ color: 0x4f7662, map: this.assetService.get("mossWetlandTexture"), transparent: true, opacity: 0.2, depthWrite: false }),
-      terrainGravel: new THREE.MeshBasicMaterial({ color: 0xb0aaa0, map: this.assetService.get("microGravelTexture") ?? this.assetService.get("terrainGravelTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
-      terrainDryClay: new THREE.MeshBasicMaterial({ color: 0xc68e55, map: this.assetService.get("groundTexture"), transparent: true, opacity: 0.18, depthWrite: false }),
-      terrainEnemySoil: new THREE.MeshBasicMaterial({ color: 0x9b5236, map: this.assetService.get("groundTexture"), transparent: true, opacity: 0.22, depthWrite: false }),
-      terrainMossWetland: new THREE.MeshBasicMaterial({ color: 0x607447, map: this.assetService.get("mossWetlandTexture"), transparent: true, opacity: 0.22, depthWrite: false, toneMapped: false }),
-      terrainMicroGravel: new THREE.MeshBasicMaterial({ color: 0xb7b0a1, map: this.assetService.get("microGravelTexture"), transparent: true, opacity: 0.24, depthWrite: false, toneMapped: false }),
-      terrainCrackedMud: new THREE.MeshBasicMaterial({ color: 0xd1a866, map: this.assetService.get("crackedMudTexture"), transparent: true, opacity: 0.28, depthWrite: false, toneMapped: false }),
-      terrainWetEdge: new THREE.MeshBasicMaterial({ color: 0x6f8f72, map: this.assetService.get("shorelineWetEdgeTexture"), transparent: true, opacity: 0.24, depthWrite: false, toneMapped: false }),
+      terrainMoss: naturalSurface({ color: 0x6c8f56, map: this.assetService.get("terrainMossTexture"), opacity: 0.2 }),
+      terrainLeaf: naturalSurface({ color: 0x8a6b3b, map: this.assetService.get("terrainMossTexture"), opacity: 0.16 }),
+      terrainSand: naturalSurface({ color: 0xf3ce84, map: this.assetService.get("terrainSandTexture"), opacity: 0.2 }),
+      terrainDamp: naturalSurface({ color: 0x4f7662, map: this.assetService.get("mossWetlandTexture"), opacity: 0.22 }),
+      terrainGravel: naturalSurface({ color: 0xb0aaa0, map: this.assetService.get("microGravelTexture") ?? this.assetService.get("terrainGravelTexture"), opacity: 0.2 }),
+      terrainDryClay: naturalSurface({ color: 0xc68e55, map: this.assetService.get("groundTexture"), opacity: 0.2 }),
+      terrainEnemySoil: naturalSurface({ color: 0x9b5236, map: this.assetService.get("groundTexture"), opacity: 0.24 }),
+      terrainMossWetland: naturalSurface({ color: 0x607447, map: this.assetService.get("mossWetlandTexture"), opacity: 0.24 }),
+      terrainMicroGravel: naturalSurface({ color: 0xb7b0a1, map: this.assetService.get("microGravelTexture"), opacity: 0.26 }),
+      terrainCrackedMud: naturalSurface({ color: 0xd1a866, map: this.assetService.get("crackedMudTexture"), opacity: 0.3 }),
+      terrainWetEdge: naturalSurface({ color: 0x6f8f72, map: this.assetService.get("shorelineWetEdgeTexture"), opacity: 0.28 }, { start: 0.62 }),
       terrainRise: new THREE.MeshStandardMaterial({ color: 0x9a7440, roughness: 0.96 }),
-      grassTuft: new THREE.MeshBasicMaterial({
-        color: 0xd8e8a8,
+      grassTuft: new THREE.MeshStandardMaterial({
+        color: 0xc8d999,
         map: this.assetService.get("grassTuftTexture"),
         transparent: true,
-        alphaTest: 0.06,
+        alphaTest: 0.16,
         depthWrite: false,
         side: THREE.DoubleSide,
-        toneMapped: false,
+        roughness: 0.92,
+        metalness: 0,
       }),
       microPebble: new THREE.MeshStandardMaterial({ color: 0x6f6a62, roughness: 0.96 }),
       palePebble: new THREE.MeshStandardMaterial({ color: 0xc2b58f, roughness: 0.9 }),
       wetPebble: new THREE.MeshStandardMaterial({ color: 0x4a5651, roughness: 0.78 }),
       predatorBody: new THREE.MeshStandardMaterial({ color: 0x2b211c, roughness: 0.78 }),
       predatorAccent: new THREE.MeshBasicMaterial({ color: 0xb44a36, transparent: true, opacity: 0.58 }),
-      water: new THREE.MeshBasicMaterial({
+      water: new THREE.MeshStandardMaterial({
         color: 0x4aa6b7,
         map: this.assetService.get("waterTexture"),
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.78,
         depthWrite: false,
-        toneMapped: false,
+        roughness: 0.38,
+        metalness: 0,
+      }),
+      waterShore: new THREE.MeshStandardMaterial({
+        color: 0x6f8f72,
+        map: this.assetService.get("shorelineWetEdgeTexture"),
+        transparent: true,
+        opacity: 0.48,
+        depthWrite: false,
+        roughness: 0.94,
+        metalness: 0,
       }),
       waterRing: new THREE.MeshBasicMaterial({ color: 0x9ce7ff, transparent: true, opacity: 0.48 }),
       impact: new THREE.MeshBasicMaterial({ color: 0xe47f63, transparent: true, opacity: 0.42 }),
@@ -4577,17 +4720,19 @@ class AntColony3D {
   }
 
   createTerrainPatch(patch) {
-    const blob = createIrregularBlobGeometry(`terrain-${patch.kind}-${patch.x}-${patch.z}`, 72, {
+    const seedKey = `terrain-${patch.kind}-${patch.x}-${patch.z}`;
+    const blob = createIrregularBlobGeometry(seedKey, 72, {
       roughness: 0.23,
       minRadius: 0.72,
       maxRadius: 1.28,
-      uvScale: 2.65,
+      ...naturalTextureUvOptions(patch.material, patch.rx, patch.rz, 28, seedKey),
     });
     const mesh = new THREE.Mesh(blob.geometry, patch.material);
     mesh.name = `natural-terrain-${patch.kind}`;
     mesh.rotation.set(-Math.PI / 2, 0, patch.rotation);
     mesh.position.set(patch.x, 0.004, patch.z);
     mesh.scale.set(patch.rx, patch.rz, 1);
+    mesh.receiveShadow = this.quality.shadowQuality !== "off";
     this.scene.add(mesh);
     this.sharedGeometries.add(mesh.geometry);
     this.terrain.push({
@@ -5740,13 +5885,44 @@ class AntColony3D {
     this.fogOfWar = mesh;
     this.fogOfWarMaterial = material;
 
-    const edgeMaterial = new THREE.MeshBasicMaterial({ color: 0x79c9b5, transparent: true, opacity: 0.18, depthWrite: false });
-    const edge = new THREE.Mesh(this.geometries.impactRing, edgeMaterial);
+    const edgeGeometry = new THREE.CircleGeometry(this.worldRadius + 26, 192);
+    const edgeMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        radius: { value: this.mapVisionRadius() },
+        lineWidth: { value: 1.15 },
+        opacity: { value: 0.18 },
+        color: { value: new THREE.Color(0x79c9b5) },
+      },
+      vertexShader: `
+        varying vec2 vVisionLocal;
+        void main() {
+          vVisionLocal = position.xy;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vVisionLocal;
+        uniform float radius;
+        uniform float lineWidth;
+        uniform float opacity;
+        uniform vec3 color;
+        void main() {
+          float delta = abs(length(vVisionLocal) - radius);
+          float alpha = (1.0 - smoothstep(lineWidth * 0.35, lineWidth, delta)) * opacity;
+          if (alpha < 0.002) discard;
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+    });
+    const edge = new THREE.Mesh(edgeGeometry, edgeMaterial);
     edge.name = "vision-edge";
-    edge.rotation.x = Math.PI / 2;
+    edge.rotation.x = -Math.PI / 2;
     edge.position.set(this.nest.x, 0.46, this.nest.z);
     edge.renderOrder = MAP_FOG_RENDER_ORDER + 1;
     this.scene.add(edge);
+    this.sharedGeometries.add(edgeGeometry);
     this.sharedMaterials.add(edgeMaterial);
     this.visionEdge = edge;
   }
@@ -6003,11 +6179,11 @@ class AntColony3D {
     if (this.visionEdge) {
       const radius = this.mapVisionRadiusValue || this.mapVisionRadius();
       this.visionEdge.position.set(this.nest.x, 0.46, this.nest.z);
-      this.visionEdge.scale.setScalar(radius);
       this.visionEdge.visible = radius < this.worldRadius + 12;
-      if (this.visionEdge.material) {
+      if (this.visionEdge.material?.uniforms) {
         const isDraggingVisionEdge = this.pointerStart?.mode === "vision-resize";
-        this.visionEdge.material.opacity = isDraggingVisionEdge ? 0.36 : this.manualMapVisionRadius == null ? 0.18 : 0.26;
+        this.visionEdge.material.uniforms.radius.value = radius;
+        this.visionEdge.material.uniforms.opacity.value = isDraggingVisionEdge ? 0.36 : this.manualMapVisionRadius == null ? 0.18 : 0.26;
       }
     }
     this.updateObservedObjectVisibility();
@@ -6602,7 +6778,7 @@ class AntColony3D {
     this.earthworks = [];
     this.combatEffects = [];
     this.naturalDetails = [];
-    this.naturalDetailStats = { grassClumps: 0, microPebbles: 0, wetEdgeDecals: 0, crackDecals: 0, mossDecals: 0, gravelDecals: 0 };
+    this.naturalDetailStats = { grassClumps: 0, microPebbles: 0, waterShorelines: 0, dampPatches: 0, crackDecals: 0, mossDecals: 0, gravelDecals: 0 };
     this.predators = [];
     this.rivalCorpses = [];
     this.colonyCorpses = [];
@@ -9025,11 +9201,12 @@ class AntColony3D {
   }
 
   addGroundDetailDecal(config) {
-    const blob = createIrregularBlobGeometry(`detail-${config.kind}-${config.x}-${config.z}-${config.rx}-${config.rz}`, config.segments ?? 48, {
+    const seedKey = `detail-${config.kind}-${config.x}-${config.z}-${config.rx}-${config.rz}`;
+    const blob = createIrregularBlobGeometry(seedKey, config.segments ?? 48, {
       roughness: config.roughness ?? 0.26,
       minRadius: config.minRadius ?? 0.64,
       maxRadius: config.maxRadius ?? 1.32,
-      uvScale: config.uvScale ?? 2.45,
+      ...naturalTextureUvOptions(config.material, config.rx, config.rz, config.textureWorldSize ?? 22, seedKey),
     });
     const mesh = new THREE.Mesh(blob.geometry, config.material);
     mesh.name = `natural-detail-${config.kind}`;
@@ -9037,6 +9214,7 @@ class AntColony3D {
     mesh.position.set(config.x, config.y ?? 0.012, config.z);
     mesh.scale.set(config.rx, config.rz, 1);
     mesh.renderOrder = config.renderOrder ?? 3;
+    mesh.receiveShadow = this.quality.shadowQuality !== "off";
     this.scene.add(mesh);
     this.dynamicObjects.add(mesh);
     this.naturalDetails.push({ kind: config.kind, mesh });
@@ -9079,6 +9257,7 @@ class AntColony3D {
         const x = cluster.x + localX * cos - localZ * sin;
         const z = cluster.z + localX * sin + localZ * cos;
         if (Math.hypot(x, z) > this.worldRadius - 8) continue;
+        if (this.waterDistanceAt(x, z, 1.5) < 1) continue;
         placements.push(mapper({ x, z, rng, cluster, index: i }));
       }
     }
@@ -9086,15 +9265,11 @@ class AntColony3D {
   }
 
   seedReferenceNaturalDetails() {
-    const wetEdges = [
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 118, z: -78, rx: 108, rz: 78, rotation: -0.24, material: this.materials.terrainWetEdge, y: 0.018, renderOrder: 6 },
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 86, z: -34, rx: 42, rz: 30, rotation: 0.34, material: this.materials.terrainWetEdge, y: 0.019, renderOrder: 6 },
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -200, z: 132, rx: 48, rz: 35, rotation: 0.12, material: this.materials.terrainWetEdge, y: 0.019, renderOrder: 6 },
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -170, z: 50, rx: 46, rz: 34, rotation: -0.28, material: this.materials.terrainWetEdge, y: 0.019, renderOrder: 6 },
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -238, z: -42, rx: 34, rz: 22, rotation: -0.48, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: -92, z: 92, rx: 36, rz: 24, rotation: 0.42, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 18, z: -16, rx: 42, rz: 26, rotation: -0.16, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
-      { kind: "wetEdge", statsKey: "wetEdgeDecals", x: 204, z: 64, rx: 36, rz: 23, rotation: 0.58, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+    const dampPatches = [
+      { kind: "dampPocket", statsKey: "dampPatches", x: -238, z: -42, rx: 34, rz: 22, rotation: -0.48, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+      { kind: "dampPocket", statsKey: "dampPatches", x: -92, z: 92, rx: 36, rz: 24, rotation: 0.42, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+      { kind: "dampPocket", statsKey: "dampPatches", x: 18, z: -16, rx: 42, rz: 26, rotation: -0.16, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
+      { kind: "dampPocket", statsKey: "dampPatches", x: 204, z: 64, rx: 36, rz: 23, rotation: 0.58, material: this.materials.terrainWetEdge, y: 0.016, renderOrder: 6 },
     ];
     const mossDecals = [
       { kind: "mossMat", statsKey: "mossDecals", x: -150, z: -76, rx: 76, rz: 48, rotation: -0.2, material: this.materials.terrainMossWetland, y: 0.014 },
@@ -9119,7 +9294,7 @@ class AntColony3D {
       { kind: "gravelFan", statsKey: "gravelDecals", x: 168, z: -116, rx: 74, rz: 36, rotation: -0.28, material: this.materials.terrainMicroGravel, y: 0.015 },
       { kind: "gravelFan", statsKey: "gravelDecals", x: -224, z: 82, rx: 44, rz: 28, rotation: 0.52, material: this.materials.terrainMicroGravel, y: 0.015 },
     ];
-    for (const decal of [...wetEdges, ...mossDecals, ...crackDecals, ...gravelDecals]) this.addGroundDetailDecal(decal);
+    for (const decal of [...dampPatches, ...mossDecals, ...crackDecals, ...gravelDecals]) this.addGroundDetailDecal(decal);
 
     const grassPlacements = this.scatterClusteredPlacements("reference-grass-clumps", [
       { x: -226, z: -56, rx: 34, rz: 26, count: 8, rotation: -0.4 },
@@ -9920,18 +10095,36 @@ class AntColony3D {
     const rz = options.rz ?? radius * 0.82;
     const group = new THREE.Group();
     const rotation = options.rotation ?? 0;
-    const blob = createIrregularBlobGeometry(options.seed ?? `water-${Math.round(x * 10)}-${Math.round(z * 10)}-${Math.round(radius * 10)}`, 96, {
+    const seedKey = options.seed ?? `water-${Math.round(x * 10)}-${Math.round(z * 10)}-${Math.round(radius * 10)}`;
+    const blob = createIrregularBlobGeometry(seedKey, 96, {
       roughness: options.permanent ? 0.24 : 0.18,
       minRadius: 0.7,
       maxRadius: 1.3,
-      uvScale: 2.75,
+      ...naturalTextureUvOptions(this.materials.water, rx, rz, 20, seedKey),
     });
-    const pool = new THREE.Mesh(blob.geometry, this.materials.water.clone());
+    const poolMaterial = enableNaturalEdgeFade(this.materials.water.clone(), { start: 0.84 });
+    const pool = new THREE.Mesh(blob.geometry, poolMaterial);
     pool.name = "natural-water-pool";
     pool.rotation.x = -Math.PI / 2;
     pool.scale.set(rx, rz, 1);
-    pool.position.y = 0.035;
+    pool.position.y = 0.04;
+    pool.renderOrder = 8;
     group.add(pool);
+    const shoreUvOptions = naturalTextureUvOptions(this.materials.waterShore, rx, rz, 18, `${seedKey}-shore`);
+    const shorelineGeometry = createIrregularRingGeometry(blob.profile, {
+      innerScale: 0.9,
+      outerScale: 1.1,
+      ...shoreUvOptions,
+    });
+    const shorelineMaterial = enableNaturalEdgeFade(this.materials.waterShore.clone(), { start: 0.08 });
+    const shoreline = new THREE.Mesh(shorelineGeometry, shorelineMaterial);
+    shoreline.name = "natural-water-shoreline";
+    shoreline.rotation.x = -Math.PI / 2;
+    shoreline.scale.set(rx, rz, 1);
+    shoreline.position.y = 0.024;
+    shoreline.renderOrder = 7;
+    group.add(shoreline);
+    this.naturalDetailStats.waterShorelines += 1;
     let ring = null;
     if (options.ring !== false) {
       ring = new THREE.Mesh(this.geometries.impactRing, this.materials.waterRing.clone());
@@ -9958,6 +10151,7 @@ class AntColony3D {
       age: 0,
       group,
       ring,
+      shoreline,
       permanent: Boolean(options.permanent),
     });
   }
@@ -9981,7 +10175,7 @@ class AntColony3D {
     surface.name = "natural-stone-surface";
     surface.rotation.set(-Math.PI / 2, 0, config.rotation);
     surface.position.y = config.radius * (0.48 + config.scaleY * 0.62);
-    surface.scale.set(config.radius * (config.scaleX ?? 0.9), config.radius * (config.scaleZ ?? 0.72), 1);
+    surface.scale.set(config.radius * (config.scaleX ?? 1) * 0.62, config.radius * (config.scaleZ ?? 1) * 0.52, 1);
     group.add(surface);
     const pebbleCount = Math.max(0, Math.floor(config.pebbles ?? 0));
     for (let i = 0; i < pebbleCount; i += 1) {

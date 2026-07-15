@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import * as THREE from "three";
 
 async function waitForSimulation(page, path = "/") {
   await page.goto(path);
@@ -27,9 +28,94 @@ test("renders the initial ant empire scene", async ({ page }) => {
     const profileSpread = (profile: number[] = []) => (profile.length ? Math.max(...profile) - Math.min(...profile) : 0);
     const terrainProfileSpreads = sim.terrain.map((patch: any) => profileSpread(patch.boundaryProfile));
     const waterPools = sim.water.map((water: any) => water.group?.children?.find((child: any) => child.name === "natural-water-pool"));
+    const waterShorelines = sim.water.map((water: any) =>
+      water.group?.children?.filter((child: any) => child.name === "natural-water-shoreline") ?? [],
+    );
     const waterProfileSpreads = sim.water.map((water: any) => profileSpread(water.boundaryProfile));
     const stoneSurfaces = sim.stones.flatMap((stone: any) => stone.group?.children?.filter((child: any) => child.name === "natural-stone-surface") ?? []);
     const stoneSurfaceProfileSpreads = stoneSurfaces.map((surface: any) => profileSpread(surface.geometry?.userData?.irregularProfile));
+    const groundMesh = sim.scene.getObjectByName("procedural-soil-ground");
+    const generatedMapTextureKeys = [
+      "groundTexture",
+      "terrainMossTexture",
+      "terrainSandTexture",
+      "terrainGravelTexture",
+      "stoneTexture",
+      "waterTexture",
+      "grassTuftTexture",
+      "mossWetlandTexture",
+      "microGravelTexture",
+      "crackedMudTexture",
+      "shorelineWetEdgeTexture",
+    ];
+    const generatedTerrainTextureKeys = generatedMapTextureKeys.filter((key) => key !== "grassTuftTexture");
+    const generatedTerrainTextureWraps = generatedTerrainTextureKeys.map((key) => {
+      const texture = sim.assetService.get(key);
+      return { key, wrapS: texture?.wrapS ?? -1, wrapT: texture?.wrapT ?? -1 };
+    });
+    const terrainBlobCount = sim.terrain.filter((patch: any) => patch.mesh?.geometry?.userData?.naturalBlob).length;
+    const terrainBlobNaturalEdgeCount = sim.terrain.filter((patch: any) =>
+      Boolean(patch.mesh?.geometry?.userData?.naturalBlob && patch.mesh?.geometry?.getAttribute?.("naturalEdge")),
+    ).length;
+    const detailBlobMeshes = (sim.naturalDetails ?? [])
+      .map((detail: any) => detail.mesh)
+      .filter((mesh: any) => mesh?.geometry?.userData?.naturalBlob);
+    const detailBlobNaturalEdgeCount = detailBlobMeshes.filter((mesh: any) =>
+      Boolean(mesh.geometry?.getAttribute?.("naturalEdge")),
+    ).length;
+    const clusteredSurfacePlacements = (sim.naturalDetails ?? [])
+      .filter((detail: any) => detail.kind === "grass" || detail.kind === "microPebble")
+      .flatMap((detail: any) => {
+        const mesh = detail.mesh;
+        const matrixValues = mesh?.instanceMatrix?.array;
+        if (!matrixValues) return [];
+        return Array.from({ length: mesh.count }, (_, index) => ({
+          kind: detail.kind,
+          x: matrixValues[index * 16 + 12],
+          z: matrixValues[index * 16 + 14],
+        }));
+      });
+    const waterShorelineProfilesMatch = sim.water.every((water: any, waterIndex: number) => {
+      const shorelines = waterShorelines[waterIndex];
+      if (shorelines.length !== 1) return false;
+      const shoreline = shorelines[0];
+      if (!shoreline.geometry?.userData?.naturalShoreline) return false;
+      const positions = shoreline.geometry?.getAttribute?.("position");
+      const profile = water.boundaryProfile ?? [];
+      if (!positions || positions.count !== profile.length * 3) return false;
+      return profile.every((radius: number, index: number) => {
+        const middleBandIndex = index * 3 + 1;
+        return Math.abs(Math.hypot(positions.getX(middleBandIndex), positions.getY(middleBandIndex)) - radius) < 0.00001;
+      });
+    });
+    const terrainUvDensitySamples = sim.terrain.map((patch: any) => {
+      const positions = patch.mesh?.geometry?.getAttribute?.("position");
+      const uvs = patch.mesh?.geometry?.getAttribute?.("uv");
+      if (!positions || !uvs) return null;
+      const xs = Array.from({ length: positions.count }, (_, index) => positions.getX(index));
+      const ys = Array.from({ length: positions.count }, (_, index) => positions.getY(index));
+      const us = Array.from({ length: uvs.count }, (_, index) => uvs.getX(index));
+      const vs = Array.from({ length: uvs.count }, (_, index) => uvs.getY(index));
+      const worldWidth = (Math.max(...xs) - Math.min(...xs)) * Math.abs(patch.mesh.scale.x);
+      const worldHeight = (Math.max(...ys) - Math.min(...ys)) * Math.abs(patch.mesh.scale.y);
+      return {
+        material: patch.mesh.material.uuid,
+        size: Math.max(worldWidth, worldHeight),
+        uPerWorldUnit: (Math.max(...us) - Math.min(...us)) / worldWidth,
+        vPerWorldUnit: (Math.max(...vs) - Math.min(...vs)) / worldHeight,
+      };
+    }).filter(Boolean) as Array<{ material: string; size: number; uPerWorldUnit: number; vPerWorldUnit: number }>;
+    const uvDensityGroups = Object.values(terrainUvDensitySamples.reduce((groups: Record<string, typeof terrainUvDensitySamples>, sample) => {
+      (groups[sample.material] ??= []).push(sample);
+      return groups;
+    }, {})).filter((samples) => samples.length >= 2 && Math.max(...samples.map((sample) => sample.size)) / Math.min(...samples.map((sample) => sample.size)) >= 1.2);
+    const terrainUvDensityMaxRelativeSpread = Math.max(0, ...uvDensityGroups.flatMap((samples) => {
+      const relativeSpread = (values: number[]) => (Math.max(...values) - Math.min(...values)) / Math.max(...values);
+      return [
+        relativeSpread(samples.map((sample) => sample.uPerWorldUnit)),
+        relativeSpread(samples.map((sample) => sample.vPerWorldUnit)),
+      ];
+    }));
     const rivalWorkers = typeof sim.rivalNestWorkers === "function"
       ? sim.rivalNestWorkers()
       : sim.rivalAnts.filter((rival: any) => rival.isRivalWorker);
@@ -155,26 +241,21 @@ test("renders the initial ant empire scene", async ({ page }) => {
       terrainPatches: sim.terrain.length,
       terrainBumps: sim.terrainBumps?.length ?? 0,
       groundTextureSource: sim.groundTextureSource ?? "",
-      generatedMapTextureCount: [
-        "groundTexture",
-        "terrainMossTexture",
-        "terrainSandTexture",
-        "terrainGravelTexture",
-        "stoneTexture",
-        "waterTexture",
-        "grassTuftTexture",
-        "mossWetlandTexture",
-        "microGravelTexture",
-        "crackedMudTexture",
-        "shorelineWetEdgeTexture",
-      ].filter((key) =>
-        Boolean(sim.assetService.get(key)),
-      ).length,
+      generatedMapTextureCount: generatedMapTextureKeys.filter((key) => Boolean(sim.assetService.get(key))).length,
+      generatedTerrainTextureWraps,
       groundMaterialUsesGeneratedTexture: sim.materials.ground.map === sim.assetService.get("groundTexture"),
+      groundMaterialIsStandard: Boolean(sim.materials.ground?.isMeshStandardMaterial),
+      groundReceivesShadow: Boolean(groundMesh?.receiveShadow),
       groundTextureRepeatX: sim.materials.ground.map?.repeat?.x ?? 0,
       groundTextureFlipY: sim.materials.ground.map?.flipY ?? true,
       texturedTerrainPatches: sim.terrain.filter((patch: any) => Boolean(patch.mesh?.material?.map)).length,
       irregularTerrainPatches: sim.terrain.filter((patch: any) => Boolean(patch.mesh?.geometry?.userData?.naturalBlob)).length,
+      terrainBlobCount,
+      terrainBlobNaturalEdgeCount,
+      detailBlobCount: detailBlobMeshes.length,
+      detailBlobNaturalEdgeCount,
+      comparableTerrainUvDensityGroups: uvDensityGroups.length,
+      terrainUvDensityMaxRelativeSpread,
       minTerrainProfileSpread: Math.min(...terrainProfileSpreads),
       stoneMaterialUsesGeneratedTexture: sim.materials.stone.map === sim.assetService.get("stoneTexture"),
       stoneSurfaceUsesGeneratedTexture: sim.materials.stoneSurface.map === sim.assetService.get("stoneTexture"),
@@ -183,6 +264,13 @@ test("renders the initial ant empire scene", async ({ page }) => {
       permanentWaterCount: sim.water.filter((water: any) => water.permanent).length,
       maxWaterRadius: Math.max(...sim.water.map((water: any) => water.radius)),
       irregularWaterPools: waterPools.filter((pool: any) => Boolean(pool?.geometry?.userData?.naturalBlob)).length,
+      waterPoolsWithNaturalEdge: waterPools.filter((pool: any) => Boolean(pool?.geometry?.getAttribute?.("naturalEdge"))).length,
+      waterPoolsWithOneShoreline: waterShorelines.filter((shorelines: any[]) => shorelines.length === 1).length,
+      naturalWaterShorelines: waterShorelines.flat().filter((shoreline: any) => Boolean(shoreline.geometry?.userData?.naturalShoreline)).length,
+      waterShorelinesWithNaturalEdge: waterShorelines.flat().filter((shoreline: any) =>
+        Boolean(shoreline.geometry?.getAttribute?.("naturalEdge")),
+      ).length,
+      waterShorelineProfilesMatch,
       minWaterProfileSpread: Math.min(...waterProfileSpreads),
       nestEntrances: sim.nestEntrances?.length ?? sim.nestHoles?.length ?? 0,
       nestSpoils: sim.nestSpoils?.length ?? 0,
@@ -197,6 +285,11 @@ test("renders the initial ant empire scene", async ({ page }) => {
       minStoneSurfaceProfileSpread: Math.min(...stoneSurfaceProfileSpreads),
       naturalDetailObjects: sim.naturalDetails?.length ?? 0,
       naturalDetailStats: sim.naturalDetailStats ?? {},
+      grassPlacementCount: clusteredSurfacePlacements.filter((placement: any) => placement.kind === "grass").length,
+      microPebblePlacementCount: clusteredSurfacePlacements.filter((placement: any) => placement.kind === "microPebble").length,
+      clusteredSurfaceMinWaterDistance: Math.min(...clusteredSurfacePlacements.map((placement: any) =>
+        sim.waterDistanceAt(placement.x, placement.z, 1.5),
+      )),
       branchCount: sim.branches.length,
       upgradeButtons: document.querySelectorAll("[data-upgrade]").length,
       calls: info.render.calls,
@@ -265,11 +358,20 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.terrainBumps).toBeGreaterThanOrEqual(20);
   expect(metrics.groundTextureSource).toBe("generated-soil-texture");
   expect(metrics.generatedMapTextureCount).toBe(11);
+  expect(metrics.generatedTerrainTextureWraps.every((texture) => texture.wrapS === THREE.MirroredRepeatWrapping)).toBe(true);
+  expect(metrics.generatedTerrainTextureWraps.every((texture) => texture.wrapT === THREE.MirroredRepeatWrapping)).toBe(true);
   expect(metrics.groundMaterialUsesGeneratedTexture).toBe(true);
+  expect(metrics.groundMaterialIsStandard).toBe(true);
+  expect(metrics.groundReceivesShadow).toBe(true);
   expect(metrics.groundTextureRepeatX).toBeGreaterThanOrEqual(7);
   expect(metrics.groundTextureFlipY).toBe(false);
   expect(metrics.texturedTerrainPatches).toBeGreaterThanOrEqual(16);
   expect(metrics.irregularTerrainPatches).toBe(metrics.terrainPatches);
+  expect(metrics.terrainBlobNaturalEdgeCount).toBe(metrics.terrainBlobCount);
+  expect(metrics.detailBlobCount).toBeGreaterThanOrEqual(20);
+  expect(metrics.detailBlobNaturalEdgeCount).toBe(metrics.detailBlobCount);
+  expect(metrics.comparableTerrainUvDensityGroups).toBeGreaterThanOrEqual(4);
+  expect(metrics.terrainUvDensityMaxRelativeSpread).toBeLessThan(0.05);
   expect(metrics.minTerrainProfileSpread).toBeGreaterThan(0.12);
   expect(metrics.stoneMaterialUsesGeneratedTexture).toBe(true);
   expect(metrics.stoneSurfaceUsesGeneratedTexture).toBe(true);
@@ -278,6 +380,11 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.permanentWaterCount).toBeGreaterThanOrEqual(4);
   expect(metrics.maxWaterRadius).toBeGreaterThanOrEqual(42);
   expect(metrics.irregularWaterPools).toBe(metrics.waterCount);
+  expect(metrics.waterPoolsWithNaturalEdge).toBe(metrics.waterCount);
+  expect(metrics.waterPoolsWithOneShoreline).toBe(metrics.waterCount);
+  expect(metrics.naturalWaterShorelines).toBe(metrics.waterCount);
+  expect(metrics.waterShorelinesWithNaturalEdge).toBe(metrics.waterCount);
+  expect(metrics.waterShorelineProfilesMatch).toBe(true);
   expect(metrics.minWaterProfileSpread).toBeGreaterThan(0.12);
   expect(metrics.nestEntrances).toBeGreaterThanOrEqual(4);
   expect(metrics.nestSpoils).toBeGreaterThanOrEqual(24);
@@ -291,9 +398,13 @@ test("renders the initial ant empire scene", async ({ page }) => {
   expect(metrics.irregularStoneSurfaces).toBeGreaterThanOrEqual(metrics.stoneCount);
   expect(metrics.minStoneSurfaceProfileSpread).toBeGreaterThan(0.12);
   expect(metrics.naturalDetailObjects).toBeGreaterThanOrEqual(20);
-  expect(metrics.naturalDetailStats.grassClumps).toBeGreaterThanOrEqual(64);
-  expect(metrics.naturalDetailStats.microPebbles).toBeGreaterThanOrEqual(280);
-  expect(metrics.naturalDetailStats.wetEdgeDecals).toBeGreaterThanOrEqual(8);
+  expect(metrics.naturalDetailStats.grassClumps).toBeGreaterThanOrEqual(50);
+  expect(metrics.naturalDetailStats.microPebbles).toBeGreaterThanOrEqual(200);
+  expect(metrics.grassPlacementCount).toBe(metrics.naturalDetailStats.grassClumps);
+  expect(metrics.microPebblePlacementCount).toBe(metrics.naturalDetailStats.microPebbles);
+  expect(metrics.clusteredSurfaceMinWaterDistance).toBeGreaterThanOrEqual(1);
+  expect(metrics.naturalDetailStats.waterShorelines).toBe(metrics.waterCount);
+  expect(metrics.naturalDetailStats.dampPatches).toBeGreaterThanOrEqual(4);
   expect(metrics.naturalDetailStats.crackDecals).toBeGreaterThanOrEqual(5);
   expect(metrics.naturalDetailStats.mossDecals).toBeGreaterThanOrEqual(6);
   expect(metrics.naturalDetailStats.gravelDecals).toBeGreaterThanOrEqual(6);
