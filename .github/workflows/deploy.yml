@@ -1,6 +1,7 @@
-name: Deploy GitHub Pages
+name: CI and Deploy
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -8,16 +9,158 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: anteX-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: "1"
+  PLAYWRIGHT_WORKERS: "2"
 
 jobs:
-  deploy:
+  quick:
+    name: Lightweight checks and smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run lightweight gate
+        run: npm run ci:quick
+
+      - name: Upload Playwright quick report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-quick-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  e2e:
+    name: Full Playwright E2E and save compatibility
+    if: github.event_name != 'pull_request'
+    needs: quick
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run full Playwright regression
+        run: npm run eval:regression
+
+      - name: Upload Playwright regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  regression:
+    name: ${{ matrix.name }}
+    if: github.event_name != 'pull_request'
+    needs: quick
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: render
+            name: Render regression
+            command: npm run verify
+          - id: terrain
+            name: Terrain visual regression
+            command: npm run verify:terrain
+          - id: combat
+            name: Combat visual regression
+            command: npm run verify:combat
+          - id: foraging
+            name: Foraging ecology regression
+            command: npm run verify:foraging
+          - id: expedition
+            name: Expedition defense regression
+            command: npm run verify:expedition
+          - id: balance
+            name: Balance regression
+            command: npm run verify:balance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run ${{ matrix.name }}
+        run: ${{ matrix.command }}
+
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: verification/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  deploy:
+    name: Deploy GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs:
+      - quick
+      - e2e
+      - regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -40,7 +183,7 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v6
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
           path: dist

@@ -40,14 +40,26 @@ export function createStaticServer({ root = process.cwd(), port = 0 } = {}) {
     }
   });
 
-  return new Promise((resolveServer) => {
-    server.listen(port, "127.0.0.1", () => resolveServer(server));
+  return new Promise((resolveServer, rejectServer) => {
+    const handleError = (error) => rejectServer(error);
+    server.once("error", handleError);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", handleError);
+      resolveServer(server);
+    });
   });
 }
 
-if (import.meta.url === pathToFileURL(fileURLToPath(import.meta.url)).href && process.argv[1] === fileURLToPath(import.meta.url)) {
+async function runCli() {
   const requestedPort = Number(process.env.PORT || 5173);
   const server = await createStaticServer({ port: requestedPort });
   const address = server.address();
   console.log(`http://127.0.0.1:${address.port}/`);
+}
+
+if (import.meta.url === pathToFileURL(fileURLToPath(import.meta.url)).href && process.argv[1] === fileURLToPath(import.meta.url)) {
+  runCli().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

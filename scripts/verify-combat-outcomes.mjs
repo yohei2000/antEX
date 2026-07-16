@@ -557,5 +557,7 @@ try {
   const result = await verifyCombatScenario(targetUrl, outputDir);
   console.log(JSON.stringify({ targetUrl, ...result }, null, 2));
 } finally {
-  server.close();
+  server.closeIdleConnections?.();
+  server.closeAllConnections?.();
+  await new Promise((resolveClose) => server.close(resolveClose));
 }

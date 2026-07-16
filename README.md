@@ -127,15 +127,17 @@ npm.cmd run dev
 npm.cmd run build
 ```
 
-構文チェック:
+通常のローカル検証（型チェック、Nodeスクリプト構文Lint、Unit test、desktop 1 workerの最小スモーク）:
 
 ```powershell
-npm.cmd run check
+npm.cmd run test:local
 ```
 
-Unit test:
+個別に実行する場合:
 
 ```powershell
+npm.cmd run typecheck
+npm.cmd run lint
 npm.cmd run test
 ```
 
@@ -147,17 +149,26 @@ npm.cmd run asset:audit
 
 ## Verification
 
-headless Chrome または Edge を使い、モバイル幅とデスクトップ幅で WebGL canvas とゲーム状態を検証します。
-
-```powershell
-npm.cmd run verify
-```
-
-Playwright smoke/save-load:
+通常ローカルのPlaywrightは、起動、WebGL canvas、基本simulation stateだけをdesktop Chromium 1 workerで確認します。既存の定型E2E、save/load、長時間・ビジュアル回帰はmain pushまたは手動実行のGitHub Actionsで実行します。
 
 ```powershell
 npm.cmd run eval:smoke
+```
+
+GitHub Actionsで実行するPlaywright回帰（CI障害の再現など、必要な場合だけローカルで対象を単独実行）:
+
+```powershell
+npm.cmd run eval:e2e
 npm.cmd run eval:save
+npm.cmd run eval:regression
+```
+
+GitHub ActionsのPRでは型・構文・Unit・asset auditとmobile/desktopの最小スモークを実行します。main pushと手動実行では、全Playwright回帰と `verify`、terrain、combat、foraging、expedition、balanceを追加し、成功後にPagesへデプロイします。失敗時のHTML report、trace、スクリーンショット、専用回帰のsummaryはActions artifactから確認できます。
+
+専用render回帰:
+
+```powershell
+npm.cmd run verify
 ```
 
 敵襲を短時間で確認する場合:

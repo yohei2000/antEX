@@ -1,46 +1,41 @@
 import { defineConfig, devices } from "@playwright/test";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 
-const hasEvalServer = existsSync(resolve(".eval-server.json"));
+const isCI = Boolean(process.env.CI);
 const port = Number(process.env.PORT || 4173);
 const baseURL = `http://127.0.0.1:${port}/`;
-const reuseExistingServer = hasEvalServer || process.env.ANTEX_REUSE_WEBSERVER === "1";
-
-const webServer =
-  process.env.ANTEX_SKIP_WEBSERVER === "1"
-    ? undefined
-    : {
-        command: "node ./scripts/playwright-webserver.mjs",
-        url: baseURL,
-        reuseExistingServer,
-        timeout: 120_000,
-      };
+const requestedWorkers = Number(process.env.PLAYWRIGHT_WORKERS);
+const workers = Number.isFinite(requestedWorkers) && requestedWorkers > 0
+  ? Math.floor(requestedWorkers)
+  : isCI ? 2 : 1;
 
 export default defineConfig({
   testDir: "tests/playwright",
-  fullyParallel: true,
-  workers: process.env.CI ? undefined : 2,
-  reporter: [["html", { open: "never" }], ["list"]],
+  globalSetup: "./tests/playwright/global-setup.ts",
+  outputDir: "test-results",
+  fullyParallel: false,
+  workers,
+  forbidOnly: isCI,
+  retries: isCI ? 1 : 0,
+  reporter: isCI
+    ? [["github"], ["html", { open: "never", outputFolder: "playwright-report" }]]
+    : [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
     baseURL,
     trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
-  ...(webServer ? { webServer } : {}),
   projects: [
     {
-      name: "mobile-chrome",
+      name: "mobile-chromium",
       use: {
         ...devices["Pixel 5"],
-        channel: "chrome",
         viewport: { width: 390, height: 844 },
       },
     },
     {
-      name: "desktop-chrome",
+      name: "desktop-chromium",
       use: {
         ...devices["Desktop Chrome"],
-        channel: "chrome",
         viewport: { width: 1366, height: 768 },
       },
     },

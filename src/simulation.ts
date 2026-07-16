@@ -187,6 +187,7 @@ const ui = {
 const DEBUG_QUERY = new URLSearchParams(window.location.search);
 const IS_DEBUG = DEBUG_QUERY.get("debug") === "1";
 const IS_RAID_SOON = ["1", "true"].includes((DEBUG_QUERY.get("raidSoon") ?? "").toLowerCase());
+const TEST_HOOKS_ENABLED = import.meta.env.DEV || import.meta.env.MODE === "test";
 const GENERATED_TEXTURE_BASE_URL = `${import.meta.env.BASE_URL}assets/generated/`;
 const generatedAssetUrl = (fileName) => `${GENERATED_TEXTURE_BASE_URL}${fileName}`;
 const GENERATED_TEXTURE_ASSETS = {
@@ -4454,7 +4455,7 @@ class AntColony3D {
     this.reset(false);
     if (this.raidSoonMode) this.activateRaidSoonMode();
     this.resize();
-    window.__ANT_SIM = this;
+    if (TEST_HOOKS_ENABLED) window.__ANT_SIM = this;
     this.prewarmAndStart();
   }
 
@@ -8828,7 +8829,7 @@ class AntColony3D {
     this.squadRingSystem.render(renderAnts, this, alpha);
     this.roleLabelSystem.render(renderAnts, this, alpha);
     this.renderer.render(this.scene, this.camera);
-    window.__ANT_SIM_READY = true;
+    if (TEST_HOOKS_ENABLED) window.__ANT_SIM_READY = true;
   }
 
   dispose() {
@@ -8871,7 +8872,7 @@ class AntColony3D {
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.renderer = null;
-    if (window.__ANT_SIM === this) window.__ANT_SIM = null;
+    if (TEST_HOOKS_ENABLED && window.__ANT_SIM === this) window.__ANT_SIM = null;
   }
 
   pointerTapSlop(pointerType) {

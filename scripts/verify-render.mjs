@@ -908,5 +908,7 @@ try {
   results.push(await verifyViewport({ label: "desktop-1366x768", width: 1366, height: 768 }, targetUrl, outputDir));
   console.log(JSON.stringify({ targetUrl, results }, null, 2));
 } finally {
-  server.close();
+  server.closeIdleConnections?.();
+  server.closeAllConnections?.();
+  await new Promise((resolveClose) => server.close(resolveClose));
 }

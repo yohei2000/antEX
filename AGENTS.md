@@ -87,22 +87,41 @@
 - unrelated refactor。
 - テストを通すためだけのゲームロジック改変。
 
+## Test operations
+- 通常のローカル確認は `npm run test:local` を使う。これは型チェック、Nodeスクリプトの構文Lint、Vitest、desktop Chromium 1 workerの最小スモークだけを実行する。
+- `npm run eval:smoke` は起動、Canvas生成、基本simulation state、browser error不在だけを見る最小スモークとする。固定時間待機、ゲーム時間の長時間進行、画面全体のpixel一致には依存させない。
+- 既存の定型E2Eは `npm run eval:e2e`、save/load回帰は `npm run eval:save`、両方をまとめた全Playwright回帰は `npm run eval:regression` とする。これらと `verify*` は通常ローカルでは実行せず、main pushまたは手動実行のGitHub Actionsへ寄せる。
+- PRのGitHub Actionsは型チェック、構文Lint、Vitest、asset audit、mobile/desktopの最小スモークだけを実行する。main pushと手動実行では、それらに加えて全Playwright回帰、save/load、render、terrain、combat、foraging、expedition、balanceを実行する。
+- Playwright workerは通常ローカル1、CI最大2を維持する。調査目的で増やす場合も、Canvas/WebGLを同時に大量起動しない。
+- Playwright用static serverは `tests/playwright/global-setup.ts` がPlaywright本体と同じNode process内で所有し、teardownでcloseする。detached server、テスト後も残るpreview/dev server、手動起動したbrowser/contextを通常テスト経路へ入れない。検証終了時は起動したbrowser、context、serverが終了したことを確認する。
+- Playwrightと専用回帰は `npm run build:test` でtest buildを作り、既存の `window.__ANT_SIM` / `window.__ANT_SIM_READY` はdev/testだけに限定する。Pages用の `npm run build` にはtest hookを含めない。
+- CanvasゲームのE2Eは `window.__ANT_SIM_READY`、simulation state、DOM状態、固定seed、明示的なsimulation stepを主な判定根拠にする。スクリーンショットとpixel検査はビジュアル回帰の補助証拠として扱う。
+- テスト容易性のためにhookや `data-testid` を追加する場合は最小範囲にし、通常プレイの挙動や本番buildへ新しいdebug surfaceを露出しない。
+- Playwright失敗時のHTML report、trace、失敗スクリーンショットは `playwright-report/` と `test-results/`、専用回帰の画像とsummaryは `verification/` に出力し、GitHub Actions artifactとして14日保持する。
+
 ## Commands
 - Install: `npm install`
 - Dev: `npm run dev`
+- Test build: `npm run build:test`
+- Type check: `npm run typecheck`
+- Script syntax lint: `npm run lint`
 - Unit test: `npm run test`
-- Smoke eval: `npm run eval:smoke`
-- Save/load eval: `npm run eval:save`
+- Local default gate: `npm run test:local`
+- Minimal smoke eval: `npm run eval:smoke`
+- CI quick gate: `npm run ci:quick`
+- Full E2E eval (CI default): `npm run eval:e2e`
+- Save/load eval (CI default): `npm run eval:save`
+- Full Playwright regression (CI default): `npm run eval:regression`
 - Combat visual eval: `npm run verify:combat`
 - Terrain visual eval: `npm run verify:terrain`
 - Expedition defense eval: `npm run verify:expedition`
 - Foraging ecology eval: `npm run verify:foraging`
 - Balance eval: `npm run verify:balance`
 - Raid quick check URL: `/?raidSoon=1`
-- Playwright eval server の既定TTLは15分。大きな敵襲規模を含むmobile/desktop smokeが途中で `ERR_CONNECTION_REFUSED` にならないよう維持する。
+- ローカルでport競合時は未知のprocessを停止せず、別の `PORT` を指定する。既存server再利用は `ANTEX_REUSE_WEBSERVER=1` を明示した場合だけ許可する。
 
 ## Deployment
-- GitHub Pages は `main` push で `.github/workflows/deploy.yml` が自動デプロイする。
+- GitHub Pages は `main` pushで `.github/workflows/deploy.yml` のquick、全E2E、全専用回帰が成功した後に自動デプロイする。手動実行も同じ広い検証を通してからデプロイする。
 - main 以外のブランチを一時デプロイする場合は、`github-pages` environment の branch policy を一時追加し、デプロイ後に必ず削除する。
 - main への push はユーザーが明示した場合だけ実行する。
 - ユーザーが実装後のデプロイまで求めている流れでは、明示的な停止指示がない限り、検証後に現在ブランチをpushして一時branch policy経由でデプロイまで進める。
@@ -112,14 +131,13 @@
 - 一時的な作業メモや今回限りの結果はAGENTS.mdではなく、最終報告またはdocs/decision-log.mdに残す。
 
 ## Definition of Done
-- `npm run test` が通る。
-- `npm run eval:smoke` が通る。
-- セーブ機能がある場合は `npm run eval:save` が通る。
-- 地形描画を変更した場合は `npm run verify:terrain` を実行し、固定条件のdesktop/mobile、fogあり、overview、water close-upのスクリーンショットを確認して、`verification/terrain-graphics/summary.json` に失敗がないことを確認する。
-- 戦闘描画や敵襲AIを変更した場合は `npm run verify:combat` を実行し、出力スクリーンショットを確認する。
-- 敵巣守備、敵巣攻撃、敵働きアリの戦闘力を変更した場合は `npm run verify:expedition` を実行し、`verification/expedition-defense/summary.json` の失敗がないことを確認する。
-- 餌場分布、働きアリの採餌導線、敵働きアリの生態・接敵を変更した場合は `npm run verify:foraging` を実行し、`verification/foraging-competition/summary.json` の失敗がないことを確認する。
-- 兵種・敵襲・防衛バランスを変更した場合は `npm run verify:balance` を実行し、`verification/balance/summary.json` の失敗がないことを確認する。
+- 通常変更ではローカルの `npm run test:local` が通る。
+- セーブ機能を変更した場合はmainまたは手動GitHub Actionsの `eval:save` が通る。CI障害の再現など必要な場合だけローカルで対象コマンドを単独実行する。
+- 地形描画を変更した場合はmainまたは手動GitHub Actionsの `verify:terrain` を確認し、固定条件のdesktop/mobile、fogあり、overview、water close-upのスクリーンショットと `verification/terrain-graphics/summary.json` に失敗がないことを確認する。
+- 戦闘描画や敵襲AIを変更した場合はmainまたは手動GitHub Actionsの `verify:combat` を確認し、出力スクリーンショットを確認する。
+- 敵巣守備、敵巣攻撃、敵働きアリの戦闘力を変更した場合はmainまたは手動GitHub Actionsの `verify:expedition` を確認し、`verification/expedition-defense/summary.json` の失敗がないことを確認する。
+- 餌場分布、働きアリの採餌導線、敵働きアリの生態・接敵を変更した場合はmainまたは手動GitHub Actionsの `verify:foraging` を確認し、`verification/foraging-competition/summary.json` の失敗がないことを確認する。
+- 兵種・敵襲・防衛バランスを変更した場合はmainまたは手動GitHub Actionsの `verify:balance` を確認し、`verification/balance/summary.json` の失敗がないことを確認する。
 - 失敗時はPlaywright report、screenshot、console error、原因候補を報告する。
 - 最終報告に変更点、検証結果、残リスク、未対応事項を含める。
 

@@ -1599,7 +1599,7 @@ test("touch tap on the world canvas tolerates small finger drift", async ({ page
 });
 
 test("mobile DOM buttons activate once after small touch drift", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile-chrome", "mobile touch cancellation path");
+  test.skip(testInfo.project.name !== "mobile-chromium", "mobile touch cancellation path");
   await waitForSimulation(page);
 
   await page.evaluate(() => {

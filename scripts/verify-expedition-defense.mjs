@@ -648,5 +648,7 @@ try {
   if (summary.failures.length > 0) throw new Error(`Expedition defense verification failed: ${summary.failures.join("; ")}`);
 } finally {
   await browser?.close();
-  server.close();
+  server.closeIdleConnections?.();
+  server.closeAllConnections?.();
+  await new Promise((resolveClose) => server.close(resolveClose));
 }
