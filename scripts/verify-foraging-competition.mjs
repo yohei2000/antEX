@@ -47,18 +47,19 @@ async function runScenario(browser, targetUrl, seed, mature) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   page.setDefaultTimeout(0);
-  await page.addInitScript((randomSeed) => {
-    let state = randomSeed >>> 0;
-    Math.random = () => {
-      state = (state * 1664525 + 1013904223) >>> 0;
-      return state / 4294967296;
-    };
-  }, seed);
   try {
     await page.goto(targetUrl);
     await waitForSimulation(page);
     return await page.evaluate(({ matureScenario, runSeed }) => {
       const sim = window.__ANT_SIM;
+      let randomState = runSeed >>> 0;
+      Math.random = () => {
+        randomState = (randomState * 1664525 + 1013904223) >>> 0;
+        return randomState / 4294967296;
+      };
+      sim.reset(true);
+      sim.paused = true;
+      sim.frameAccumulator = 0;
       const stepDt = 1 / 60;
       const durationSeconds = matureScenario ? 75 : 45;
       sim.clearRaidRivals();

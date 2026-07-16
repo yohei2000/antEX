@@ -228,11 +228,36 @@ function assertMidReinforcedNormal(entry) {
   const failures = [];
   if (!entry) return ["mid_reinforced_normal result missing"];
   const aggregate = entry.aggregate;
-  if (aggregate.minActiveCount !== 8 || aggregate.maxActiveCount !== 8) {
-    failures.push(`mid_reinforced_normal activeCount range ${aggregate.minActiveCount}-${aggregate.maxActiveCount} !== 8`);
+  const runs = entry.runs ?? [];
+  const isDecisiveRepel = (run) => run.raidOutcome === "repelled" && run.enemyCasualties >= run.activeCount - 1;
+  const isSafeHold = (run) =>
+    run.raidOutcome === "held" &&
+    run.enemyCasualties >= 1 &&
+    run.deaths === 0 &&
+    run.sortieDeaths === 0 &&
+    run.foodLoss === 0 &&
+    run.woundedDelta === 0 &&
+    run.breachEvents === 0 &&
+    run.nestDurabilityLoss <= 0.001;
+  const decisiveRepels = runs.filter(isDecisiveRepel);
+  const invalidRemainders = runs.filter((run) => !isDecisiveRepel(run) && !isSafeHold(run));
+  const describeRuns = (selectedRuns) => selectedRuns.map((run) =>
+    `seed ${run.seed} outcome=${run.raidOutcome} kills=${run.enemyCasualties} deaths=${run.deaths} sortieDeaths=${run.sortieDeaths} breaches=${run.breachEvents} nestLoss=${run.nestDurabilityLoss.toFixed(3)}`,
+  ).join(", ");
+  if (runs.length !== SEEDS.length) {
+    failures.push(`mid_reinforced_normal runs ${runs.length} !== ${SEEDS.length}`);
   }
-  if (aggregate.minPeakDeployedSoldiers < 20) {
-    failures.push(`mid_reinforced_normal minPeakDeployedSoldiers ${aggregate.minPeakDeployedSoldiers} < 20`);
+  const wrongEnemyCounts = runs.filter((run) => run.activeCount !== 8);
+  if (wrongEnemyCounts.length > 0) {
+    failures.push(`mid_reinforced_normal activeCount must be 8: ${wrongEnemyCounts.map((run) => `seed ${run.seed}=${run.activeCount}`).join(", ")}`);
+  }
+  const incompleteWaves = runs.filter((run) => run.sortieWavesStarted !== 2);
+  if (incompleteWaves.length > 0) {
+    failures.push(`mid_reinforced_normal sortieWavesStarted must be 2: ${incompleteWaves.map((run) => `seed ${run.seed}=${run.sortieWavesStarted}`).join(", ")}`);
+  }
+  const incompleteDeployment = runs.filter((run) => run.peakDeployedSoldiers !== 20);
+  if (incompleteDeployment.length > 0) {
+    failures.push(`mid_reinforced_normal peakDeployedSoldiers must be 20: ${incompleteDeployment.map((run) => `seed ${run.seed}=${run.peakDeployedSoldiers}`).join(", ")}`);
   }
   if (aggregate.avgSortieDeaths > 3) {
     failures.push(`mid_reinforced_normal avgSortieDeaths ${aggregate.avgSortieDeaths.toFixed(2)} > 3`);
@@ -240,11 +265,11 @@ function assertMidReinforcedNormal(entry) {
   if (aggregate.maxSortieDeaths > 6) {
     failures.push(`mid_reinforced_normal maxSortieDeaths ${aggregate.maxSortieDeaths} > 6`);
   }
-  if (aggregate.avgEnemyCasualties < 7) {
-    failures.push(`mid_reinforced_normal avgEnemyCasualties ${aggregate.avgEnemyCasualties.toFixed(2)} < 7`);
+  if (decisiveRepels.length < 4) {
+    failures.push(`mid_reinforced_normal decisive repels ${decisiveRepels.length}/${runs.length} < 4/5`);
   }
-  if (aggregate.minEnemyCasualties < 6) {
-    failures.push(`mid_reinforced_normal minEnemyCasualties ${aggregate.minEnemyCasualties} < 6`);
+  if (invalidRemainders.length > 0) {
+    failures.push(`mid_reinforced_normal non-decisive runs must be safe holds: ${describeRuns(invalidRemainders)}`);
   }
   if (aggregate.defeatCount > 0) failures.push(`mid_reinforced_normal defeatCount ${aggregate.defeatCount} > 0`);
   return failures;
@@ -315,6 +340,7 @@ async function runScenario(page, scenario, seed) {
         sim.reset(true);
         sim.paused = true;
         sim.frameAccumulator = 0;
+        Math.random = seededRandom(seed);
         sim.timeScale = 1;
         sim.soldierSortieCooldown = 0;
         sim.sortieRetireQueue = [];

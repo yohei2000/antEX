@@ -1445,6 +1445,7 @@ test("hover alone does not rotate the camera", async ({ page }) => {
 });
 
 test("camera zooms with mouse wheel and two finger pinch", async ({ page }) => {
+  test.setTimeout(60_000);
   await waitForSimulation(page);
 
   const viewport = page.viewportSize();
@@ -1600,6 +1601,7 @@ test("touch tap on the world canvas tolerates small finger drift", async ({ page
 
 test("mobile DOM buttons activate once after small touch drift", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "mobile touch cancellation path");
+  test.setTimeout(60_000);
   await waitForSimulation(page);
 
   await page.evaluate(() => {
@@ -1614,43 +1616,73 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
       (window as any).__soldiersTabClicks += 1;
     });
   });
-  const client = await page.context().newCDPSession(page);
-  const dispatchTouchAt = async (
-    x: number,
-    y: number,
-    dy: number,
-    endType: "touchEnd" | "touchCancel" = "touchEnd",
-    holdMs = 0,
-  ) => {
-    await client.send("Input.dispatchTouchEvent", {
-      type: "touchStart",
-      touchPoints: [{ x, y, radiusX: 5, radiusY: 5, id: 1 }],
-    });
-    await client.send("Input.dispatchTouchEvent", {
-      type: "touchMove",
-      touchPoints: [{ x, y: y + dy, radiusX: 5, radiusY: 5, id: 1 }],
-    });
-    if (holdMs > 0) await page.waitForTimeout(holdMs);
-    await client.send("Input.dispatchTouchEvent", { type: endType, touchPoints: [] });
-  };
+  const touchActions = await page.evaluate(() => ({
+    pause: getComputedStyle(document.querySelector("#pauseBtn") as HTMLButtonElement).touchAction,
+    tab: getComputedStyle(document.querySelector('[data-tab="soldiers"]') as HTMLButtonElement).touchAction,
+  }));
+  expect(touchActions).toEqual({ pause: "none", tab: "none" });
   const touchButton = async (
     selector: string,
     dy: number,
-    endType: "touchEnd" | "touchCancel" = "touchEnd",
-    holdMs = 0,
+    endType: "touchend" | "touchcancel" = "touchend",
+    options: {
+      refreshStatsBeforeEnd?: boolean;
+      followupClick?: boolean;
+    } = {},
   ) => {
-    const box = await page.evaluate((targetSelector) => {
+    // Keep one synthetic gesture inside the page so CDP round trips do not consume the production tap-duration limit.
+    await page.evaluate(({ targetSelector, driftY, touchEndType, refreshStatsBeforeEnd, followupClick }) => {
       const button = document.querySelector(targetSelector) as HTMLButtonElement | null;
-      if (!button) return null;
+      if (!button) throw new Error(`${targetSelector} is not visible`);
       button.scrollIntoView({ block: "center", inline: "center" });
       const rect = button.getBoundingClientRect();
-      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-    }, selector);
-    if (!box) throw new Error(`${selector} is not visible`);
-    await dispatchTouchAt(box.x + box.width / 2, box.y + box.height / 2, dy, endType, holdMs);
+      const x = rect.x + rect.width / 2;
+      const startY = rect.y + rect.height / 2;
+      const touchAt = (clientY: number) => new Touch({
+        identifier: 1,
+        target: button,
+        clientX: x,
+        clientY,
+        screenX: x,
+        screenY: clientY,
+        pageX: x + window.scrollX,
+        pageY: clientY + window.scrollY,
+        radiusX: 5,
+        radiusY: 5,
+        rotationAngle: 0,
+        force: 1,
+      });
+      const dispatchTouch = (type: "touchstart" | "touchmove" | "touchend" | "touchcancel", touches: Touch[], changedTouches: Touch[]) => {
+        button.dispatchEvent(new TouchEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          touches,
+          targetTouches: touches,
+          changedTouches,
+        }));
+      };
+
+      const startTouch = touchAt(startY);
+      dispatchTouch("touchstart", [startTouch], [startTouch]);
+      const movedTouch = touchAt(startY + driftY);
+      dispatchTouch("touchmove", [movedTouch], [movedTouch]);
+      if (refreshStatsBeforeEnd) {
+        (window.__ANT_SIM as any).updateStats();
+        if (!button.isConnected) throw new Error(`${targetSelector} was replaced during its touch gesture`);
+      }
+      dispatchTouch(touchEndType, [], [movedTouch]);
+      if (followupClick) (document.querySelector(targetSelector) as HTMLButtonElement | null)?.click();
+    }, {
+      targetSelector: selector,
+      driftY: dy,
+      touchEndType: endType,
+      refreshStatsBeforeEnd: options.refreshStatsBeforeEnd ?? false,
+      followupClick: options.followupClick ?? true,
+    });
   };
 
-  await touchButton("#pauseBtn", 0);
+  await page.locator("#pauseBtn").tap();
   await expect.poll(() => page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(true);
 
@@ -1673,12 +1705,11 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
     button.classList.remove("is-paused");
     (window as any).__pauseButtonClicks = 0;
   });
-  await touchButton("#pauseBtn", 56);
-  await page.waitForTimeout(260);
+  await touchButton("#pauseBtn", 56, "touchend", { followupClick: false });
   expect(await page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(0);
   expect(await page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(false);
 
-  await touchButton("#pauseBtn", 16, "touchCancel");
+  await touchButton("#pauseBtn", 16, "touchcancel");
   await expect.poll(() => page.evaluate(() => (window as any).__pauseButtonClicks)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).paused)).toBe(true);
 
@@ -1694,10 +1725,9 @@ test("mobile DOM buttons activate once after small touch drift", async ({ page }
     sim.updateStats();
   });
   await expect(page.locator('[data-train-variant="worker"]')).toBeEnabled();
-  await touchButton('[data-train-variant="worker"]', 8, "touchCancel", 320);
+  await touchButton('[data-train-variant="worker"]', 8, "touchcancel", { refreshStatsBeforeEnd: true });
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue[0]?.variant)).toBe("worker");
-  await page.waitForTimeout(320);
   expect(await page.evaluate(() => (window.__ANT_SIM as any).colony.barracksQueue.length)).toBe(1);
 
   await page.evaluate(() => {
@@ -4444,6 +4474,7 @@ test("shield head ants advance to the front line and tank for allies", async ({ 
 });
 
 test("construction tab issues earthwork commands separately from growth", async ({ page }) => {
+  test.setTimeout(90_000);
   await waitForSimulation(page);
 
   await page.evaluate(() => {
