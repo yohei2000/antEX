@@ -92,7 +92,7 @@
 - `npm run eval:smoke` は起動、Canvas生成、基本simulation state、browser error不在だけを見る最小スモークとする。固定時間待機、ゲーム時間の長時間進行、画面全体のpixel一致には依存させない。
 - 既存の定型E2Eは `npm run eval:e2e`、save/load回帰は `npm run eval:save`、両方をまとめた全Playwright回帰は `npm run eval:regression` とする。これらと `verify*` は通常ローカルでは実行せず、main pushまたは手動実行のGitHub Actionsへ寄せる。
 - PRのGitHub Actionsは型チェック、構文Lint、Vitest、asset audit、mobile/desktopの最小スモークだけを実行する。main pushと手動実行では、それらに加えて全Playwright回帰、save/load、render、terrain、combat、foraging、expedition、balanceを実行する。
-- Playwright workerは通常ローカル1、CI最大2を維持する。調査目的で増やす場合も、Canvas/WebGLを同時に大量起動しない。
+- Playwright workerは通常ローカル1、CI最大2を維持する。PR向けの最小スモークはCIで2まで許可するが、全Playwright回帰はCanvas/WebGLのCPU競合を避けるためCIでも1 workerとする。調査目的で増やす場合も、Canvas/WebGLを同時に大量起動しない。
 - Playwright用static serverは `tests/playwright/global-setup.ts` がPlaywright本体と同じNode process内で所有し、teardownでcloseする。detached server、テスト後も残るpreview/dev server、手動起動したbrowser/contextを通常テスト経路へ入れない。検証終了時は起動したbrowser、context、serverが終了したことを確認する。
 - Playwrightと専用回帰は `npm run build:test` でtest buildを作り、既存の `window.__ANT_SIM` / `window.__ANT_SIM_READY` はdev/testだけに限定する。Pages用の `npm run build` にはtest hookを含めない。
 - CanvasゲームのE2Eは `window.__ANT_SIM_READY`、simulation state、DOM状態、固定seed、明示的なsimulation stepを主な判定根拠にする。スクリーンショットとpixel検査はビジュアル回帰の補助証拠として扱う。
